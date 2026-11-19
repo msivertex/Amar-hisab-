@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path
+        name="receipt_captures"
+        path="receipts/" />
+    <cache-path
+        name="avatar_captures"
+        path="avatars_capture/" />
+    <cache-path
+        name="backup_templates"
+        path="templates/" />
+    <cache-path
+        name="financial_reports"
+        path="reports/" />
+</paths>

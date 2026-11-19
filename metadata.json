@@ -1,0 +1,6 @@
+{
+  "name": "Amar Hisab",
+  "description": "Offline-first Crystal Liquid bilingual (Bangla & English) personal finance and expense tracker with local SQLite wallets, budgets, and Gemini AI receipt scan, search grounding, and TTS insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
