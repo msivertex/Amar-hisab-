@@ -397,6 +397,53 @@ data class MarketHubStrings(
     val mfsNetReceivedLabel: String
 )
 
+data class DateTimePermissionsStrings(
+    val liveDeviceClockTitle: String,
+    val autoTimeZoneBadge: String,
+    val refreshClockDesc: String,
+    val permissionsSectionTitle: String,
+    val permissionsSectionSubtitle: String,
+    val permissionGrantedBadge: String,
+    val permissionNeededBadge: String,
+    val grantPermissionBtn: String,
+    val openSettingsBtn: String,
+    val microphoneTitle: String,
+    val microphoneRationale: String,
+    val microphoneDeniedNotice: String,
+    val cameraTitle: String,
+    val cameraRationale: String,
+    val cameraDeniedNotice: String,
+    val locationTitle: String,
+    val locationRationale: String,
+    val locationDeniedNotice: String,
+    val locationActiveContextPrefix: String,
+    val locationFallbackContextPrefix: String,
+    val refreshLocationDesc: String,
+    val manualOfflineGuaranteeNote: String
+)
+
+data class CustomerSupportStrings(
+    val tileTitle: String,
+    val tileSubtitle: String,
+    val headerTitle: String,
+    val statusOnline: String,
+    val statusOffline: String,
+    val resetChatDesc: String,
+    val offlineBannerText: String,
+    val quickTopicsLabel: String,
+    val allCategoriesChip: String,
+    val inputPlaceholder: String,
+    val sendDesc: String,
+    val typingLabel: String,
+    val notResolvedChip: String,
+    val whatsappCardTitle: String,
+    val whatsappCardSubtitle: String,
+    val whatsappOpenBtn: String,
+    val whatsappCopyBtn: String,
+    val whatsappCopiedNotice: String,
+    val assistantLabel: String
+)
+
 data class AppStrings(
     val appTitleBangla: String,
     val appTitleEnglish: String,
@@ -659,7 +706,9 @@ data class AppStrings(
     val insightsModern: InsightsModernStrings,
     val reportExport: MonthlyReportExportStrings,
     val biometricSecurity: BiometricSecurityStrings,
-    val marketHub: MarketHubStrings
+    val marketHub: MarketHubStrings,
+    val dateTimePermissions: DateTimePermissionsStrings,
+    val customerSupport: CustomerSupportStrings
 ) {
     val editNameDesc: String get() = profileAvatar.editNameDesc
     val saveNameDesc: String get() = profileAvatar.saveNameDesc
@@ -1013,8 +1062,8 @@ object StringsProvider {
             mfsDirectorySubtitle = "bKash, Nagad, Rocket & Upay schemas",
             browseBtn = "Browse",
             databaseUpToDateNote = "Offline financial directory is up to date (v2026.11)",
-            regionDialogNote = "Primary financial region set to Bangladesh (Asia/Dhaka, UTC+6). All BDT ledger formatting follows local conventions.",
-            currencyDialogNote = "BDT (৳) is the primary vault currency. USD ($) is active as quick reference currency."
+            regionDialogNote = "Date, time, and calendar boundaries automatically sync with your device's active local timezone—even while traveling abroad.",
+            currencyDialogNote = "BDT (৳) is the primary vault currency. Multi-region currency rates stay accessible in Insights."
         ),
         themeSettings = ThemeSettingsStrings(
             themeTileTitle = "Theme",
@@ -1256,6 +1305,51 @@ object StringsProvider {
             mfsChargeLabel = "Cash-Out Charge",
             mfsTotalDeductedLabel = "Total Deducted",
             mfsNetReceivedLabel = "Net If Fee Inside"
+        ),
+        dateTimePermissions = DateTimePermissionsStrings(
+            liveDeviceClockTitle = "Device Clock & Timezone",
+            autoTimeZoneBadge = "Auto-Synced",
+            refreshClockDesc = "Refresh device date & timezone",
+            permissionsSectionTitle = "Device Permissions & Location",
+            permissionsSectionSubtitle = "Control Microphone, Camera, and Google Location access for smart features",
+            permissionGrantedBadge = "Allowed",
+            permissionNeededBadge = "Not Allowed",
+            grantPermissionBtn = "Allow",
+            openSettingsBtn = "Settings",
+            microphoneTitle = "Microphone (Voice Entry)",
+            microphoneRationale = "Used only when you tap Voice Entry to speak expenses or income hands-free.",
+            microphoneDeniedNotice = "Microphone permission is off — you can still type entries manually anytime.",
+            cameraTitle = "Camera (Receipt Scan)",
+            cameraRationale = "Used only when you photograph bills or receipts for smart scanning.",
+            cameraDeniedNotice = "Camera permission is off — you can still pick receipt photos from your gallery.",
+            locationTitle = "Google Location (Travel & Region)",
+            locationRationale = "Provides foreground travel region and timezone context for regional rates & dates.",
+            locationDeniedNotice = "Location permission is off — using your device timezone automatically.",
+            locationActiveContextPrefix = "Google Location",
+            locationFallbackContextPrefix = "Device Timezone",
+            refreshLocationDesc = "Refresh location context",
+            manualOfflineGuaranteeNote = "All permissions are optional. Manual and offline tracking always works even if denied."
+        ),
+        customerSupport = CustomerSupportStrings(
+            tileTitle = "Customer Support",
+            tileSubtitle = "Instant help chat, app guides & live care",
+            headerTitle = "Customer Support",
+            statusOnline = "Online • AI Support",
+            statusOffline = "Offline • Built-in Guides",
+            resetChatDesc = "Start new chat",
+            offlineBannerText = "You are offline — browse built-in category guides anytime. Turn on internet for live AI responses.",
+            quickTopicsLabel = "Quick Help Categories",
+            allCategoriesChip = "All Categories",
+            inputPlaceholder = "Type your question or issue...",
+            sendDesc = "Send message",
+            typingLabel = "Typing...",
+            notResolvedChip = "Not resolved — Request live support",
+            whatsappCardTitle = "WhatsApp Customer Care",
+            whatsappCardSubtitle = "Direct live assistance for unresolved or urgent issues",
+            whatsappOpenBtn = "Chat on WhatsApp",
+            whatsappCopyBtn = "Copy",
+            whatsappCopiedNotice = "Number copied",
+            assistantLabel = "Amar Hisab Support"
         )
     )
 
@@ -1576,8 +1670,8 @@ object StringsProvider {
             mfsDirectorySubtitle = "বিকাশ, নগদ, রকেট ও উপায় প্রোফাইল",
             browseBtn = "ব্রাউজ করুন",
             databaseUpToDateNote = "অফলাইন ব্যাংক ও এমএফএস ডাটাবেস সর্বশেষ সংস্করণে আপডেট রয়েছে (v2026.11)",
-            regionDialogNote = "আপনার আর্থিক অঞ্চল বাংলাদেশ (Asia/Dhaka, UTC+6) নির্ধারিত রয়েছে। সকল হিসাব দেশীয় টাকা ফরম্যাটে প্রদর্শিত হয়।",
-            currencyDialogNote = "BDT (৳) আপনার মূল ভল্ট মুদ্রা। দ্রুত হিসাবের জন্য USD ($) রেফারেন্স হিসেবে সক্রিয় রয়েছে।"
+            regionDialogNote = "তারিখ, সময় ও সাপ্তাহিক/মাসিক হিসাব স্বয়ংক্রিয়ভাবে আপনার ডিভাইসের বর্তমান স্থানীয় টাইমজোন অনুযায়ী সিঙ্ক হয়—ভ্রমণের সময়ও।",
+            currencyDialogNote = "BDT (৳) আপনার মূল ভল্ট মুদ্রা। ইনসাইটস-এ ১৫টি দেশের মুদ্রা রূপান্তর সুবিধা রয়েছে।"
         ),
         themeSettings = ThemeSettingsStrings(
             themeTileTitle = "থিম",
@@ -1819,6 +1913,51 @@ object StringsProvider {
             mfsChargeLabel = "ক্যাশ-আউট চার্জ",
             mfsTotalDeductedLabel = "মোট কাটা হবে",
             mfsNetReceivedLabel = "চার্জ বাদে হাতে পাবেন"
+        ),
+        dateTimePermissions = DateTimePermissionsStrings(
+            liveDeviceClockTitle = "ডিভাইস সময় ও টাইমজোন",
+            autoTimeZoneBadge = "স্বয়ংক্রিয় সিঙ্ক",
+            refreshClockDesc = "তারিখ ও টাইমজোন রিফ্রেশ করুন",
+            permissionsSectionTitle = "ডিভাইস পারমিশন ও লোকেশন",
+            permissionsSectionSubtitle = "ভয়েস এন্ট্রি, রসিদ স্ক্যান ও ভ্রমণ অঞ্চলের জন্য পারমিশন পরিচালনা করুন",
+            permissionGrantedBadge = "চালু আছে",
+            permissionNeededBadge = "অনুমতি প্রয়োজন",
+            grantPermissionBtn = "অনুমতি দিন",
+            openSettingsBtn = "সেটিংস",
+            microphoneTitle = "মাইক্রোফোন (ভয়েস এন্ট্রি)",
+            microphoneRationale = "শুধুমাত্র ভয়েস এন্ট্রি ব্যবহার করে মুখে আয়-ব্যয় বলার সময় প্রয়োজন হয়।",
+            microphoneDeniedNotice = "মাইক্রোফোন অনুমতি বন্ধ আছে — আপনি নিচে টাইপ করেই সব এন্ট্রি করতে পারবেন।",
+            cameraTitle = "ক্যামেরা (রসিদ স্ক্যান)",
+            cameraRationale = "শুধুমাত্র সরাসরি বিল বা রসিদের ছবি তুলে স্ক্যান করার জন্য প্রয়োজন হয়।",
+            cameraDeniedNotice = "ক্যামেরা অনুমতি বন্ধ আছে — তবে গ্যালারি থেকে ছবি বাছাই করে স্ক্যান করতে পারবেন।",
+            locationTitle = "গুগল লোকেশন (ভ্রমণ ও অঞ্চল)",
+            locationRationale = "ভ্রমণের সময় বর্তমান অঞ্চল ও টাইমজোন প্রসঙ্গ শনাক্ত করতে ফোরগ্রাউন্ড লোকেশন ব্যবহার হয়।",
+            locationDeniedNotice = "লোকেশন অনুমতি বন্ধ আছে — ডিভাইসের টাইমজোন স্বয়ংক্রিয়ভাবে ব্যবহৃত হচ্ছে।",
+            locationActiveContextPrefix = "গুগল লোকেশন",
+            locationFallbackContextPrefix = "ডিভাইস টাইমজোন",
+            refreshLocationDesc = "লোকেশন তথ্য রিফ্রেশ করুন",
+            manualOfflineGuaranteeNote = "সব পারমিশন ঐচ্ছিক। অনুমতি না দিলেও ম্যানুয়াল ও অফলাইন হিসাব সম্পূর্ণভাবে কাজ করবে।"
+        ),
+        customerSupport = CustomerSupportStrings(
+            tileTitle = "কাস্টমার সাপোর্ট",
+            tileSubtitle = "তাৎক্ষণিক চ্যাট সহায়তা, অ্যাপ গাইড ও লাইভ কেয়ার",
+            headerTitle = "কাস্টমার সাপোর্ট",
+            statusOnline = "অনলাইন • এআই সাপোর্ট",
+            statusOffline = "অফলাইন • বিল্ট-ইন গাইড",
+            resetChatDesc = "নতুন চ্যাট শুরু করুন",
+            offlineBannerText = "আপনি এখন অফলাইনে আছেন — নিচের ক্যাটাগরি গাইডগুলো অফলাইনেই দেখুন। লাইভ এআই উত্তরের জন্য ইন্টারনেট চালু করুন।",
+            quickTopicsLabel = "দ্রুত সহায়তা ক্যাটাগরি",
+            allCategoriesChip = "সব ক্যাটাগরি",
+            inputPlaceholder = "আপনার প্রশ্ন বা সমস্যা লিখুন...",
+            sendDesc = "বার্তা পাঠান",
+            typingLabel = "উত্তর লেখা হচ্ছে...",
+            notResolvedChip = "সমাধান হয়নি — লাইভ সাপোর্ট চাই",
+            whatsappCardTitle = "হোয়াটসঅ্যাপ কাস্টমার কেয়ার",
+            whatsappCardSubtitle = "সরাসরি লাইভ সহায়তার জন্য যোগাযোগ করুন",
+            whatsappOpenBtn = "হোয়াটসঅ্যাপে চ্যাট করুন",
+            whatsappCopyBtn = "কপি",
+            whatsappCopiedNotice = "নম্বর কপি হয়েছে",
+            assistantLabel = "আমার হিসাব সাপোর্ট"
         )
     )
 

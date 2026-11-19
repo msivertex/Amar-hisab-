@@ -176,7 +176,12 @@ fun SmartTransactionModal(
         }
     }
 
-    val dateFormatter = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
+    val activeTzId = java.util.TimeZone.getDefault().id
+    val dateFormatter = remember(activeTzId) {
+        SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).apply {
+            timeZone = java.util.TimeZone.getTimeZone(activeTzId)
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,

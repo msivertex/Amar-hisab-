@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -77,6 +78,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
+import com.example.core.DevicePermissionsHelper
 import com.example.data.local.AccountEntity
 import com.example.data.local.TransactionEntity
 import com.example.data.model.ExpenseCategory
@@ -150,6 +152,31 @@ fun ReceiptScanSheet(
         }
     )
 
+    fun launchCameraCapture() {
+        val outputUri = runCatching { createReceiptCaptureUri(context) }.getOrNull()
+        if (outputUri == null) {
+            cameraNotice = strings.cameraUnavailableNotice
+        } else {
+            pendingCameraUriString = outputUri.toString()
+            val launched = runCatching { cameraLauncher.launch(outputUri) }.isSuccess
+            if (!launched) {
+                cameraNotice = strings.cameraUnavailableNotice
+            }
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { granted ->
+            if (granted) {
+                cameraNotice = null
+                launchCameraCapture()
+            } else {
+                cameraNotice = strings.dateTimePermissions.cameraDeniedNotice
+            }
+        }
+    )
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -184,7 +211,7 @@ fun ReceiptScanSheet(
                 }
             }
 
-            // Dual Scan Options: Live Camera Capture + Gallery Upload (Crystal Liquid Frosted-Glass Tiles)
+            // Dual Scan Options: Live Camera Capture (with runtime CAMERA permission) + Zero-Permission Gallery Upload
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -196,15 +223,11 @@ fun ReceiptScanSheet(
                     testTag = "scan_receipt_camera_button",
                     modifier = Modifier.weight(1f),
                     onClick = {
-                        val outputUri = runCatching { createReceiptCaptureUri(context) }.getOrNull()
-                        if (outputUri == null) {
-                            cameraNotice = strings.cameraUnavailableNotice
+                        if (DevicePermissionsHelper.isCameraGranted(context)) {
+                            launchCameraCapture()
                         } else {
-                            pendingCameraUriString = outputUri.toString()
-                            val launched = runCatching { cameraLauncher.launch(outputUri) }.isSuccess
-                            if (!launched) {
-                                cameraNotice = strings.cameraUnavailableNotice
-                            }
+                            cameraNotice = strings.dateTimePermissions.cameraRationale
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                         }
                     }
                 )
@@ -466,6 +489,7 @@ fun VoiceEntrySheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val crystal = LocalCrystalColors.current
+    val context = LocalContext.current
     var utterance by remember { mutableStateOf("") }
     var micNotice by remember { mutableStateOf<String?>(null) }
 
@@ -482,6 +506,37 @@ fun VoiceEntrySheet(
             }
         }
     }
+
+    fun launchSpeechRecognizer() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE,
+                if (language == AppLanguage.BN) "bn-BD" else "en-US"
+            )
+        }
+        try {
+            speechLauncher.launch(intent)
+        } catch (_: Exception) {
+            micNotice = if (language == AppLanguage.BN) {
+                "ভয়েস ইনপুট পাওয়া যায়নি—নিচে টাইপ করে স্মার্ট বিশ্লেষণ ব্যবহার করুন।"
+            } else {
+                "Device speech recognizer unavailable — type naturally below to parse."
+            }
+        }
+    }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { granted ->
+            if (granted) {
+                micNotice = null
+                launchSpeechRecognizer()
+            } else {
+                micNotice = strings.dateTimePermissions.microphoneDeniedNotice
+            }
+        }
+    )
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -510,25 +565,17 @@ fun VoiceEntrySheet(
             ) {
                 OutlinedButton(
                     onClick = {
-                        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                            putExtra(
-                                RecognizerIntent.EXTRA_LANGUAGE,
-                                if (language == AppLanguage.BN) "bn-BD" else "en-US"
-                            )
-                        }
-                        try {
-                            speechLauncher.launch(intent)
-                        } catch (_: Exception) {
-                            micNotice = if (language == AppLanguage.BN) {
-                                "ভয়েস ইনপুট পাওয়া যায়নি—নিচে টাইপ করে স্মার্ট বিশ্লেষণ ব্যবহার করুন।"
-                            } else {
-                                "Device speech recognizer unavailable — type naturally below to parse."
-                            }
+                        if (DevicePermissionsHelper.isMicrophoneGranted(context)) {
+                            launchSpeechRecognizer()
+                        } else {
+                            micNotice = strings.dateTimePermissions.microphoneRationale
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
                     },
                     shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("voice_entry_mic_button")
                 ) {
                     Icon(Icons.Filled.Mic, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.size(6.dp))

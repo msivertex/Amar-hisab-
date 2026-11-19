@@ -337,8 +337,10 @@ object MarketCalculators {
         if (millis <= 0L) {
             return if (language == AppLanguage.BN) "সংরক্ষিত রেফারেন্স" else "Saved Reference"
         }
-        val pattern = if (language == AppLanguage.BN) "dd MMM, hh:mm a" else "dd MMM, hh:mm a"
-        val formatted = SimpleDateFormat(pattern, Locale.US).format(Date(millis))
+        val pattern = "dd MMM, hh:mm a"
+        val formatted = SimpleDateFormat(pattern, Locale.US).apply {
+            timeZone = java.util.TimeZone.getDefault()
+        }.format(Date(millis))
         return if (language == AppLanguage.BN) toBanglaDigits(formatted) else formatted
     }
 

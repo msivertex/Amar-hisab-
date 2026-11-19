@@ -9,9 +9,11 @@ import android.provider.MediaStore
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.core.DeviceTimeContext
 import com.example.core.GoogleAccountProfile
 import com.example.core.GoogleAuthManager
 import com.example.core.NetworkConnectivityMonitor
+import com.example.core.SystemClockMonitor
 import com.example.data.ai.GeminiAiService
 import com.example.data.ai.InsightsSummaryHelper
 import com.example.data.ai.MarketErrorCategory
@@ -49,6 +51,16 @@ import com.example.data.model.StartOfWeek
 import com.example.data.model.TransactionType
 import com.example.data.model.VoiceParsedTransaction
 import com.example.data.repository.FinanceRepository
+import com.example.data.support.CustomerSupportEngine
+import com.example.data.support.SUPPORT_GREETING_REPLY_BN
+import com.example.data.support.SUPPORT_INITIAL_GREETING_BN
+import com.example.data.support.SUPPORT_OFFLINE_AI_NOTICE_BN
+import com.example.data.support.SUPPORT_OFFLINE_GUIDE_FOOTER_BN
+import com.example.data.support.SupportCategoryId
+import com.example.data.support.SupportChatMessage
+import com.example.data.support.SupportQuickOption
+import com.example.data.support.SupportSender
+import com.example.data.support.SupportUiState
 import com.example.localization.AppLanguage
 import com.example.localization.BdtFormatter
 import kotlinx.coroutines.CancellationException
@@ -66,6 +78,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
 
 private const val TAG = "MainViewModel"
 
@@ -109,7 +122,8 @@ data class MainUiState(
     val showSettingsScreen: Boolean = false,
     val insightFilter: InsightTimeFilter = InsightTimeFilter.THIS_MONTH,
     val insightMonthOffset: Int = 0,
-    val analytics: AnalyticsSnapshot = AnalyticsSnapshot()
+    val analytics: AnalyticsSnapshot = AnalyticsSnapshot(),
+    val deviceTimeContext: DeviceTimeContext = DeviceTimeContext.current()
 )
 
 sealed interface ReceiptScanUiState {
@@ -157,6 +171,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val aiService = GeminiAiService()
     private val ttsPlayer = TtsAudioPlayer(application)
     private val connectivityMonitor = NetworkConnectivityMonitor(application)
+    private val systemClockMonitor = SystemClockMonitor(application)
     private val marketRepository = MarketDataRepository(application)
 
     private val _selectedTab = MutableStateFlow(AppTab.HOME)
@@ -202,8 +217,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = MarketSyncUiState(isOnline = connectivityMonitor.isOnline.value)
     )
 
+    private var supportMessageCounter = 0L
+    private val _supportState = MutableStateFlow(
+        SupportUiState(isOnline = connectivityMonitor.isOnline.value)
+    )
+    val supportUiState: StateFlow<SupportUiState> = combine(
+        _supportState,
+        connectivityMonitor.isOnline
+    ) { state, online ->
+        state.copy(isOnline = online)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = SupportUiState(isOnline = connectivityMonitor.isOnline.value)
+    )
+
     init {
         connectivityMonitor.start()
+        systemClockMonitor.start()
         // Automatically sync live exchange rates & gold benchmarks at least once per day
         // and whenever internet connectivity is restored.
         viewModelScope.launch {
@@ -216,6 +247,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    fun refreshSystemTime(
+        nowMillis: Long = System.currentTimeMillis(),
+        timeZone: TimeZone = TimeZone.getDefault()
+    ) {
+        systemClockMonitor.refreshNow(nowMillis, timeZone)
     }
 
     fun refreshMarketRates(force: Boolean = true) {
@@ -272,8 +310,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefsRepo.userPrefs,
         _pendingDashboardLayout,
         dbFlow,
-        navAndFilterFlow
-    ) { prefs, pendingLayout, dbData, nav ->
+        navAndFilterFlow,
+        systemClockMonitor.timeContext
+    ) { prefs, pendingLayout, dbData, nav, timeCtx ->
         val effectivePrefs = if (pendingLayout != null) {
             prefs.copy(
                 homeLayoutStyle = pendingLayout.layoutStyle,
@@ -283,7 +322,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             prefs
         }
-        buildMainUiState(effectivePrefs, dbData, nav)
+        buildMainUiState(effectivePrefs, dbData, nav, timeCtx)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -884,10 +923,281 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _ttsState.value = TtsUiState.Idle
     }
 
+    // ─── Customer Support (কাস্টমার সাপোর্ট) ───────────────────────────────────────────
+
+    private fun nextSupportMsgId(): String {
+        supportMessageCounter += 1L
+        return "sup_${supportMessageCounter}_${System.nanoTime()}"
+    }
+
+    fun ensureCustomerSupportInitialized() {
+        val current = _supportState.value
+        if (current.messages.isNotEmpty()) return
+        val now = systemClockMonitor.timeContext.value.epochMillis
+        _supportState.value = current.copy(
+            messages = listOf(
+                SupportChatMessage(
+                    id = nextSupportMsgId(),
+                    sender = SupportSender.ASSISTANT,
+                    text = SUPPORT_INITIAL_GREETING_BN,
+                    timestampMillis = now
+                )
+            )
+        )
+    }
+
+    fun resetCustomerSupportChat() {
+        val now = systemClockMonitor.timeContext.value.epochMillis
+        _supportState.value = SupportUiState(
+            messages = listOf(
+                SupportChatMessage(
+                    id = nextSupportMsgId(),
+                    sender = SupportSender.ASSISTANT,
+                    text = SUPPORT_INITIAL_GREETING_BN,
+                    timestampMillis = now
+                )
+            ),
+            selectedCategoryId = null,
+            isTyping = false,
+            isOnline = connectivityMonitor.isOnline.value,
+            hasAttemptedTroubleshooting = false
+        )
+    }
+
+    fun selectSupportCategory(categoryId: SupportCategoryId?) {
+        ensureCustomerSupportInitialized()
+        _supportState.value = _supportState.value.copy(selectedCategoryId = categoryId)
+    }
+
+    fun selectSupportQuickOption(option: SupportQuickOption) {
+        ensureCustomerSupportInitialized()
+        val now = System.currentTimeMillis()
+        val prev = _supportState.value
+        val userMsg = SupportChatMessage(
+            id = nextSupportMsgId(),
+            sender = SupportSender.USER,
+            text = option.labelBn,
+            timestampMillis = now
+        )
+
+        val escalateNow = option.isLiveCareTrigger && prev.hasAttemptedTroubleshooting
+        val assistantMsg = if (escalateNow) {
+            SupportChatMessage(
+                id = nextSupportMsgId(),
+                sender = SupportSender.ASSISTANT,
+                text = CustomerSupportEngine.buildWhatsAppEscalationMessage(isCritical = false),
+                timestampMillis = now + 1L,
+                showWhatsAppCard = true
+            )
+        } else {
+            SupportChatMessage(
+                id = nextSupportMsgId(),
+                sender = SupportSender.ASSISTANT,
+                text = option.guideBn,
+                timestampMillis = now + 1L,
+                showWhatsAppCard = false,
+                offerNotResolvedAction = true
+            )
+        }
+
+        _supportState.value = prev.copy(
+            messages = prev.messages + userMsg + assistantMsg,
+            selectedCategoryId = null,
+            hasAttemptedTroubleshooting = true
+        )
+    }
+
+    fun requestLiveCareAfterTroubleshooting() {
+        ensureCustomerSupportInitialized()
+        val prev = _supportState.value
+        val now = System.currentTimeMillis()
+        val userMsg = SupportChatMessage(
+            id = nextSupportMsgId(),
+            sender = SupportSender.USER,
+            text = "সমাধান হয়নি — লাইভ সাপোর্ট চাই",
+            timestampMillis = now
+        )
+        val escalationMsg = SupportChatMessage(
+            id = nextSupportMsgId(),
+            sender = SupportSender.ASSISTANT,
+            text = CustomerSupportEngine.buildWhatsAppEscalationMessage(isCritical = false),
+            timestampMillis = now + 1L,
+            showWhatsAppCard = true
+        )
+        _supportState.value = prev.copy(
+            messages = prev.messages + userMsg + escalationMsg,
+            selectedCategoryId = null,
+            hasAttemptedTroubleshooting = true
+        )
+    }
+
+    fun sendCustomerSupportMessage(rawMessage: String) {
+        val trimmed = rawMessage.trim()
+        if (trimmed.isEmpty()) return
+        ensureCustomerSupportInitialized()
+
+        val prev = _supportState.value
+        val now = System.currentTimeMillis()
+        val userMsg = SupportChatMessage(
+            id = nextSupportMsgId(),
+            sender = SupportSender.USER,
+            text = trimmed,
+            timestampMillis = now
+        )
+
+        // 1. Non-blocking polite greeting response (never leaks WhatsApp)
+        if (CustomerSupportEngine.isPureGreeting(trimmed)) {
+            val reply = SupportChatMessage(
+                id = nextSupportMsgId(),
+                sender = SupportSender.ASSISTANT,
+                text = SUPPORT_GREETING_REPLY_BN,
+                timestampMillis = now + 1L,
+                showWhatsAppCard = false
+            )
+            _supportState.value = prev.copy(
+                messages = prev.messages + userMsg + reply,
+                selectedCategoryId = null
+            )
+            return
+        }
+
+        // 2. Explicit live-care request AFTER prior troubleshooting
+        val isCritical = CustomerSupportEngine.isCriticalIssue(trimmed)
+        if (prev.hasAttemptedTroubleshooting && CustomerSupportEngine.isExplicitHumanRequest(trimmed)) {
+            val reply = SupportChatMessage(
+                id = nextSupportMsgId(),
+                sender = SupportSender.ASSISTANT,
+                text = CustomerSupportEngine.buildWhatsAppEscalationMessage(isCritical = isCritical),
+                timestampMillis = now + 1L,
+                showWhatsAppCard = true
+            )
+            _supportState.value = prev.copy(
+                messages = prev.messages + userMsg + reply,
+                selectedCategoryId = null
+            )
+            return
+        }
+
+        val onlineNow = connectivityMonitor.refreshNow()
+        val updatedMessages = prev.messages + userMsg
+
+        // 3. Offline handling: built-in guide match or polite Bangla offline notice
+        if (!onlineNow) {
+            val matchedGuide = CustomerSupportEngine.matchLocalGuide(trimmed)
+            val escalate = CustomerSupportEngine.shouldEscalateToWhatsApp(
+                userMessage = trimmed,
+                hasAttemptedTroubleshooting = prev.hasAttemptedTroubleshooting
+            )
+            val assistantMsg = when {
+                matchedGuide != null -> SupportChatMessage(
+                    id = nextSupportMsgId(),
+                    sender = SupportSender.ASSISTANT,
+                    text = matchedGuide.guideBn + SUPPORT_OFFLINE_GUIDE_FOOTER_BN,
+                    timestampMillis = now + 1L,
+                    showWhatsAppCard = escalate,
+                    offerNotResolvedAction = !escalate
+                )
+
+                escalate -> SupportChatMessage(
+                    id = nextSupportMsgId(),
+                    sender = SupportSender.ASSISTANT,
+                    text = CustomerSupportEngine.buildWhatsAppEscalationMessage(isCritical = isCritical),
+                    timestampMillis = now + 1L,
+                    showWhatsAppCard = true
+                )
+
+                else -> SupportChatMessage(
+                    id = nextSupportMsgId(),
+                    sender = SupportSender.ASSISTANT,
+                    text = SUPPORT_OFFLINE_AI_NOTICE_BN,
+                    timestampMillis = now + 1L,
+                    showWhatsAppCard = false,
+                    isOfflineNotice = true
+                )
+            }
+            _supportState.value = prev.copy(
+                messages = updatedMessages + assistantMsg,
+                selectedCategoryId = null,
+                isTyping = false,
+                hasAttemptedTroubleshooting = prev.hasAttemptedTroubleshooting || matchedGuide != null || escalate
+            )
+            return
+        }
+
+        // 4. Online custom query via Firebase AI Logic (gemini-3.8-flash)
+        _supportState.value = prev.copy(
+            messages = updatedMessages,
+            selectedCategoryId = null,
+            isTyping = true
+        )
+
+        viewModelScope.launch {
+            try {
+                val aiReply = aiService.askCustomerSupport(
+                    userMessage = trimmed,
+                    recentHistory = updatedMessages,
+                    hasAttemptedTroubleshooting = prev.hasAttemptedTroubleshooting
+                )
+                val escalate = CustomerSupportEngine.shouldEscalateToWhatsApp(
+                    userMessage = trimmed,
+                    hasAttemptedTroubleshooting = prev.hasAttemptedTroubleshooting,
+                    aiSuggestedEscalation = aiReply.needsHumanEscalation
+                )
+                val assistantMsg = SupportChatMessage(
+                    id = nextSupportMsgId(),
+                    sender = SupportSender.ASSISTANT,
+                    text = aiReply.replyText,
+                    timestampMillis = System.currentTimeMillis(),
+                    showWhatsAppCard = escalate,
+                    offerNotResolvedAction = !escalate,
+                    followUpChips = aiReply.suggestedFollowUps
+                )
+                val latest = _supportState.value
+                _supportState.value = latest.copy(
+                    messages = latest.messages + assistantMsg,
+                    isTyping = false,
+                    hasAttemptedTroubleshooting = true
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Customer support AI fallback engaged", e)
+                val matchedGuide = CustomerSupportEngine.matchLocalGuide(trimmed)
+                val escalate = CustomerSupportEngine.shouldEscalateToWhatsApp(
+                    userMessage = trimmed,
+                    hasAttemptedTroubleshooting = prev.hasAttemptedTroubleshooting
+                )
+                val fallbackText = when {
+                    matchedGuide != null -> matchedGuide.guideBn
+                    escalate -> CustomerSupportEngine.buildWhatsAppEscalationMessage(isCritical = isCritical)
+                    e is TimeoutCancellationException ->
+                        "এই মুহূর্তে লাইভ এআই সাড়া দিতে একটু সময় নিচ্ছে। আপনি নিচের ক্যাটাগরি গাইড থেকে তাৎক্ষণিক উত্তর দেখতে পারেন অথবা আবার চেষ্টা করুন।"
+                    else ->
+                        "এই মুহূর্তে লাইভ এআই সংযোগে সাময়িক সমস্যা হয়েছে। নিচের ক্যাটাগরি গাইডগুলো অফলাইনেও কাজ করে—অথবা কিছুক্ষণ পর আবার চেষ্টা করুন।"
+                }
+                val assistantMsg = SupportChatMessage(
+                    id = nextSupportMsgId(),
+                    sender = SupportSender.ASSISTANT,
+                    text = fallbackText,
+                    timestampMillis = System.currentTimeMillis(),
+                    showWhatsAppCard = escalate,
+                    offerNotResolvedAction = !escalate && matchedGuide != null
+                )
+                val latest = _supportState.value
+                _supportState.value = latest.copy(
+                    messages = latest.messages + assistantMsg,
+                    isTyping = false,
+                    hasAttemptedTroubleshooting = latest.hasAttemptedTroubleshooting || matchedGuide != null || escalate
+                )
+            }
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         ttsPlayer.stop()
         connectivityMonitor.stop()
+        systemClockMonitor.stop()
     }
 
     private fun loadBitmapFromUri(uri: Uri): Bitmap {
@@ -920,10 +1230,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun buildMainUiState(
         prefs: UserPrefs,
         dbData: DbSnapshot,
-        nav: NavFilterState
+        nav: NavFilterState,
+        timeContext: DeviceTimeContext
     ): MainUiState {
         val accounts = dbData.accounts
         val transactions = dbData.transactions
+        val activeTz = timeContext.timeZone
 
         val assets = accounts
             .filter { it.type != AccountType.CREDIT_CARD }
@@ -932,38 +1244,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .filter { it.type == AccountType.CREDIT_CARD }
             .sumOf { it.balance.coerceAtLeast(0.0) }
 
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance(activeTz).apply { timeInMillis = timeContext.epochMillis }
         val currentMonth = cal.get(Calendar.MONTH)
         val currentYear = cal.get(Calendar.YEAR)
         val currentDay = cal.get(Calendar.DAY_OF_MONTH).coerceAtLeast(1)
 
         val monthTx = transactions.filter { tx ->
-            val txCal = Calendar.getInstance().apply { timeInMillis = tx.timestamp }
+            val txCal = Calendar.getInstance(activeTz).apply { timeInMillis = tx.timestamp }
             txCal.get(Calendar.MONTH) == currentMonth && txCal.get(Calendar.YEAR) == currentYear
         }
         val spentThisMonth = monthTx.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
         val incomeThisMonth = monthTx.filter { it.type == TransactionType.INCOME }.sumOf { it.amount }
         val dailyAverage = if (spentThisMonth > 0) spentThisMonth / currentDay else 1200.0
 
-        val todayStart = Calendar.getInstance().apply {
+        val todayStartCal = Calendar.getInstance(activeTz).apply {
+            timeInMillis = timeContext.epochMillis
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }
+        val todayStart = todayStartCal.timeInMillis
+        val tomorrowStart = (todayStartCal.clone() as Calendar).apply {
+            add(Calendar.DAY_OF_MONTH, 1)
         }.timeInMillis
 
         val todaySpend = transactions
-            .filter { it.type == TransactionType.EXPENSE && it.timestamp >= todayStart }
+            .filter { it.type == TransactionType.EXPENSE && it.timestamp in todayStart until tomorrowStart }
             .sumOf { it.amount }
 
         var streak = 0
         val dayCap = maxOf(dailyAverage * 1.15, prefs.monthlyBudget / 30.0)
         for (offset in 0..29) {
-            val dayStart = Calendar.getInstance().apply {
+            val dayStartCal = Calendar.getInstance(activeTz).apply {
+                timeInMillis = timeContext.epochMillis
                 add(Calendar.DAY_OF_MONTH, -offset)
                 set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
                 set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            }
+            val dayStart = dayStartCal.timeInMillis
+            val nextDayStart = (dayStartCal.clone() as Calendar).apply {
+                add(Calendar.DAY_OF_MONTH, 1)
             }.timeInMillis
             val daySpent = transactions
-                .filter { it.type == TransactionType.EXPENSE && it.timestamp in dayStart until (dayStart + 86_400_000L) }
+                .filter { it.type == TransactionType.EXPENSE && it.timestamp in dayStart until nextDayStart }
                 .sumOf { it.amount }
             if (daySpent <= dayCap) streak++ else break
         }
@@ -984,7 +1306,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             transactions = transactions,
             filter = nav.filter,
             monthOffset = nav.monthOffset,
-            startOfWeek = prefs.startOfWeek
+            startOfWeek = prefs.startOfWeek,
+            timeContext = timeContext
         )
 
         val alerts = buildSmartAlerts(prefs, accounts, dbData.loans, spentThisMonth, streak)
@@ -1012,7 +1335,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showSettingsScreen = nav.showSettings,
             insightFilter = nav.filter,
             insightMonthOffset = nav.monthOffset,
-            analytics = analytics
+            analytics = analytics,
+            deviceTimeContext = timeContext
         )
     }
 
@@ -1020,27 +1344,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         transactions: List<TransactionEntity>,
         filter: InsightTimeFilter,
         monthOffset: Int,
-        startOfWeek: StartOfWeek
+        startOfWeek: StartOfWeek,
+        timeContext: DeviceTimeContext
     ): AnalyticsSnapshot {
-        val startCal = Calendar.getInstance().apply {
+        val activeTz = timeContext.timeZone
+        val startCal = Calendar.getInstance(activeTz).apply {
+            timeInMillis = timeContext.epochMillis
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }
-        val endCal = Calendar.getInstance()
+        val endCal = Calendar.getInstance(activeTz)
 
         val periodLabel: String
         when (filter) {
             InsightTimeFilter.DAILY -> {
-                endCal.timeInMillis = startCal.timeInMillis + 86_400_000L
-                periodLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(startCal.time)
+                endCal.timeInMillis = startCal.timeInMillis
+                endCal.add(Calendar.DAY_OF_MONTH, 1)
+                periodLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+                    .apply { timeZone = activeTz }
+                    .format(startCal.time)
             }
             InsightTimeFilter.THIS_WEEK -> {
                 startCal.firstDayOfWeek = startOfWeek.calendarDay
                 while (startCal.get(Calendar.DAY_OF_WEEK) != startOfWeek.calendarDay) {
                     startCal.add(Calendar.DAY_OF_MONTH, -1)
                 }
-                endCal.timeInMillis = startCal.timeInMillis + 7 * 86_400_000L
-                val fmt = SimpleDateFormat("dd MMM", Locale.getDefault())
+                endCal.timeInMillis = startCal.timeInMillis
+                endCal.add(Calendar.DAY_OF_MONTH, 7)
+                val fmt = SimpleDateFormat("dd MMM", Locale.getDefault()).apply { timeZone = activeTz }
                 periodLabel = "${fmt.format(startCal.time)} – ${fmt.format(endCal.timeInMillis - 1)}"
             }
             InsightTimeFilter.LAST_MONTH -> {
@@ -1048,18 +1379,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 startCal.set(Calendar.DAY_OF_MONTH, 1)
                 endCal.timeInMillis = startCal.timeInMillis
                 endCal.add(Calendar.MONTH, 1)
-                periodLabel = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(startCal.time)
+                periodLabel = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+                    .apply { timeZone = activeTz }
+                    .format(startCal.time)
             }
             InsightTimeFilter.THIS_MONTH -> {
                 startCal.add(Calendar.MONTH, monthOffset)
                 startCal.set(Calendar.DAY_OF_MONTH, 1)
                 endCal.timeInMillis = startCal.timeInMillis
                 endCal.add(Calendar.MONTH, 1)
-                periodLabel = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(startCal.time)
+                periodLabel = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+                    .apply { timeZone = activeTz }
+                    .format(startCal.time)
             }
         }
 
-        val prevStartCal = Calendar.getInstance().apply { timeInMillis = startCal.timeInMillis }
+        val prevStartCal = Calendar.getInstance(activeTz).apply { timeInMillis = startCal.timeInMillis }
         val prevEndMillis = startCal.timeInMillis
         when (filter) {
             InsightTimeFilter.DAILY -> prevStartCal.add(Calendar.DAY_OF_MONTH, -1)
@@ -1098,8 +1433,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             .sortedByDescending { it.amount }
 
-        // Build trend buckets (up to 10 buckets or daily buckets for week/month)
-        val dayFormat = SimpleDateFormat("dd", Locale.getDefault())
+        // Build trend buckets (up to 10 buckets or daily buckets for week/month) in active local timezone
+        val dayFormat = SimpleDateFormat("dd", Locale.getDefault()).apply { timeZone = activeTz }
         val expenseByDayKey = periodTx
             .filter { it.type == TransactionType.EXPENSE }
             .groupBy { dayFormat.format(it.timestamp) }
@@ -1112,16 +1447,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             hourSlices.forEachIndexed { i, range ->
                 val amt = periodTx.filter { tx ->
                     if (tx.type != TransactionType.EXPENSE) return@filter false
-                    val c = Calendar.getInstance().apply { timeInMillis = tx.timestamp }
+                    val c = Calendar.getInstance(activeTz).apply { timeInMillis = tx.timestamp }
                     c.get(Calendar.HOUR_OF_DAY) in range
                 }.sumOf { it.amount }
                 rawPoints += DailyTrendPoint(labels[i], amt)
             }
         } else {
-            val totalDays = (((endCal.timeInMillis - startCal.timeInMillis) / 86_400_000L).toInt())
+            val totalDays = (((endCal.timeInMillis - startCal.timeInMillis + 43_200_000L) / 86_400_000L).toInt())
                 .coerceIn(1, 31)
             val step = if (totalDays > 10) 3 else 1
-            val iter = Calendar.getInstance().apply { timeInMillis = startCal.timeInMillis }
+            val iter = Calendar.getInstance(activeTz).apply { timeInMillis = startCal.timeInMillis }
             var dayIndex = 0
             while (dayIndex < totalDays) {
                 var bucketSum = 0.0

@@ -21,10 +21,14 @@ import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
 import androidx.fragment.app.FragmentActivity
 import androidx.test.core.app.ApplicationProvider
+import com.example.core.AppPermissionKind
 import com.example.core.BiometricAuthFailureReason
 import com.example.core.BiometricAuthHelper
 import com.example.core.BiometricAvailability
 import com.example.core.BiometricCapabilityInfo
+import com.example.core.DevicePermissionsSnapshot
+import com.example.core.DeviceTimeContext
+import com.example.core.LocationRegionContext
 import com.example.data.ai.InsightsSummaryHelper
 import com.example.data.ai.MarketErrorCategory
 import com.example.data.export.ExportSharePayload
@@ -54,6 +58,16 @@ import com.example.data.model.HomeSectionId
 import com.example.data.model.InsightTimeFilter
 import com.example.data.model.StartOfWeek
 import com.example.data.model.TransactionType
+import com.example.data.support.CustomerSupportCatalog
+import com.example.data.support.CustomerSupportEngine
+import com.example.data.support.SUPPORT_GREETING_REPLY_BN
+import com.example.data.support.SUPPORT_INITIAL_GREETING_BN
+import com.example.data.support.SUPPORT_OFFLINE_AI_NOTICE_BN
+import com.example.data.support.SUPPORT_WHATSAPP_DISPLAY
+import com.example.data.support.SupportCategoryId
+import com.example.data.support.SupportChatMessage
+import com.example.data.support.SupportSender
+import com.example.data.support.SupportUiState
 import com.example.localization.AppLanguage
 import com.example.localization.StringsProvider
 import com.example.ui.screens.AppLockScreen
@@ -88,6 +102,7 @@ import kotlinx.coroutines.runBlocking
 import org.robolectric.Shadows
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -2526,5 +2541,346 @@ class ExampleRobolectricTest {
         useDark = true
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("market_interactive_tools_card").assertIsDisplayed()
+    }
+
+    @Test
+    fun `system time and timezone reactivity updates period boundaries and Settings manages mic, camera, and Google location permissions`() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+
+        // 1. Verify DeviceTimeContext dynamically adapts to different travel timezones without hardcoding
+        val sampleInstant = 1_763_590_000_000L // Fixed UTC instant
+        val dhakaCtx = DeviceTimeContext.current(sampleInstant, java.util.TimeZone.getTimeZone("Asia/Dhaka"))
+        val riyadhCtx = DeviceTimeContext.current(sampleInstant, java.util.TimeZone.getTimeZone("Asia/Riyadh"))
+        val nyCtx = DeviceTimeContext.current(sampleInstant, java.util.TimeZone.getTimeZone("America/New_York"))
+
+        assertEquals("Asia/Dhaka", dhakaCtx.timeZoneId)
+        assertEquals("UTC+06:00", dhakaCtx.utcOffsetLabel)
+        assertEquals("Asia/Riyadh", riyadhCtx.timeZoneId)
+        assertEquals("UTC+03:00", riyadhCtx.utcOffsetLabel)
+        assertEquals("America/New_York", nyCtx.timeZoneId)
+        assertEquals("UTC-05:00", nyCtx.utcOffsetLabel)
+
+        // 2. Verify MainViewModel reacts immediately when timezone changes across midnight boundary
+        val viewModel = MainViewModel(app)
+        // 2026-11-19 02:00 UTC -> Nov 19 in Asia/Dhaka (UTC+6), Nov 18 in America/New_York (UTC-5)
+        val crossMidnightUtc = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+            set(2026, java.util.Calendar.NOVEMBER, 19, 2, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        viewModel.setInsightFilter(InsightTimeFilter.DAILY)
+        viewModel.refreshSystemTime(crossMidnightUtc, java.util.TimeZone.getTimeZone("Asia/Dhaka"))
+        val dhakaState = runBlocking {
+            viewModel.uiState.first { it.deviceTimeContext.timeZoneId == "Asia/Dhaka" && it.insightFilter == InsightTimeFilter.DAILY }
+        }
+        assertEquals("2026-11-19", dhakaState.deviceTimeContext.dayKey)
+        assertTrue(dhakaState.analytics.periodLabel.contains("19"))
+
+        viewModel.refreshSystemTime(crossMidnightUtc, java.util.TimeZone.getTimeZone("America/New_York"))
+        val nyState = runBlocking {
+            viewModel.uiState.first { it.deviceTimeContext.timeZoneId == "America/New_York" && it.insightFilter == InsightTimeFilter.DAILY }
+        }
+        assertEquals("2026-11-18", nyState.deviceTimeContext.dayKey)
+        assertTrue(nyState.analytics.periodLabel.contains("18"))
+
+        // 3. Verify SettingsScreen Live Device Clock Banner + Mic/Camera/Google Location Permissions Card (Light & Dark)
+        var requestedKinds by mutableStateOf(listOf<AppPermissionKind>())
+        var permSnapshot by mutableStateOf(
+            DevicePermissionsSnapshot(microphoneGranted = false, cameraGranted = false, locationGranted = false)
+        )
+        var refreshedClock by mutableStateOf(false)
+        var useDark by mutableStateOf(false)
+
+        composeRule.setContent {
+            AmarHisabTheme(darkTheme = useDark, isBangla = true) {
+                SettingsScreen(
+                    prefs = UserPrefs(language = AppLanguage.BN, startOfWeek = StartOfWeek.SATURDAY),
+                    accounts = emptyList(),
+                    backupStatus = null,
+                    strings = StringsProvider.bangla,
+                    onBack = {},
+                    onEditProfileBudget = {},
+                    onLinkGoogleProfile = {},
+                    onUnlinkGoogleAccount = {},
+                    onOpenAccounts = {},
+                    onSetLanguage = {},
+                    onSetDarkTheme = {},
+                    onSetEnableSubcategories = {},
+                    onSetAutoOpenKeypad = {},
+                    onSetDefaultAccount = {},
+                    onSetStartOfWeek = {},
+                    onSetHapticFeedback = {},
+                    onSetNotifications = { _, _, _ -> },
+                    onUpdateDashboardLayout = { _, _, _ -> },
+                    onSetAppLock = { _, _ -> },
+                    onSetBiometricUnlock = {},
+                    onLockNow = {},
+                    onExportJson = {},
+                    onExportCsv = {},
+                    onRestoreJson = {},
+                    onClearBackupStatus = {},
+                    deviceTimeContext = riyadhCtx,
+                    onRefreshSystemTime = { refreshedClock = true },
+                    permissionsOverride = permSnapshot,
+                    locationContextOverride = LocationRegionContext(
+                        label = "Riyadh, Saudi Arabia",
+                        countryCode = "SA",
+                        timeZoneId = "Asia/Riyadh",
+                        isFromGoogleLocation = permSnapshot.locationGranted
+                    ),
+                    onRequestPermissionOverride = { kind ->
+                        requestedKinds = requestedKinds + kind
+                        permSnapshot = when (kind) {
+                            AppPermissionKind.MICROPHONE -> permSnapshot.copy(microphoneGranted = true)
+                            AppPermissionKind.CAMERA -> permSnapshot.copy(cameraGranted = true)
+                            AppPermissionKind.LOCATION -> permSnapshot.copy(locationGranted = true)
+                        }
+                    }
+                )
+            }
+        }
+
+        // Verify live device clock & timezone card
+        composeRule.onNodeWithTag("settings_list")
+            .performScrollToNode(hasTestTag("settings_date_time_card"))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_live_timezone_tile").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_refresh_time_button").performClick()
+        assertTrue(refreshedClock)
+
+        // Verify Microphone, Camera, and Google Location permission cards & grant flows
+        composeRule.onNodeWithTag("settings_list")
+            .performScrollToNode(hasTestTag("settings_permissions_card"))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_permission_microphone_allow_btn").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_permission_camera_allow_btn").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_list").performTouchInput { swipeUp() }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_permission_location_allow_btn").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        assertEquals(
+            listOf(AppPermissionKind.MICROPHONE, AppPermissionKind.CAMERA, AppPermissionKind.LOCATION),
+            requestedKinds
+        )
+        composeRule.onNodeWithTag("settings_location_context_badge").assertIsDisplayed()
+
+        // Verify Dark mode rendering
+        useDark = true
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_permissions_card").assertIsDisplayed()
+    }
+
+    @Test
+    fun `customer support inside Settings greets immediately, handles 6 categories offline, and controls WhatsApp escalation`() {
+        // 1. Unit-verify CustomerSupportEngine greeting, matching & strict WhatsApp escalation rules
+        assertTrue(CustomerSupportEngine.isPureGreeting("ওয়ালাইকুম আসসালাম"))
+        assertTrue(CustomerSupportEngine.isPureGreeting("সালাম"))
+        assertFalse(CustomerSupportEngine.isPureGreeting("ওয়ালাইকুম আসসালাম, রসিদ স্ক্যান কাজ করছে না"))
+        assertEquals(6, CustomerSupportCatalog.categories.size)
+
+        // Never escalate on initial greeting or standard how-to questions
+        assertFalse(
+            CustomerSupportEngine.shouldEscalateToWhatsApp(
+                userMessage = "ওয়ালাইকুম আসসালাম",
+                hasAttemptedTroubleshooting = false,
+                aiSuggestedEscalation = true
+            )
+        )
+        assertFalse(
+            CustomerSupportEngine.shouldEscalateToWhatsApp(
+                userMessage = "কীভাবে PDF এক্সপোর্ট করব?",
+                hasAttemptedTroubleshooting = false,
+                aiSuggestedEscalation = false
+            )
+        )
+        // Escalate on critical/emergency issue OR explicit human request AFTER troubleshooting
+        assertTrue(
+            CustomerSupportEngine.shouldEscalateToWhatsApp(
+                userMessage = "অ্যাপ ক্র্যাশ করছে এবং ডাটা মুছে গেছে",
+                hasAttemptedTroubleshooting = false
+            )
+        )
+        assertTrue(
+            CustomerSupportEngine.shouldEscalateToWhatsApp(
+                userMessage = "সমাধান হয়নি, লাইভ সাপোর্ট চাই",
+                hasAttemptedTroubleshooting = true
+            )
+        )
+        assertNotNull(CustomerSupportEngine.matchLocalGuide("আজকের KWD রেট ও সোনার দাম"))
+        assertNotNull(CustomerSupportEngine.matchLocalGuide("মাসিক PDF এক্সপোর্ট"))
+        assertNotNull(CustomerSupportEngine.matchLocalGuide("সপ্তাহের শুরু পরিবর্তন"))
+
+        // 2. Compose UI flow: open from Settings bottom tile -> immediate self-initiated greeting -> non-blocking replies -> controlled escalation
+        var supportState by mutableStateOf(SupportUiState(isOnline = false))
+        var msgCounter = 0L
+        fun nextId(): String = "t_${++msgCounter}"
+
+        fun ensureInit() {
+            if (supportState.messages.isEmpty()) {
+                supportState = supportState.copy(
+                    messages = listOf(
+                        SupportChatMessage(
+                            id = nextId(),
+                            sender = SupportSender.ASSISTANT,
+                            text = SUPPORT_INITIAL_GREETING_BN,
+                            timestampMillis = 1_763_539_200_000L
+                        )
+                    )
+                )
+            }
+        }
+
+        var useDark by mutableStateOf(false)
+
+        composeRule.setContent {
+            AmarHisabTheme(darkTheme = useDark, isBangla = true) {
+                SettingsScreen(
+                    prefs = UserPrefs(language = AppLanguage.BN),
+                    accounts = emptyList(),
+                    backupStatus = null,
+                    strings = StringsProvider.bangla,
+                    onBack = {},
+                    onEditProfileBudget = {},
+                    onLinkGoogleProfile = {},
+                    onUnlinkGoogleAccount = {},
+                    onOpenAccounts = {},
+                    onSetLanguage = {},
+                    onSetDarkTheme = {},
+                    onSetEnableSubcategories = {},
+                    onSetAutoOpenKeypad = {},
+                    onSetDefaultAccount = {},
+                    onSetStartOfWeek = {},
+                    onSetHapticFeedback = {},
+                    onSetNotifications = { _, _, _ -> },
+                    onUpdateDashboardLayout = { _, _, _ -> },
+                    onSetAppLock = { _, _ -> },
+                    onSetBiometricUnlock = {},
+                    onLockNow = {},
+                    onExportJson = {},
+                    onExportCsv = {},
+                    onRestoreJson = {},
+                    onClearBackupStatus = {},
+                    supportState = supportState,
+                    onEnsureSupportInitialized = { ensureInit() },
+                    onSelectSupportCategory = { cat ->
+                        ensureInit()
+                        supportState = supportState.copy(selectedCategoryId = cat)
+                    },
+                    onSelectSupportQuickOption = { opt ->
+                        ensureInit()
+                        supportState = supportState.copy(
+                            messages = supportState.messages +
+                                SupportChatMessage(nextId(), SupportSender.USER, opt.labelBn, 1_763_539_210_000L) +
+                                SupportChatMessage(
+                                    id = nextId(),
+                                    sender = SupportSender.ASSISTANT,
+                                    text = opt.guideBn,
+                                    timestampMillis = 1_763_539_211_000L,
+                                    showWhatsAppCard = false,
+                                    offerNotResolvedAction = true
+                                ),
+                            selectedCategoryId = null,
+                            hasAttemptedTroubleshooting = true
+                        )
+                    },
+                    onSendSupportMessage = { text ->
+                        ensureInit()
+                        val reply = when {
+                            CustomerSupportEngine.isPureGreeting(text) -> SupportChatMessage(
+                                id = nextId(),
+                                sender = SupportSender.ASSISTANT,
+                                text = SUPPORT_GREETING_REPLY_BN,
+                                timestampMillis = 1_763_539_221_000L
+                            )
+                            !supportState.isOnline -> SupportChatMessage(
+                                id = nextId(),
+                                sender = SupportSender.ASSISTANT,
+                                text = SUPPORT_OFFLINE_AI_NOTICE_BN,
+                                timestampMillis = 1_763_539_221_000L,
+                                isOfflineNotice = true
+                            )
+                            else -> SupportChatMessage(
+                                id = nextId(),
+                                sender = SupportSender.ASSISTANT,
+                                text = "সাহায্য করা হয়েছে",
+                                timestampMillis = 1_763_539_221_000L,
+                                offerNotResolvedAction = true
+                            )
+                        }
+                        supportState = supportState.copy(
+                            messages = supportState.messages +
+                                SupportChatMessage(nextId(), SupportSender.USER, text, 1_763_539_220_000L) +
+                                reply
+                        )
+                    },
+                    onRequestLiveCareAfterTroubleshooting = {
+                        supportState = supportState.copy(
+                            messages = supportState.messages +
+                                SupportChatMessage(
+                                    id = nextId(),
+                                    sender = SupportSender.ASSISTANT,
+                                    text = CustomerSupportEngine.buildWhatsAppEscalationMessage(false),
+                                    timestampMillis = 1_763_539_230_000L,
+                                    showWhatsAppCard = true
+                                )
+                        )
+                    },
+                    onResetSupportChat = {
+                        supportState = SupportUiState(isOnline = supportState.isOnline)
+                        ensureInit()
+                    }
+                )
+            }
+        }
+
+        // Scroll to bottom of Settings and tap "কাস্টমার সাপোর্ট"
+        composeRule.onNodeWithTag("settings_list")
+            .performScrollToNode(hasTestTag("settings_support_about_card"))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_customer_support_tile").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        // Verify immediate self-initiated greeting appears once with NO WhatsApp card yet
+        composeRule.onNodeWithTag("customer_support_screen").assertIsDisplayed()
+        composeRule.onNodeWithText(SUPPORT_INITIAL_GREETING_BN).assertIsDisplayed()
+        assertEquals(1, supportState.messages.size)
+        composeRule.onNodeWithTag("support_whatsapp_card").assertDoesNotExist()
+        composeRule.onNodeWithTag("support_offline_banner").assertIsDisplayed()
+
+        // Reply with greeting -> polite Bangla response, still no WhatsApp card
+        composeRule.onNodeWithTag("support_message_input").performTextReplacement("ওয়ালাইকুম আসসালাম")
+        composeRule.onNodeWithTag("support_send_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(SUPPORT_GREETING_REPLY_BN).assertIsDisplayed()
+        composeRule.onNodeWithTag("support_whatsapp_card").assertDoesNotExist()
+
+        // Tap category chip -> expands sub-options -> tap sub-option -> built-in guide works offline
+        composeRule.onNodeWithTag("support_cat_${SupportCategoryId.TRANSACTIONS_ENTRY.name.lowercase()}")
+            .performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("support_opt_tx_manual").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("support_whatsapp_card").assertDoesNotExist()
+
+        // Escalate ONLY after troubleshooting -> WhatsApp Customer Care card shows +8801708901947
+        composeRule.onNodeWithTag("support_messages_list")
+            .performScrollToNode(hasTestTag("support_not_resolved_chip"))
+        composeRule.onNodeWithTag("support_not_resolved_chip").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("support_messages_list")
+            .performScrollToNode(hasTestTag("support_whatsapp_card"))
+        composeRule.onNodeWithTag("support_whatsapp_card").assertIsDisplayed()
+        composeRule.onNodeWithText(SUPPORT_WHATSAPP_DISPLAY).assertIsDisplayed()
+        composeRule.onNodeWithTag("support_whatsapp_button").assertIsDisplayed()
+
+        // Switch online -> offline notice auto-hides, and verify Dark mode rendering
+        supportState = supportState.copy(isOnline = true)
+        useDark = true
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("support_offline_banner").assertDoesNotExist()
+        composeRule.onNodeWithTag("customer_support_screen").assertIsDisplayed()
     }
 }

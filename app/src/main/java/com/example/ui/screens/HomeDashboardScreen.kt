@@ -2325,8 +2325,13 @@ fun TransactionRowItem(
     onClick: (() -> Unit)? = null
 ) {
     val crystal = LocalCrystalColors.current
-    val dateFmt = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
-    val dateLabel = remember(tx.timestamp) { dateFmt.format(Date(tx.timestamp)) }
+    val activeTzId = java.util.TimeZone.getDefault().id
+    val dateFmt = remember(activeTzId) {
+        SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).apply {
+            timeZone = java.util.TimeZone.getTimeZone(activeTzId)
+        }
+    }
+    val dateLabel = remember(tx.timestamp, activeTzId) { dateFmt.format(Date(tx.timestamp)) }
 
     val amountText = when (tx.type) {
         TransactionType.EXPENSE -> "-${BdtFormatter.format(tx.amount, language)}"

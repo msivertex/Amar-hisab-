@@ -100,11 +100,20 @@ fun ActivityScreen(
         }
     }
 
-    val groupedByDate = remember(filteredTransactions, lang) {
-        val dayKeyFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-        val headerFmt = SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault())
-        val todayKey = dayKeyFmt.format(Date())
-        val yestCal = Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, -1) }
+    val groupedByDate = remember(
+        filteredTransactions,
+        lang,
+        state.deviceTimeContext.dayKey,
+        state.deviceTimeContext.timeZoneId
+    ) {
+        val activeTz = state.deviceTimeContext.timeZone
+        val dayKeyFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = activeTz }
+        val headerFmt = SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault()).apply { timeZone = activeTz }
+        val todayKey = state.deviceTimeContext.dayKey
+        val yestCal = Calendar.getInstance(activeTz).apply {
+            timeInMillis = state.deviceTimeContext.epochMillis
+            add(Calendar.DAY_OF_MONTH, -1)
+        }
         val yestKey = dayKeyFmt.format(yestCal.time)
 
         val linked = linkedMapOf<String, MutableList<TransactionEntity>>()

@@ -82,6 +82,7 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
     val voiceState by viewModel.voiceState.collectAsStateWithLifecycle()
     val ttsState by viewModel.ttsState.collectAsStateWithLifecycle()
     val marketSyncState by viewModel.marketSyncState.collectAsStateWithLifecycle()
+    val supportUiState by viewModel.supportUiState.collectAsStateWithLifecycle()
     val isAppUnlocked by viewModel.isAppUnlocked.collectAsStateWithLifecycle()
     val backupStatus by viewModel.backupStatus.collectAsStateWithLifecycle()
 
@@ -114,12 +115,13 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
         onDispose { }
     }
 
-    // Automatically re-lock financial vault when returning from background
+    // Automatically re-lock financial vault when returning from background & refresh live device date/timezone
     DisposableEffect(lifecycleOwner, isLaunchLockActive) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> viewModel.onAppBackgrounded()
                 Lifecycle.Event.ON_START -> viewModel.onAppForegrounded()
+                Lifecycle.Event.ON_RESUME -> viewModel.refreshSystemTime()
                 else -> Unit
             }
         }
@@ -279,7 +281,16 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                                         onSetCategorySortMode = { mode -> viewModel.setCategorySortMode(mode) },
                                         onUpsertManagedCategory = { item -> viewModel.upsertManagedCategory(item) },
                                         onDeleteManagedCategory = { id, isBuiltIn -> viewModel.deleteManagedCategory(id, isBuiltIn) },
-                                        onResetCategoriesToDefault = { viewModel.resetCategoriesToDefault() }
+                                        onResetCategoriesToDefault = { viewModel.resetCategoriesToDefault() },
+                                        deviceTimeContext = uiState.deviceTimeContext,
+                                        onRefreshSystemTime = { viewModel.refreshSystemTime() },
+                                        supportState = supportUiState,
+                                        onEnsureSupportInitialized = { viewModel.ensureCustomerSupportInitialized() },
+                                        onSelectSupportCategory = { viewModel.selectSupportCategory(it) },
+                                        onSelectSupportQuickOption = { viewModel.selectSupportQuickOption(it) },
+                                        onSendSupportMessage = { viewModel.sendCustomerSupportMessage(it) },
+                                        onRequestLiveCareAfterTroubleshooting = { viewModel.requestLiveCareAfterTroubleshooting() },
+                                        onResetSupportChat = { viewModel.resetCustomerSupportChat() }
                                     )
                                 }
 

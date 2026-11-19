@@ -7,6 +7,10 @@ import com.example.data.model.ReceiptScanResult
 import com.example.data.model.SearchGroundingResult
 import com.example.data.model.TransactionType
 import com.example.data.model.VoiceParsedTransaction
+import com.example.data.support.CustomerSupportEngine
+import com.example.data.support.SupportAiReply
+import com.example.data.support.SupportChatMessage
+import com.example.data.support.SupportSender
 import com.example.localization.AppLanguage
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
@@ -118,6 +122,36 @@ class GeminiAiService {
             generationConfig = generationConfig {
                 responseMimeType = "application/json"
                 responseSchema = voiceParseSchema
+            }
+        )
+    }
+
+    // 5. Customer Support Assistant: gemini-3.8-flash with structured JSON & full app knowledge
+    private val customerSupportSchema = Schema.obj(
+        properties = mapOf(
+            "reply" to Schema.string(
+                description = "Clear, helpful, step-by-step customer support answer in polite Bangla without including phone/WhatsApp numbers"
+            ),
+            "needsHumanEscalation" to Schema.boolean(
+                description = "True ONLY for critical/emergency issues or when user explicitly asks for human support after prior troubleshooting"
+            ),
+            "suggestedFollowUps" to Schema.array(
+                items = Schema.string(),
+                description = "Up to 2 short Bangla follow-up quick-reply labels"
+            )
+        ),
+        optionalProperties = listOf("suggestedFollowUps")
+    )
+
+    private val customerSupportModel by lazy {
+        Firebase.ai.generativeModel(
+            modelName = "gemini-3.8-flash",
+            generationConfig = generationConfig {
+                responseMimeType = "application/json"
+                responseSchema = customerSupportSchema
+            },
+            systemInstruction = content {
+                text(CustomerSupportEngine.AMAR_HISAB_SYSTEM_KNOWLEDGE)
             }
         )
     }
@@ -255,6 +289,60 @@ class GeminiAiService {
             type = type,
             category = category,
             accountHint = accountHint
+        )
+    }
+
+    suspend fun askCustomerSupport(
+        userMessage: String,
+        recentHistory: List<SupportChatMessage>,
+        hasAttemptedTroubleshooting: Boolean
+    ): SupportAiReply {
+        val historySummary = recentHistory
+            .takeLast(6)
+            .joinToString("\n") { msg ->
+                val role = if (msg.sender == SupportSender.USER) "ব্যবহারকারী" else "সাপোর্ট"
+                "$role: ${msg.text.take(220)}"
+            }
+
+        val prompt = buildString {
+            appendLine("পূর্ববর্তী চ্যাট প্রসঙ্গ:")
+            appendLine(historySummary.ifBlank { "(নতুন কথোপকথন)" })
+            appendLine("ইতিমধ্যে ট্রাবলশুটিং চেষ্টা হয়েছে কিনা: $hasAttemptedTroubleshooting")
+            appendLine("ব্যবহারকারীর বর্তমান বার্তা: $userMessage")
+            append("নির্দেশনা: 'আমার হিসাব' অ্যাপের সঠিক ধাপসহ পরিষ্কার ও সহায়ক বাংলা উত্তর দিন।")
+        }
+
+        val response = withTimeout(45_000L) {
+            customerSupportModel.generateContent(prompt)
+        }
+
+        val rawJson = response.text
+            ?: throw IllegalStateException("Support model returned an empty response.")
+        val json = JSONObject(rawJson)
+        val rawReply = json.optString("reply", "").trim()
+        if (rawReply.isBlank()) {
+            throw IllegalStateException("Support model returned blank reply.")
+        }
+        // Guardrail: never leak phone number inline from LLM output; UI card handles controlled escalation
+        val sanitizedReply = rawReply
+            .replace("+8801708901947", "")
+            .replace("01708901947", "")
+            .trim()
+        val aiEscalation = json.optBoolean("needsHumanEscalation", false)
+        val followUpsArray = json.optJSONArray("suggestedFollowUps")
+        val followUps = buildList {
+            if (followUpsArray != null) {
+                for (i in 0 until minOf(followUpsArray.length(), 2)) {
+                    val label = followUpsArray.optString(i, "").trim()
+                    if (label.isNotBlank()) add(label)
+                }
+            }
+        }
+
+        return SupportAiReply(
+            replyText = sanitizedReply,
+            needsHumanEscalation = aiEscalation,
+            suggestedFollowUps = followUps
         )
     }
 

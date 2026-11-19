@@ -78,6 +78,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.SupportAgent
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Tune
@@ -147,10 +148,14 @@ import com.example.R
 import com.example.core.BiometricAuthFailureReason
 import com.example.core.BiometricAuthHelper
 import com.example.core.BiometricAvailability
+import com.example.core.AppPermissionKind
 import com.example.core.BiometricCapabilityInfo
+import com.example.core.DevicePermissionsSnapshot
+import com.example.core.DeviceTimeContext
 import com.example.core.GoogleAccountProfile
 import com.example.core.GoogleAuthManager
 import com.example.core.GoogleSignInOutcome
+import com.example.core.LocationRegionContext
 import com.example.data.local.AccountEntity
 import com.example.data.local.TransactionEntity
 import com.example.data.local.UserPrefs
@@ -164,6 +169,9 @@ import com.example.data.model.HomeSectionId
 import com.example.data.model.ManagedCategoryItem
 import com.example.data.model.StartOfWeek
 import com.example.data.model.TransactionType
+import com.example.data.support.SupportCategoryId
+import com.example.data.support.SupportQuickOption
+import com.example.data.support.SupportUiState
 import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
@@ -190,6 +198,7 @@ private enum class SettingsSubPage {
     LANGUAGE,
     BACKUP_RESTORE,
     CATEGORIES,
+    CUSTOMER_SUPPORT,
     ABOUT
 }
 
@@ -238,7 +247,19 @@ fun SettingsScreen(
     onDeleteManagedCategory: (String, Boolean) -> Unit = { _, _ -> },
     onResetCategoriesToDefault: () -> Unit = {},
     biometricCapabilityOverride: BiometricCapabilityInfo? = null,
-    biometricVerifyOverride: ((onSucceeded: () -> Unit, onFailure: (BiometricAuthFailureReason, String) -> Unit) -> Unit)? = null
+    biometricVerifyOverride: ((onSucceeded: () -> Unit, onFailure: (BiometricAuthFailureReason, String) -> Unit) -> Unit)? = null,
+    deviceTimeContext: DeviceTimeContext = DeviceTimeContext.current(),
+    onRefreshSystemTime: () -> Unit = {},
+    permissionsOverride: DevicePermissionsSnapshot? = null,
+    locationContextOverride: LocationRegionContext? = null,
+    onRequestPermissionOverride: ((AppPermissionKind) -> Unit)? = null,
+    supportState: SupportUiState = SupportUiState(),
+    onEnsureSupportInitialized: () -> Unit = {},
+    onSelectSupportCategory: (SupportCategoryId?) -> Unit = {},
+    onSelectSupportQuickOption: (SupportQuickOption) -> Unit = {},
+    onSendSupportMessage: (String) -> Unit = {},
+    onRequestLiveCareAfterTroubleshooting: () -> Unit = {},
+    onResetSupportChat: () -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
     val crystal = LocalCrystalColors.current
@@ -246,7 +267,11 @@ fun SettingsScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val lang = prefs.language
-    val dateStamp = remember { SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()) }
+    val dateStamp = remember(deviceTimeContext.dayKey) {
+        SimpleDateFormat("yyyyMMdd", Locale.US).apply {
+            timeZone = deviceTimeContext.timeZone
+        }.format(Date(deviceTimeContext.epochMillis))
+    }
     var biometricCapability by remember(context, biometricCapabilityOverride) {
         mutableStateOf(biometricCapabilityOverride ?: BiometricAuthHelper.inspectCapabilities(context))
     }
@@ -395,6 +420,22 @@ fun SettingsScreen(
                     onUpsertCategory = onUpsertManagedCategory,
                     onDeleteCategory = onDeleteManagedCategory,
                     onResetDefaults = onResetCategoriesToDefault,
+                    onBack = { activeSubPage = SettingsSubPage.MAIN }
+                )
+            }
+
+            SettingsSubPage.CUSTOMER_SUPPORT -> {
+                CustomerSupportScreen(
+                    supportState = supportState,
+                    language = lang,
+                    deviceTimeContext = deviceTimeContext,
+                    strings = strings,
+                    onEnsureInitialized = onEnsureSupportInitialized,
+                    onSelectCategory = onSelectSupportCategory,
+                    onSelectQuickOption = onSelectSupportQuickOption,
+                    onSendMessage = onSendSupportMessage,
+                    onRequestLiveCareAfterTroubleshooting = onRequestLiveCareAfterTroubleshooting,
+                    onResetChat = onResetSupportChat,
                     onBack = { activeSubPage = SettingsSubPage.MAIN }
                 )
             }
@@ -890,10 +931,12 @@ fun SettingsScreen(
                 }
             }
 
-            // 4. Date & Time
+            // 4. Date & Time (Live Device Clock & Timezone Sync + Week Start)
             item {
                 CrystalCard(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("settings_date_time_card"),
                     elevated = true
                 ) {
                     SettingsSectionHeader(
@@ -901,6 +944,15 @@ fun SettingsScreen(
                         icon = Icons.Filled.Schedule
                     )
                     Spacer(modifier = Modifier.height(12.dp))
+
+                    LiveDeviceClockSyncBanner(
+                        timeContext = deviceTimeContext,
+                        language = lang,
+                        strings = strings,
+                        onRefreshTime = onRefreshSystemTime
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     SettingsNavTile(
                         title = strings.startOfWeekLabel,
@@ -910,6 +962,16 @@ fun SettingsScreen(
                         onClick = { showWeekStartSheet = true }
                     )
                 }
+            }
+
+            // 4b. Device Permissions & Google Location
+            item {
+                DevicePermissionsSettingsCard(
+                    strings = strings,
+                    permissionsOverride = permissionsOverride,
+                    locationContextOverride = locationContextOverride,
+                    onRequestPermissionOverride = onRequestPermissionOverride
+                )
             }
 
             // 5. Security & System
@@ -1170,12 +1232,27 @@ fun SettingsScreen(
                 }
             }
 
-            // 6. About
+            // 6. Customer Support & About
             item {
                 CrystalCard(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("settings_support_about_card"),
                     elevated = true
                 ) {
+                    SettingsNavTile(
+                        title = strings.customerSupport.tileTitle,
+                        subtitle = strings.customerSupport.tileSubtitle,
+                        icon = Icons.Filled.SupportAgent,
+                        testTag = "settings_customer_support_tile",
+                        onClick = {
+                            onEnsureSupportInitialized()
+                            activeSubPage = SettingsSubPage.CUSTOMER_SUPPORT
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
                     SettingsNavTile(
                         title = strings.aboutPage.pageTitle,
                         subtitle = strings.aboutPage.tileSubtitle,
