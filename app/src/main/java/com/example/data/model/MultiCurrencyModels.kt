@@ -162,6 +162,49 @@ enum class AppCurrency(
 }
 
 /**
+ * Supported user countries/regions for the interactive Country selector in Profile Details.
+ */
+enum class AppCountry(
+    val code: String,
+    val flag: String,
+    val nameEn: String,
+    val nameBn: String,
+    val suggestedCurrency: AppCurrency
+) {
+    BD("BD", "🇧🇩", "Bangladesh", "বাংলাদেশ", AppCurrency.BDT),
+    KW("KW", "🇰🇼", "Kuwait", "কুয়েত", AppCurrency.KWD),
+    SA("SA", "🇸🇦", "Saudi Arabia", "সৌদি আরব", AppCurrency.SAR),
+    AE("AE", "🇦🇪", "UAE (Dubai)", "সংযুক্ত আরব আমিরাত", AppCurrency.AED),
+    QA("QA", "🇶🇦", "Qatar", "কাতার", AppCurrency.QAR),
+    OM("OM", "🇴🇲", "Oman", "ওমান", AppCurrency.SAR),
+    BH("BH", "🇧🇭", "Bahrain", "বাহরাইন", AppCurrency.USD),
+    MY("MY", "🇲🇾", "Malaysia", "মালয়েশিয়া", AppCurrency.MYR),
+    SG("SG", "🇸🇬", "Singapore", "সিঙ্গাপুর", AppCurrency.USD),
+    IT("IT", "🇮🇹", "Italy", "ইতালি", AppCurrency.EUR),
+    DE("DE", "🇩🇪", "Germany", "জার্মানি", AppCurrency.EUR),
+    FR("FR", "🇫🇷", "France", "ফ্রান্স", AppCurrency.EUR),
+    GB("GB", "🇬🇧", "United Kingdom", "যুক্তরাজ্য", AppCurrency.GBP),
+    US("US", "🇺🇸", "United States", "যুক্তরাষ্ট্র", AppCurrency.USD),
+    CA("CA", "🇨🇦", "Canada", "কানাডা", AppCurrency.USD),
+    AU("AU", "🇦🇺", "Australia", "অস্ট্রেলিয়া", AppCurrency.USD),
+    IN("IN", "🇮🇳", "India", "ভারত", AppCurrency.INR),
+    JP("JP", "🇯🇵", "Japan", "জাপান", AppCurrency.USD);
+
+    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) nameBn else nameEn
+
+    companion object {
+        fun fromCode(code: String?): AppCountry {
+            if (code.isNullOrBlank()) return BD
+            val normalized = code.trim()
+            return entries.firstOrNull {
+                it.code.equals(normalized, ignoreCase = true) ||
+                    it.nameEn.equals(normalized, ignoreCase = true)
+            } ?: BD
+        }
+    }
+}
+
+/**
  * Supported banking regions for Account & Card creation (Bangladesh + expat destinations).
  */
 enum class BankRegion(
@@ -211,13 +254,29 @@ data class InternationalBank(
 
 object InternationalBankCatalog {
     val all: List<InternationalBank> = listOf(
-        // Bangladesh (BDT)
+        // Bangladesh (BDT) - Existing 6 + 16 expanded Government & Private banks
         InternationalBank("bd_city", BankRegion.BANGLADESH, "City Bank", "সিটি ব্যাংক", "CITY", BrandCityBank),
         InternationalBank("bd_dbbl", BankRegion.BANGLADESH, "Dutch-Bangla Bank", "ডাচ-বাংলা ব্যাংক", "DBBL", BrandDbbl),
         InternationalBank("bd_brac", BankRegion.BANGLADESH, "BRAC Bank", "ব্র্যাক ব্যাংক", "BRAC", BrandBracBank),
         InternationalBank("bd_islami", BankRegion.BANGLADESH, "Islami Bank", "ইসলামী ব্যাংক", "IBBL", BrandIslamiBank),
         InternationalBank("bd_trust", BankRegion.BANGLADESH, "Trust Bank", "ট্রাস্ট ব্যাংক", "TRUST", BrandTrustBank),
         InternationalBank("bd_sonali", BankRegion.BANGLADESH, "Sonali Bank", "সোনালী ব্যাংক", "SONALI", BrandSonaliBank),
+        InternationalBank("bd_janata", BankRegion.BANGLADESH, "Janata Bank", "জনতা ব্যাংক", "JANATA", BangladeshiBank.JANATA_BANK.brandColor),
+        InternationalBank("bd_agrani", BankRegion.BANGLADESH, "Agrani Bank", "অগ্রণী ব্যাংক", "AGRANI", BangladeshiBank.AGRANI_BANK.brandColor),
+        InternationalBank("bd_rupali", BankRegion.BANGLADESH, "Rupali Bank", "রূপালী ব্যাংক", "RUPALI", BangladeshiBank.RUPALI_BANK.brandColor),
+        InternationalBank("bd_bkb", BankRegion.BANGLADESH, "Bangladesh Krishi Bank", "বাংলাদেশ কৃষি ব্যাংক", "BKB", BangladeshiBank.BKB.brandColor),
+        InternationalBank("bd_ebl", BankRegion.BANGLADESH, "Eastern Bank", "ইস্টার্ন ব্যাংক", "EBL", BangladeshiBank.EBL.brandColor),
+        InternationalBank("bd_prime", BankRegion.BANGLADESH, "Prime Bank", "প্রাইম ব্যাংক", "PRIME", BangladeshiBank.PRIME_BANK.brandColor),
+        InternationalBank("bd_mtb", BankRegion.BANGLADESH, "Mutual Trust Bank", "মিউচুয়াল ট্রাস্ট ব্যাংক", "MTB", BangladeshiBank.MTB.brandColor),
+        InternationalBank("bd_dhaka", BankRegion.BANGLADESH, "Dhaka Bank", "ঢাকা ব্যাংক", "DHAKA", BangladeshiBank.DHAKA_BANK.brandColor),
+        InternationalBank("bd_pubali", BankRegion.BANGLADESH, "Pubali Bank", "পূবালী ব্যাংক", "PUBALI", BangladeshiBank.PUBALI_BANK.brandColor),
+        InternationalBank("bd_bankasia", BankRegion.BANGLADESH, "Bank Asia", "ব্যাংক এশিয়া", "BANKASIA", BangladeshiBank.BANK_ASIA.brandColor),
+        InternationalBank("bd_sebl", BankRegion.BANGLADESH, "Southeast Bank", "সাউথইস্ট ব্যাংক", "SEBL", BangladeshiBank.SEBL.brandColor),
+        InternationalBank("bd_one", BankRegion.BANGLADESH, "One Bank", "ওয়ান ব্যাংক", "ONE", BangladeshiBank.ONE_BANK.brandColor),
+        InternationalBank("bd_uttara", BankRegion.BANGLADESH, "Uttara Bank", "উত্তরা ব্যাংক", "UTTARA", BangladeshiBank.UTTARA_BANK.brandColor),
+        InternationalBank("bd_jamuna", BankRegion.BANGLADESH, "Jamuna Bank", "যমুনা ব্যাংক", "JAMUNA", BangladeshiBank.JAMUNA_BANK.brandColor),
+        InternationalBank("bd_ucb", BankRegion.BANGLADESH, "United Commercial Bank", "ইউনাইটেড কমার্শিয়াল ব্যাংক", "UCB", BangladeshiBank.UCB.brandColor),
+        InternationalBank("bd_mbl", BankRegion.BANGLADESH, "Mercantile Bank", "মার্কেন্টাইল ব্যাংক", "MBL", BangladeshiBank.MBL.brandColor),
 
         // Saudi Arabia (SAR)
         InternationalBank("sa_alrajhi", BankRegion.SAUDI_ARABIA, "Al Rajhi Bank", "আল রাজি ব্যাংক", "RAJHI", Color(0xFF0052A5)),

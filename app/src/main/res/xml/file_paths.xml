@@ -12,4 +12,7 @@
     <cache-path
         name="financial_reports"
         path="reports/" />
+    <cache-path
+        name="shared_backups"
+        path="backups/" />
 </paths>

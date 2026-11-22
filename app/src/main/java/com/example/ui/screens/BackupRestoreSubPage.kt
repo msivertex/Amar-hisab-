@@ -96,6 +96,7 @@ fun BackupRestoreSubPage(
     onTriggerGoogleSignIn: () -> Unit,
     onDeleteAllFinancialData: () -> Unit,
     onClearBackupStatus: () -> Unit,
+    onShareBackupJson: ((File) -> Unit) -> Unit = {},
     driveSyncState: DriveSyncUiState = DriveSyncUiState(),
     onSyncDriveNow: (() -> Unit)? = null,
     onRestoreFromDrive: () -> Unit = {},
@@ -287,6 +288,58 @@ fun BackupRestoreSubPage(
                         }
                     }
 
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // One-tap Share Backup File (JSON via FileProvider)
+                    OutlinedButton(
+                        onClick = {
+                            onShareBackupJson { file ->
+                                shareBackupJsonFile(
+                                    context = context,
+                                    file = file,
+                                    chooserTitle = if (isBn) {
+                                        "আমার হিসাব ব্যাকআপ ফাইল শেয়ার করুন"
+                                    } else {
+                                        "Share Amar Hisab Backup File"
+                                    }
+                                )
+                            }
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = if (crystal.isDark) {
+                                Color.White.copy(alpha = 0.24f)
+                            } else {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.40f)
+                            }
+                        ),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = crystal.glassSurfaceElevated,
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("backup_share_json_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Share,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isBn) {
+                                "ব্যাকআপ ফাইল শেয়ার করুন (.json)"
+                            } else {
+                                "Share Backup File (.json)"
+                            },
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                    }
+
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 12.dp),
                         color = crystal.glassBorder
@@ -438,319 +491,151 @@ fun BackupRestoreSubPage(
                 }
             }
 
-            // 2. ক্লাউড ব্যাকআপ ও সিঙ্ক (Cloud Backup & Sync)
+            // 2. সহজ ডিভাইস ট্রান্সফার ও রি-ইন্সটল গাইড (Offline Backup Transfer Guide — No OAuth needed)
             item {
                 CrystalCard(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("backup_cloud_section_card"),
+                        .testTag("backup_transfer_guide_card"),
                     elevated = true
                 ) {
-                    Text(
-                        text = br.cloudSectionTitle,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    if (prefs.authMode == AuthMode.GUEST) {
-                        Surface(
-                            color = if (crystal.isDark) {
-                                Color(0xFF161C2B)
-                            } else {
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)
-                            },
-                            shape = RoundedCornerShape(16.dp),
-                            border = BorderStroke(
-                                width = 1.dp,
-                                color = if (crystal.isDark) {
-                                    Color.White.copy(alpha = 0.14f)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(crystal.assetGreen.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Lock,
+                                contentDescription = null,
+                                tint = crystal.assetGreen,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isBn) {
+                                    "নতুন ফোনে বা রি-ইন্সটলে ডাটা ট্রান্সফার"
                                 } else {
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
-                                }
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("backup_google_signin_required_card")
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(42.dp)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.CloudOff,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(22.dp)
-                                        )
-                                    }
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = br.googleSignInRequiredTitle,
-                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = br.googleSignInRequiredSubtitle,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = crystal.mutedText
-                                        )
-                                    }
-                                }
-
-                                Button(
-                                    onClick = onTriggerGoogleSignIn,
-                                    enabled = !isGoogleSignInLoading,
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.primary,
-                                        contentColor = Color.White
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 48.dp)
-                                        .testTag("backup_cloud_google_signin_button")
-                                ) {
-                                    if (isGoogleSignInLoading) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(18.dp),
-                                            strokeWidth = 2.dp,
-                                            color = Color.White
-                                        )
-                                    } else {
-                                        GoogleGLogo(size = 18.dp)
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = strings.linkGoogleAccountBtn,
-                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        val isBusy = driveSyncState.status == DriveSyncStatus.SYNCING ||
-                            driveSyncState.status == DriveSyncStatus.RESTORING
-                        val needsPermission = driveSyncState.status == DriveSyncStatus.NEEDS_PERMISSION
-                        val lastSyncedStamp = maxOf(
-                            driveSyncState.lastSyncedAtMillis,
-                            prefs.driveLastSyncedAtMillis
-                        )
-                        val syncStatusLabel = when (driveSyncState.status) {
-                            DriveSyncStatus.SYNCING ->
-                                if (isBn) "এনক্রিপ্টেড ব্যাকআপ সিঙ্ক হচ্ছে..." else "Syncing encrypted vault..."
-                            DriveSyncStatus.RESTORING ->
-                                if (isBn) "Google Drive থেকে রিস্টোর যাচাই হচ্ছে..." else "Checking & restoring from Drive..."
-                            DriveSyncStatus.PENDING_OFFLINE ->
-                                if (isBn) "অফলাইন — অনলাইন হলে অটো-সিঙ্ক হবে" else "Offline — auto-sync queued"
-                            DriveSyncStatus.NEEDS_PERMISSION ->
-                                if (isBn) "Google Drive অনুমতি প্রয়োজন" else "Google Drive permission needed"
-                            DriveSyncStatus.ERROR ->
-                                driveSyncState.message ?: if (isBn) "সিঙ্ক স্থগিত — আবার চেষ্টা করুন" else "Sync paused — retry below"
-                            else -> if (lastSyncedStamp > 0L) {
-                                val formatted = syncTimeFmt.format(Date(lastSyncedStamp))
-                                if (isBn) "সর্বশেষ সিঙ্ক: $formatted" else "Last synced: $formatted"
-                            } else {
-                                if (isBn) "পরিবর্তন হলেই অটো-সিঙ্ক চালু" else "Auto-sync on every change ready"
-                            }
-                        }
-
-                        Surface(
-                            color = if (needsPermission) crystal.warningAmberBg else crystal.assetGreenBg,
-                            shape = RoundedCornerShape(16.dp),
-                            border = BorderStroke(
-                                1.dp,
-                                (if (needsPermission) crystal.warningAmber else crystal.assetGreen).copy(alpha = 0.35f)
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("backup_drive_connected_card")
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(42.dp)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(
-                                                (if (needsPermission) crystal.warningAmber else crystal.assetGreen)
-                                                    .copy(alpha = 0.18f)
-                                            ),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (isBusy) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(20.dp),
-                                                strokeWidth = 2.dp,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        } else {
-                                            Icon(
-                                                imageVector = Icons.Filled.CloudDone,
-                                                contentDescription = null,
-                                                tint = if (needsPermission) crystal.warningAmber else crystal.assetGreen,
-                                                modifier = Modifier.size(22.dp)
-                                            )
-                                        }
-                                    }
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = br.cloudReadyTitle,
-                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = prefs.userEmail.ifBlank { br.cloudReadySubtitle },
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = crystal.mutedText,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = syncStatusLabel,
-                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                                            color = if (needsPermission) crystal.warningAmber else crystal.assetGreen,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-
-                                // Encrypted Drive folder & AES-256-GCM pill
-                                Surface(
-                                    color = crystal.glassSurfaceElevated,
-                                    shape = RoundedCornerShape(12.dp),
-                                    border = BorderStroke(0.8.dp, crystal.glassBorder),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("backup_drive_encrypted_folder_badge")
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Lock,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Text(
-                                            text = if (isBn) {
-                                                "Google Drive ফোল্ডার: ${driveSyncState.folderName} • AES-256 এনক্রিপ্টেড"
-                                            } else {
-                                                "Drive Folder: ${driveSyncState.folderName} • AES-256 Encrypted"
-                                            },
-                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-
-                                Button(
-                                    onClick = {
-                                        if (needsPermission) {
-                                            onGrantDriveAccess()
-                                        } else {
-                                            onSyncDriveNow?.invoke() ?: onExportJsonClick()
-                                        }
-                                    },
-                                    enabled = !isBusy,
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.primary,
-                                        contentColor = Color.White
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 48.dp)
-                                        .testTag("backup_cloud_backup_now_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Sync,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = if (needsPermission) {
-                                            if (isBn) "Google Drive অনুমতি দিন ও সিঙ্ক করুন" else "Grant Drive Access & Sync"
-                                        } else {
-                                            br.cloudBackupNowBtn
-                                        },
-                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                                    )
-                                }
-
-                                OutlinedButton(
-                                    onClick = onRestoreFromDrive,
-                                    enabled = !isBusy,
-                                    shape = RoundedCornerShape(14.dp),
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (crystal.isDark) Color.White.copy(alpha = 0.24f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.42f)
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 48.dp)
-                                        .testTag("backup_cloud_restore_now_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.CloudDownload,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = if (isBn) {
-                                            "Google Drive থেকে রিস্টোর করুন"
-                                        } else {
-                                            "Restore Encrypted Backup from Drive"
-                                        },
-                                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
-                                    )
-                                }
-
-                                Text(
-                                    text = if (isBn) {
-                                        "নতুন হিসাব যোগ বা পরিবর্তন করলে অনলাইনে থাকা অবস্থায় স্বয়ংক্রিয়ভাবে এনক্রিপ্টেড সিঙ্ক হবে এবং একই Gmail দিয়ে লগইন করলে অটো-রিস্টোর হবে।"
-                                    } else {
-                                        "Every new entry or edit auto-syncs encrypted while online, and signing in with this Gmail on a new or reinstalled phone restores your data automatically."
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = crystal.mutedText
-                                )
-                            }
+                                    "Transfer Data to Another Phone or Reinstall"
+                                },
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (isBn) {
+                                    "কোনো Google লগইন বা জটিল সেটআপ ছাড়াই ২ ধাপে সম্পূর্ণ ডাটা নিরাপদে রাখুন"
+                                } else {
+                                    "Keep all accounts, transactions, goals & loans portable in 2 simple steps — no sign-in needed"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = crystal.mutedText
+                            )
                         }
                     }
 
-                    if (googleNotice != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = googleNotice,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = crystal.warningAmber
-                        )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Surface(
+                        color = if (crystal.isDark) {
+                            Color(0xFF161C2B)
+                        } else {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, crystal.glassBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = if (isBn) {
+                                    "১. 'JSON' বা 'ব্যাকআপ ফাইল শেয়ার করুন' বাটনে ট্যাপ করে ফাইলটি আপনার ফোন, WhatsApp বা নিজস্ব ফোল্ডারে সেভ করে রাখুন।"
+                                } else {
+                                    "1. Tap 'JSON' or 'Share Backup File' to save your complete backup file to Files, WhatsApp, or another device."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (isBn) {
+                                    "২. নতুন ফোনে বা অ্যাপ রি-ইন্সটলের পর 'ব্যাকআপ ফাইল রিস্টোর করুন' বা 'ইম্পোর্ট ও রিস্টোর' থেকে সেই .json ফাইলটি সিলেক্ট করলেই সব হিসাব ফিরে আসবে।"
+                                } else {
+                                    "2. On a new phone or after reinstalling, choose 'Restore Backup File' on the welcome screen or 'Import & Restore' here and pick that .json file."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = onExportJsonClick,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("backup_guide_export_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.FileUpload,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (isBn) "ব্যাকআপ সেভ" else "Export Backup",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        FilledTonalButton(
+                            onClick = onImportRestoreClick,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = crystal.assetGreen.copy(
+                                    alpha = if (crystal.isDark) 0.22f else 0.14f
+                                ),
+                                contentColor = if (crystal.isDark) Color.White else crystal.assetGreen
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("backup_guide_import_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.FileOpen,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (isBn) "ফাইল রিস্টোর" else "Import Backup",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
@@ -948,6 +833,19 @@ private fun BackupActionRow(
             )
         }
         trailingAction()
+    }
+}
+
+private fun shareBackupJsonFile(context: Context, file: File, chooserTitle: String) {
+    runCatching {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/json"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, chooserTitle)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, chooserTitle))
     }
 }
 

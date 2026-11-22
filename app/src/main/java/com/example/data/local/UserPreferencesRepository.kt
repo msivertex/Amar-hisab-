@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.model.AppColourTheme
+import com.example.data.model.AppCountry
 import com.example.data.model.AppCurrency
 import com.example.data.model.AppThemeMode
 import com.example.data.model.AuthMode
@@ -63,6 +64,7 @@ data class UserPrefs(
     val deletedCategoryIds: Set<String> = emptySet(),
     val mainCurrencyCode: String = "BDT",
     val secondaryCurrencyCode: String = "",
+    val userCountryCode: String = "BD",
     val notifDailyReminderEnabled: Boolean = true,
     val notifDailyReminderHour: Int = 21,
     val notifDailyReminderMinute: Int = 0,
@@ -73,8 +75,12 @@ data class UserPrefs(
     val driveLastSyncedAtMillis: Long = 0L,
     val drivePendingSync: Boolean = false,
     val driveLastLocalModifiedAtMillis: Long = 0L,
-    val driveFolderLinked: Boolean = false
+    val driveFolderLinked: Boolean = false,
+    val lastLocalOwnerEmail: String = ""
 ) {
+    val userCountry: AppCountry
+        get() = AppCountry.fromCode(userCountryCode)
+
     val mainCurrency: AppCurrency
         get() = AppCurrency.fromCode(mainCurrencyCode)
 
@@ -142,6 +148,7 @@ class UserPreferencesRepository(private val context: Context) {
         val DELETED_CATEGORY_IDS = stringPreferencesKey("deleted_category_ids")
         val MAIN_CURRENCY_CODE = stringPreferencesKey("main_currency_code")
         val SECONDARY_CURRENCY_CODE = stringPreferencesKey("secondary_currency_code")
+        val USER_COUNTRY_CODE = stringPreferencesKey("user_country_code")
         val NOTIF_DAILY_ENABLED = booleanPreferencesKey("notif_daily_reminder_enabled")
         val NOTIF_DAILY_HOUR = intPreferencesKey("notif_daily_reminder_hour")
         val NOTIF_DAILY_MINUTE = intPreferencesKey("notif_daily_reminder_minute")
@@ -153,6 +160,7 @@ class UserPreferencesRepository(private val context: Context) {
         val DRIVE_PENDING_SYNC = booleanPreferencesKey("drive_pending_sync")
         val DRIVE_LAST_LOCAL_MODIFIED_AT = longPreferencesKey("drive_last_local_modified_at_millis")
         val DRIVE_FOLDER_LINKED = booleanPreferencesKey("drive_folder_linked")
+        val LAST_LOCAL_OWNER_EMAIL = stringPreferencesKey("last_local_owner_email")
     }
 
     val userPrefs: Flow<UserPrefs> = context.dataStore.data.map { prefs ->
@@ -251,6 +259,7 @@ class UserPreferencesRepository(private val context: Context) {
                 ?: emptySet(),
             mainCurrencyCode = AppCurrency.fromCode(prefs[Keys.MAIN_CURRENCY_CODE]).code,
             secondaryCurrencyCode = AppCurrency.fromCodeOrNull(prefs[Keys.SECONDARY_CURRENCY_CODE])?.code ?: "",
+            userCountryCode = AppCountry.fromCode(prefs[Keys.USER_COUNTRY_CODE]).code,
             notifDailyReminderEnabled = prefs[Keys.NOTIF_DAILY_ENABLED] ?: true,
             notifDailyReminderHour = (prefs[Keys.NOTIF_DAILY_HOUR] ?: 21).coerceIn(0, 23),
             notifDailyReminderMinute = (prefs[Keys.NOTIF_DAILY_MINUTE] ?: 0).coerceIn(0, 59),
@@ -261,7 +270,8 @@ class UserPreferencesRepository(private val context: Context) {
             driveLastSyncedAtMillis = prefs[Keys.DRIVE_LAST_SYNCED_AT] ?: 0L,
             drivePendingSync = prefs[Keys.DRIVE_PENDING_SYNC] ?: false,
             driveLastLocalModifiedAtMillis = prefs[Keys.DRIVE_LAST_LOCAL_MODIFIED_AT] ?: 0L,
-            driveFolderLinked = prefs[Keys.DRIVE_FOLDER_LINKED] ?: false
+            driveFolderLinked = prefs[Keys.DRIVE_FOLDER_LINKED] ?: false,
+            lastLocalOwnerEmail = prefs[Keys.LAST_LOCAL_OWNER_EMAIL] ?: ""
         )
     }
 
@@ -350,20 +360,63 @@ class UserPreferencesRepository(private val context: Context) {
         email: String,
         avatarUrl: String
     ) {
+        val normalizedEmail = email.trim()
         context.dataStore.edit { prefs ->
             prefs[Keys.HAS_COMPLETED_WELCOME] = true
             prefs[Keys.AUTH_MODE] = AuthMode.GOOGLE.name
             if (displayName.isNotBlank()) prefs[Keys.USER_NAME] = displayName.trim()
-            prefs[Keys.USER_EMAIL] = email.trim()
+            prefs[Keys.USER_EMAIL] = normalizedEmail
+            prefs[Keys.LAST_LOCAL_OWNER_EMAIL] = normalizedEmail.lowercase()
             prefs[Keys.USER_AVATAR_URL] = avatarUrl.trim()
             prefs[Keys.GOOGLE_CUSTOM_AVATAR_URL] = ""
         }
     }
 
+    /**
+     * Clears user-scoped financial preferences and Drive sync watermarks when switching
+     * from one Gmail user to another on the same device so each user's local state stays isolated.
+     */
+    suspend fun resetUserScopedPrefsForAccountSwitch() {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.MONTHLY_BUDGET] = 0.0
+            prefs[Keys.DEFAULT_ACCOUNT_ID] = 0L
+            prefs[Keys.NOTIFICATION_LOG_JSON] = ""
+            prefs[Keys.DRIVE_PENDING_SYNC] = false
+            prefs[Keys.DRIVE_FOLDER_LINKED] = false
+            prefs[Keys.DRIVE_LAST_SYNCED_AT] = 0L
+            prefs[Keys.DRIVE_LAST_LOCAL_MODIFIED_AT] = 0L
+        }
+    }
+
     suspend fun unlinkGoogleAccount() {
         context.dataStore.edit { prefs ->
+            val currentEmail = prefs[Keys.USER_EMAIL].orEmpty().trim().lowercase()
+            if (currentEmail.isNotBlank()) {
+                prefs[Keys.LAST_LOCAL_OWNER_EMAIL] = currentEmail
+            }
             prefs[Keys.AUTH_MODE] = AuthMode.GUEST.name
             prefs[Keys.USER_NAME] = ""
+            prefs[Keys.USER_EMAIL] = ""
+            prefs[Keys.USER_AVATAR_URL] = ""
+            prefs[Keys.GOOGLE_CUSTOM_AVATAR_URL] = ""
+            prefs[Keys.DRIVE_PENDING_SYNC] = false
+            prefs[Keys.DRIVE_FOLDER_LINKED] = false
+            prefs[Keys.DRIVE_LAST_SYNCED_AT] = 0L
+        }
+    }
+
+    /**
+     * Cleanly logs out the active session and returns to the initial startup screen
+     * without touching or deleting any locally stored financial records.
+     */
+    suspend fun logOut() {
+        context.dataStore.edit { prefs ->
+            val currentEmail = prefs[Keys.USER_EMAIL].orEmpty().trim().lowercase()
+            if (currentEmail.isNotBlank()) {
+                prefs[Keys.LAST_LOCAL_OWNER_EMAIL] = currentEmail
+            }
+            prefs[Keys.HAS_COMPLETED_WELCOME] = false
+            prefs[Keys.AUTH_MODE] = AuthMode.GUEST.name
             prefs[Keys.USER_EMAIL] = ""
             prefs[Keys.USER_AVATAR_URL] = ""
             prefs[Keys.GOOGLE_CUSTOM_AVATAR_URL] = ""
@@ -437,6 +490,13 @@ class UserPreferencesRepository(private val context: Context) {
             } else {
                 normalized
             }
+        }
+    }
+
+    suspend fun setUserCountryCode(countryCode: String) {
+        val normalized = AppCountry.fromCode(countryCode).code
+        context.dataStore.edit { prefs ->
+            prefs[Keys.USER_COUNTRY_CODE] = normalized
         }
     }
 

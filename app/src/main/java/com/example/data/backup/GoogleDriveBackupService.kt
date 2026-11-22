@@ -26,6 +26,7 @@ sealed interface DriveUploadOutcome {
     ) : DriveUploadOutcome
 
     data object Unauthorized : DriveUploadOutcome
+    data class Restricted403(val message: String) : DriveUploadOutcome
     data class Error(val message: String) : DriveUploadOutcome
 }
 
@@ -38,10 +39,12 @@ sealed interface DriveRestoreOutcome {
 
     data object NotFound : DriveRestoreOutcome
     data object Unauthorized : DriveRestoreOutcome
+    data class Restricted403(val message: String) : DriveRestoreOutcome
     data class Error(val message: String) : DriveRestoreOutcome
 }
 
 class DriveUnauthorizedException : IOException("Google Drive access token expired or revoked.")
+class DriveAccessRestrictedException(message: String) : IOException(message)
 
 interface DriveCloudTransport {
     suspend fun findBackupFolder(accessToken: String): String?
@@ -101,6 +104,10 @@ class GoogleDriveBackupService(
             )
         } catch (_: DriveUnauthorizedException) {
             DriveUploadOutcome.Unauthorized
+        } catch (e: DriveAccessRestrictedException) {
+            DriveUploadOutcome.Restricted403(
+                e.localizedMessage ?: "Google Drive access restricted (Error 403)."
+            )
         } catch (e: Exception) {
             DriveUploadOutcome.Error(e.localizedMessage ?: "Failed to sync encrypted backup.")
         }
@@ -127,6 +134,10 @@ class GoogleDriveBackupService(
             )
         } catch (_: DriveUnauthorizedException) {
             DriveRestoreOutcome.Unauthorized
+        } catch (e: DriveAccessRestrictedException) {
+            DriveRestoreOutcome.Restricted403(
+                e.localizedMessage ?: "Google Drive access restricted (Error 403)."
+            )
         } catch (e: Exception) {
             DriveRestoreOutcome.Error(e.localizedMessage ?: "Failed to restore encrypted backup.")
         }
@@ -322,8 +333,11 @@ class HttpGoogleDriveTransport(
     }
 
     private fun checkStatus(code: Int) {
-        if (code == 401 || code == 403) {
+        if (code == 401) {
             throw DriveUnauthorizedException()
+        }
+        if (code == 403) {
+            throw DriveAccessRestrictedException("Google Drive API access restricted (HTTP 403).")
         }
         if (code !in 200..299) {
             throw IOException("Google Drive request failed (HTTP $code).")

@@ -45,6 +45,7 @@ object BackupManager {
                 put("hapticFeedbackEnabled", prefs.hapticFeedbackEnabled)
                 put("mainCurrencyCode", prefs.mainCurrencyCode)
                 put("secondaryCurrencyCode", prefs.secondaryCurrencyCode)
+                put("userCountryCode", prefs.userCountryCode)
             })
 
             put("accounts", JSONArray().apply {
@@ -277,6 +278,8 @@ object BackupManager {
             if (mainCur.isNotBlank()) prefsRepo.setMainCurrency(mainCur)
             val secCur = p.optString("secondaryCurrencyCode", "")
             prefsRepo.setSecondaryCurrency(secCur)
+            val countryCode = p.optString("userCountryCode", "")
+            if (countryCode.isNotBlank()) prefsRepo.setUserCountryCode(countryCode)
         }
 
         return txList.size

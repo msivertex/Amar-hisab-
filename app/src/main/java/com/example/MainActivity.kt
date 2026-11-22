@@ -127,8 +127,6 @@ fun AmarHisabApp(
     val supportUiState by viewModel.supportUiState.collectAsStateWithLifecycle()
     val isAppUnlocked by viewModel.isAppUnlocked.collectAsStateWithLifecycle()
     val backupStatus by viewModel.backupStatus.collectAsStateWithLifecycle()
-    val driveSyncState by viewModel.driveSyncState.collectAsStateWithLifecycle()
-    val pendingDriveConsent by viewModel.pendingDriveConsent.collectAsStateWithLifecycle()
 
     val strings = remember(uiState.prefs.language) {
         StringsProvider.get(uiState.prefs.language)
@@ -229,28 +227,6 @@ fun AmarHisabApp(
         }
     }
 
-    // Launch Google Drive OAuth consent resolution whenever required for encrypted Drive auto-sync/restore
-    val driveConsentLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartIntentSenderForResult()
-    ) { result ->
-        viewModel.onDriveConsentResult(
-            resultOk = result.resultCode == Activity.RESULT_OK,
-            data = result.data
-        )
-    }
-
-    LaunchedEffect(pendingDriveConsent) {
-        val pendingIntent = pendingDriveConsent ?: return@LaunchedEffect
-        val launched = runCatching {
-            driveConsentLauncher.launch(
-                IntentSenderRequest.Builder(pendingIntent.intentSender).build()
-            )
-        }.isSuccess
-        if (!launched) {
-            viewModel.consumePendingDriveConsent()
-        }
-    }
-
     // Protect sensitive financial data from Recent Apps screenshots whenever vault lock is active
     DisposableEffect(context, isLaunchLockActive) {
         val activity = context.findHostActivity()
@@ -322,8 +298,16 @@ fun AmarHisabApp(
                     WelcomeScreen(
                         language = uiState.prefs.language,
                         strings = strings,
+                        backupErrorMessage = backupStatus?.takeIf { it.isError }?.text,
                         onGoogleSignedIn = { profile -> viewModel.linkGoogleProfile(profile) },
-                        onContinueAsGuest = { viewModel.continueAsGuest(uiState.prefs.language) }
+                        onContinueAsGuest = { viewModel.continueAsGuest(uiState.prefs.language) },
+                        onRestoreBackupUri = { uri ->
+                            viewModel.restoreJsonFromUri(
+                                uri = uri,
+                                successMessage = strings.restoreSuccessMsg,
+                                completeWelcome = true
+                            )
+                        }
                     )
                 }
 
@@ -442,8 +426,10 @@ fun AmarHisabApp(
                                         onRequestLiveCareAfterTroubleshooting = { viewModel.requestLiveCareAfterTroubleshooting() },
                                         onResetSupportChat = { viewModel.resetCustomerSupportChat() },
                                         marketSnapshot = marketSyncState.snapshot,
+                                        onSetUserCountry = { viewModel.setUserCountry(it) },
                                         onSetMainCurrency = { viewModel.setMainCurrency(it) },
                                         onSetSecondaryCurrency = { viewModel.setSecondaryCurrency(it) },
+                                        onLogOut = { viewModel.logOut() },
                                         onSetDailyReminder = { enabled, hour, minute ->
                                             viewModel.setDailyReminderConfig(enabled, hour, minute)
                                         },
@@ -453,10 +439,9 @@ fun AmarHisabApp(
                                         onSetHighSpendAlert = { enabled ->
                                             viewModel.setHighSpendAlertEnabled(enabled)
                                         },
-                                        driveSyncState = driveSyncState,
-                                        onSyncDriveNow = { viewModel.syncToGoogleDriveNow(allowConsentPrompt = true) },
-                                        onRestoreFromDrive = { viewModel.restoreFromGoogleDriveNow() },
-                                        onGrantDriveAccess = { viewModel.requestDrivePermissionAndSync() }
+                                        onShareBackupJson = { onReady ->
+                                            viewModel.prepareShareBackupJson(onReady)
+                                        }
                                     )
                                 }
 

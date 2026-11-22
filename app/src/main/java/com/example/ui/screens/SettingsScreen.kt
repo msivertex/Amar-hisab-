@@ -183,7 +183,6 @@ import com.example.ui.components.BuiltInPresetAvatars
 import com.example.ui.components.CategoryIconBadge
 import com.example.ui.components.CrystalCard
 import com.example.ui.components.GoogleGLogo
-import com.example.ui.components.GooglePreviewAccountChooserDialog
 import com.example.ui.components.PresetAvatarOption
 import com.example.ui.components.UserProfileAvatar
 import com.example.ui.theme.LocalCrystalColors
@@ -265,11 +264,14 @@ fun SettingsScreen(
     onRequestLiveCareAfterTroubleshooting: () -> Unit = {},
     onResetSupportChat: () -> Unit = {},
     marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference(),
+    onSetUserCountry: (String) -> Unit = {},
     onSetMainCurrency: (String) -> Unit = {},
     onSetSecondaryCurrency: (String) -> Unit = {},
+    onLogOut: () -> Unit = {},
     onSetDailyReminder: (enabled: Boolean, hour: Int, minute: Int) -> Unit = { _, _, _ -> },
     onSetLoanDayBefore: (enabled: Boolean) -> Unit = {},
     onSetHighSpendAlert: (enabled: Boolean) -> Unit = {},
+    onShareBackupJson: ((File) -> Unit) -> Unit = {},
     driveSyncState: DriveSyncUiState = DriveSyncUiState(),
     onSyncDriveNow: (() -> Unit)? = null,
     onRestoreFromDrive: () -> Unit = {},
@@ -305,11 +307,8 @@ fun SettingsScreen(
 
     var showDashboardCustomizer by remember { mutableStateOf(false) }
     var showWeekStartSheet by remember { mutableStateOf(false) }
-    var showMainCurrencyPicker by remember { mutableStateOf(false) }
-    var showSecondaryCurrencyPicker by remember { mutableStateOf(false) }
     var showPinSetupDialog by remember { mutableStateOf(false) }
     var isGoogleSignInLoading by remember { mutableStateOf(false) }
-    var showGooglePreviewChooser by remember { mutableStateOf(false) }
     var googleNotice by remember { mutableStateOf<String?>(null) }
 
     var showAvatarSheet by remember { mutableStateOf(false) }
@@ -326,11 +325,6 @@ fun SettingsScreen(
                     onLinkGoogleProfile(outcome.profile)
                 }
 
-                is GoogleSignInOutcome.NeedsPreviewChooser -> {
-                    isGoogleSignInLoading = false
-                    showGooglePreviewChooser = true
-                }
-
                 is GoogleSignInOutcome.Cancelled -> {
                     isGoogleSignInLoading = false
                     googleNotice = strings.googleSignInCancelled
@@ -338,7 +332,7 @@ fun SettingsScreen(
 
                 is GoogleSignInOutcome.Error -> {
                     isGoogleSignInLoading = false
-                    googleNotice = outcome.message
+                    googleNotice = GoogleAuthManager.friendlyErrorMessage(outcome.reason, prefs.language)
                 }
             }
         }
@@ -373,11 +367,20 @@ fun SettingsScreen(
                     strings = strings,
                     isGoogleSignInLoading = isGoogleSignInLoading,
                     googleNotice = googleNotice,
+                    marketSnapshot = marketSnapshot,
                     onBack = { activeSubPage = SettingsSubPage.MAIN },
                     onOpenAvatarSelector = { showAvatarSheet = true },
                     onUpdateDisplayName = onUpdateDisplayName,
                     onTriggerGoogleSignIn = { triggerGoogleLink() },
-                    onUnlinkGoogleAccount = onUnlinkGoogleAccount
+                    onUnlinkGoogleAccount = {
+                        googleNotice = null
+                        onUnlinkGoogleAccount()
+                    },
+                    onOpenBackupRestore = { activeSubPage = SettingsSubPage.BACKUP_RESTORE },
+                    onSetUserCountry = onSetUserCountry,
+                    onSetMainCurrency = onSetMainCurrency,
+                    onSetSecondaryCurrency = onSetSecondaryCurrency,
+                    onLogOut = onLogOut
                 )
             }
 
@@ -404,8 +407,8 @@ fun SettingsScreen(
                 BackupRestoreSubPage(
                     prefs = prefs,
                     backupStatus = backupStatus,
-                    isGoogleSignInLoading = isGoogleSignInLoading,
-                    googleNotice = googleNotice,
+                    isGoogleSignInLoading = false,
+                    googleNotice = null,
                     strings = strings,
                     onBack = { activeSubPage = SettingsSubPage.MAIN },
                     onExportJsonClick = {
@@ -420,9 +423,10 @@ fun SettingsScreen(
                     onDownloadSampleTemplateClick = {
                         exportTemplateLauncher.launch("amar_hisab_sample_template.csv")
                     },
-                    onTriggerGoogleSignIn = { triggerGoogleLink() },
+                    onTriggerGoogleSignIn = {},
                     onDeleteAllFinancialData = onDeleteAllFinancialData,
                     onClearBackupStatus = onClearBackupStatus,
+                    onShareBackupJson = onShareBackupJson,
                     driveSyncState = driveSyncState,
                     onSyncDriveNow = onSyncDriveNow,
                     onRestoreFromDrive = onRestoreFromDrive,
@@ -544,7 +548,7 @@ fun SettingsScreen(
                 }
             }
 
-            // 1. Main Settings Profile Card (Avatar, Name, Country, Currency, Sync Prompt, Primary Google Sign-In, Arrow -> Detailed Profile)
+            // 1. Main Settings Profile Summary Card (Avatar, Name, Country/Currency Badges, Signed-In Email or Guest Status, Arrow -> Profile Details)
             item {
                 val effectiveName = prefs.userName.ifBlank { strings.profileDetails.guestUserFallback }
                 CrystalCard(
@@ -570,7 +574,7 @@ fun SettingsScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(60.dp)
+                                .size(62.dp)
                                 .clip(CircleShape)
                                 .clickable { showAvatarSheet = true }
                                 .testTag("settings_profile_avatar_button"),
@@ -607,9 +611,11 @@ fun SettingsScreen(
                                     border = BorderStroke(0.8.dp, crystal.glassBorder)
                                 ) {
                                     Text(
-                                        text = strings.profileDetails.countryValue,
+                                        text = prefs.userCountry.label(lang),
                                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                                         color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
                                     )
                                 }
@@ -619,9 +625,10 @@ fun SettingsScreen(
                                     border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
                                 ) {
                                     Text(
-                                        text = strings.profileDetails.primaryCurrencyValue,
+                                        text = "${prefs.mainCurrency.code} (${prefs.mainCurrency.symbol})",
                                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
                                         modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
                                     )
                                 }
@@ -647,59 +654,23 @@ fun SettingsScreen(
                         color = crystal.glassBorder
                     )
 
-                    if (prefs.authMode == AuthMode.GUEST) {
-                        Text(
-                            text = strings.profileDetails.guestSyncPrompt,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = crystal.mutedText
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Button(
-                            onClick = { triggerGoogleLink() },
-                            enabled = !isGoogleSignInLoading,
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = Color.White
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 48.dp)
-                                .testTag("settings_profile_google_signin_button")
-                        ) {
-                            if (isGoogleSignInLoading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp,
-                                    color = Color.White
-                                )
-                            } else {
-                                GoogleGLogo(size = 18.dp)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = strings.linkGoogleAccountBtn,
-                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                                )
-                            }
-                        }
-                    } else {
+                    if (prefs.authMode == AuthMode.GOOGLE) {
                         Text(
                             text = prefs.userEmail.ifBlank { strings.profileDetails.googleSignedInSummary },
                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                             color = crystal.assetGreen,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("settings_profile_signed_in_email")
                         )
-                    }
-
-                    if (googleNotice != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
+                    } else {
                         Text(
-                            text = googleNotice!!,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = crystal.warningAmber
+                            text = strings.offlineGuestLabel,
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                            color = crystal.mutedText,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("settings_profile_guest_status")
                         )
                     }
                 }
@@ -817,39 +788,6 @@ fun SettingsScreen(
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                     }
-
-                    // Main Currency (interactive picker with flag, country & currency name)
-                    val activeMainCurrency = prefs.mainCurrency
-                    val activeSecondaryCurrency = prefs.secondaryCurrency
-                    CurrencySelectionTile(
-                        title = strings.mainCurrencyLabel,
-                        subtitle = "${activeMainCurrency.countryName(lang)} • ${activeMainCurrency.currencyName(lang)}",
-                        flag = activeMainCurrency.flag,
-                        badgeText = "${activeMainCurrency.code} (${activeMainCurrency.symbol})",
-                        isSelected = true,
-                        testTag = "settings_main_currency_tile",
-                        onClick = { showMainCurrencyPicker = true }
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Current / Second Currency (for expat living/work country or multi-currency tracking)
-                    CurrencySelectionTile(
-                        title = strings.secondaryCurrencyLabel,
-                        subtitle = if (activeSecondaryCurrency != null) {
-                            "${activeSecondaryCurrency.countryName(lang)} • ${activeSecondaryCurrency.currencyName(lang)}"
-                        } else {
-                            strings.secondaryCurrencySubtitle
-                        },
-                        flag = activeSecondaryCurrency?.flag,
-                        badgeText = activeSecondaryCurrency?.let { "${it.code} (${it.symbol})" }
-                            ?: strings.secondaryCurrencyNotSet,
-                        isSelected = activeSecondaryCurrency != null,
-                        testTag = "settings_secondary_currency_tile",
-                        onClick = { showSecondaryCurrencyPicker = true }
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
 
                     SettingsNavTile(
                         title = strings.categoriesOverviewLabel,
@@ -1230,44 +1168,6 @@ fun SettingsScreen(
         )
     }
 
-    if (showMainCurrencyPicker) {
-        AppCurrencyPickerSheet(
-            title = strings.mainCurrencyLabel,
-            subtitle = strings.mainCurrencySubtitle,
-            selectedCurrency = prefs.mainCurrency,
-            language = lang,
-            referenceCurrency = prefs.secondaryCurrency ?: AppCurrency.BDT,
-            marketSnapshot = marketSnapshot,
-            allowClear = false,
-            onSelect = { selected ->
-                onSetMainCurrency(selected.code)
-                showMainCurrencyPicker = false
-            },
-            onDismiss = { showMainCurrencyPicker = false }
-        )
-    }
-
-    if (showSecondaryCurrencyPicker) {
-        AppCurrencyPickerSheet(
-            title = strings.secondaryCurrencyLabel,
-            subtitle = strings.secondaryCurrencySubtitle,
-            selectedCurrency = prefs.secondaryCurrency,
-            language = lang,
-            referenceCurrency = prefs.mainCurrency,
-            marketSnapshot = marketSnapshot,
-            allowClear = true,
-            onSelect = { selected ->
-                onSetSecondaryCurrency(selected.code)
-                showSecondaryCurrencyPicker = false
-            },
-            onClear = {
-                onSetSecondaryCurrency("")
-                showSecondaryCurrencyPicker = false
-            },
-            onDismiss = { showSecondaryCurrencyPicker = false }
-        )
-    }
-
     if (showPinSetupDialog) {
         var pinInput by remember { mutableStateOf("") }
         var confirmInput by remember { mutableStateOf("") }
@@ -1320,22 +1220,6 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showPinSetupDialog = false }) { Text(strings.cancel) }
             }
-        )
-    }
-
-    if (showGooglePreviewChooser) {
-        GooglePreviewAccountChooserDialog(
-            strings = strings,
-            onSelectAccount = { selectedProfile ->
-                showGooglePreviewChooser = false
-                scope.launch {
-                    isGoogleSignInLoading = true
-                    delay(350L)
-                    isGoogleSignInLoading = false
-                    onLinkGoogleProfile(selectedProfile)
-                }
-            },
-            onDismiss = { showGooglePreviewChooser = false }
         )
     }
 

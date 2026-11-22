@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.market.MarketCalculators
 import com.example.data.market.MarketSnapshot
+import com.example.data.model.AppCountry
 import com.example.data.model.AppCurrency
 import com.example.localization.AppLanguage
 import com.example.ui.theme.HindSiliguriFamily
@@ -324,6 +325,226 @@ fun AppCurrencyPickerSheet(
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+    }
+}
+
+/**
+ * Crystal Liquid frosted-glass bottom sheet for selecting the user's Country/Region.
+ * Supports instant search by country code, English name, or Bangla name.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppCountryPickerSheet(
+    title: String,
+    subtitle: String,
+    selectedCountry: AppCountry,
+    language: AppLanguage,
+    onSelect: (AppCountry) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val crystal = LocalCrystalColors.current
+    val primary = MaterialTheme.colorScheme.primary
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filteredCountries = remember(searchQuery) {
+        val q = searchQuery.trim()
+        if (q.isEmpty()) {
+            AppCountry.entries
+        } else {
+            AppCountry.entries.filter { country ->
+                country.code.contains(q, ignoreCase = true) ||
+                    country.nameEn.contains(q, ignoreCase = true) ||
+                    country.nameBn.contains(q, ignoreCase = true) ||
+                    country.suggestedCurrency.code.contains(q, ignoreCase = true)
+            }
+        }
+    }
+
+    val searchHint = if (language == AppLanguage.BN) {
+        "দেশ খুঁজুন (যেমন: Bangladesh, Kuwait, Saudi, UAE, UK)..."
+    } else {
+        "Search country (Bangladesh, Kuwait, Saudi, UAE, UK)..."
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = if (crystal.isDark) Color(0xFF0E1726) else Color(0xFFF6FAFF),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.testTag("app_country_picker_sheet")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 18.dp)
+                .padding(bottom = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            fontFamily = HindSiliguriFamily
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = HindSiliguriFamily),
+                        color = crystal.mutedText
+                    )
+                }
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("app_country_picker_close")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = if (language == AppLanguage.BN) "বন্ধ করুন" else "Close",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = {
+                    Text(
+                        text = searchHint,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = HindSiliguriFamily),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = null,
+                        tint = primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = primary,
+                    unfocusedBorderColor = crystal.glassBorder
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("app_country_picker_search")
+            )
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(filteredCountries, key = { it.code }) { country ->
+                    val isSelected = country == selectedCountry
+                    Surface(
+                        onClick = { onSelect(country) },
+                        shape = RoundedCornerShape(18.dp),
+                        color = if (isSelected) {
+                            primary.copy(alpha = if (crystal.isDark) 0.24f else 0.12f)
+                        } else if (crystal.isDark) {
+                            Color.White.copy(alpha = 0.05f)
+                        } else {
+                            Color.White.copy(alpha = 0.88f)
+                        },
+                        border = BorderStroke(
+                            width = if (isSelected) 1.4.dp else 0.9.dp,
+                            color = if (isSelected) primary else crystal.glassBorder
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 60.dp)
+                            .testTag("app_country_option_${country.code}")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .clip(RoundedCornerShape(13.dp))
+                                        .background(
+                                            if (crystal.isDark) Color.White.copy(alpha = 0.08f)
+                                            else primary.copy(alpha = 0.08f)
+                                        )
+                                        .border(0.8.dp, crystal.glassBorder, RoundedCornerShape(13.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(text = country.flag, fontSize = 22.sp)
+                                }
+
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = country.label(language),
+                                        style = MaterialTheme.typography.titleSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = HindSiliguriFamily
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "${country.code} • ${country.suggestedCurrency.code} (${country.suggestedCurrency.symbol})",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontFamily = JetBrainsMonoFamily
+                                        ),
+                                        color = crystal.mutedText,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    tint = primary,
+                                    modifier = Modifier.size(22.dp)
+                                )
                             }
                         }
                     }

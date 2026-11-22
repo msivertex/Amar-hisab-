@@ -84,14 +84,21 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.UserPrefs
+import com.example.data.market.MarketSnapshot
+import com.example.data.model.AppCurrency
 import com.example.data.model.AuthMode
 import com.example.data.model.BangladeshiBank
+import com.example.data.model.BankCategory
 import com.example.data.model.MfsProvider
+import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
+import com.example.ui.components.AppCountryPickerSheet
+import com.example.ui.components.AppCurrencyPickerSheet
 import com.example.ui.components.CrystalCard
 import com.example.ui.components.GoogleGLogo
 import com.example.ui.components.UserProfileAvatar
 import com.example.ui.theme.LocalCrystalColors
+import com.example.localization.BdtFormatter
 
 @Composable
 fun DetailedProfileSubPage(
@@ -99,11 +106,17 @@ fun DetailedProfileSubPage(
     strings: AppStrings,
     isGoogleSignInLoading: Boolean,
     googleNotice: String?,
+    marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference(),
     onBack: () -> Unit,
     onOpenAvatarSelector: () -> Unit,
     onUpdateDisplayName: (String) -> Unit,
     onTriggerGoogleSignIn: () -> Unit,
-    onUnlinkGoogleAccount: () -> Unit
+    onUnlinkGoogleAccount: () -> Unit,
+    onOpenBackupRestore: () -> Unit = {},
+    onSetUserCountry: (String) -> Unit = {},
+    onSetMainCurrency: (String) -> Unit = {},
+    onSetSecondaryCurrency: (String) -> Unit = {},
+    onLogOut: () -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
     val crystal = LocalCrystalColors.current
@@ -116,8 +129,9 @@ fun DetailedProfileSubPage(
     var draftName by remember(effectiveName) { mutableStateOf(effectiveName) }
     var showNameError by remember { mutableStateOf(false) }
 
-    var showRegionDialog by remember { mutableStateOf(false) }
-    var showCurrencyDialog by remember { mutableStateOf(false) }
+    var showCountryPicker by remember { mutableStateOf(false) }
+    var showMainCurrencyPicker by remember { mutableStateOf(false) }
+    var showSecondaryCurrencyPicker by remember { mutableStateOf(false) }
     var showBankDirectoryDialog by remember { mutableStateOf(false) }
     var showMfsDirectoryDialog by remember { mutableStateOf(false) }
 
@@ -477,7 +491,7 @@ fun DetailedProfileSubPage(
                 }
             }
 
-            // 3. Google Account Status & Dedicated Sign-In / Unlink Card
+            // 3. Adaptive Google Account Card (Signed-in Gmail + Switch to Offline Guest, or Guest Mode + Google Sign In)
             item {
                 CrystalCard(
                     modifier = Modifier
@@ -591,8 +605,11 @@ fun DetailedProfileSubPage(
                 }
             }
 
-            // 4. Country, Primary Currency (BDT ৳), and Quick Currency (USD $) with smooth navigation arrows
+            // 4. Interactive Region & Currencies (Country, Main Currency, Second Currency)
             item {
+                val selectedCountry = prefs.userCountry
+                val activeMainCurrency = prefs.mainCurrency
+                val activeSecondaryCurrency = prefs.secondaryCurrency
                 CrystalCard(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -609,8 +626,10 @@ fun DetailedProfileSubPage(
                     ProfileInfoDetailRow(
                         icon = Icons.Filled.Public,
                         label = strings.profileDetails.countryLabel,
-                        value = strings.profileDetails.countryValue,
-                        onClick = { showRegionDialog = true }
+                        value = "${selectedCountry.flag} ${selectedCountry.label(lang)}",
+                        isHighlighted = true,
+                        testTag = "detailed_profile_country_row",
+                        onClick = { showCountryPicker = true }
                     )
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 8.dp),
@@ -618,9 +637,11 @@ fun DetailedProfileSubPage(
                     )
                     ProfileInfoDetailRow(
                         icon = Icons.Filled.Payments,
-                        label = strings.profileDetails.primaryCurrencyTitle,
-                        value = strings.profileDetails.primaryCurrencyValue,
-                        onClick = { showCurrencyDialog = true }
+                        label = strings.mainCurrencyLabel,
+                        value = "${activeMainCurrency.flag} ${activeMainCurrency.code} (${activeMainCurrency.symbol})",
+                        isHighlighted = true,
+                        testTag = "detailed_profile_main_currency_row",
+                        onClick = { showMainCurrencyPicker = true }
                     )
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 8.dp),
@@ -628,15 +649,34 @@ fun DetailedProfileSubPage(
                     )
                     ProfileInfoDetailRow(
                         icon = Icons.Filled.CurrencyExchange,
-                        label = strings.profileDetails.quickCurrencyTitle,
-                        value = strings.profileDetails.quickCurrencyValue,
-                        onClick = { showCurrencyDialog = true }
+                        label = strings.secondaryCurrencyLabel,
+                        value = activeSecondaryCurrency?.let {
+                            "${it.flag} ${it.code} (${it.symbol})"
+                        } ?: strings.secondaryCurrencyNotSet,
+                        isHighlighted = activeSecondaryCurrency != null,
+                        testTag = "detailed_profile_secondary_currency_row",
+                        onClick = { showSecondaryCurrencyPicker = true }
                     )
                 }
             }
 
             // 5. "ব্যাংক ও এমএফএস ডাটাবেস" (Bank & MFS Database) section
             item {
+                val totalBanks = BangladeshiBank.entries.size
+                val govtBankCount = BangladeshiBank.entries.count { it.category == BankCategory.GOVERNMENT }
+                val privateBankCount = BangladeshiBank.entries.count { it.category == BankCategory.PRIVATE }
+                val totalMfs = MfsProvider.entries.size
+                val dynamicBankSubtitle = if (lang == AppLanguage.BN) {
+                    "${BdtFormatter.formatNumber(totalBanks, lang)}টি ব্যাংক (${BdtFormatter.formatNumber(govtBankCount, lang)}টি সরকারি • ${BdtFormatter.formatNumber(privateBankCount, lang)}টি বেসরকারি)"
+                } else {
+                    "$totalBanks banks ($govtBankCount Govt • $privateBankCount Private)"
+                }
+                val dynamicMfsSubtitle = if (lang == AppLanguage.BN) {
+                    "${BdtFormatter.formatNumber(totalMfs, lang)}টি এমএফএস সেবা (বিকাশ, নগদ, রকেট ও আরও)"
+                } else {
+                    "$totalMfs MFS wallets (bKash, Nagad, Rocket & more)"
+                }
+
                 CrystalCard(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -665,7 +705,7 @@ fun DetailedProfileSubPage(
                     DatabaseDirectoryRow(
                         icon = Icons.Filled.AccountBalance,
                         title = strings.profileDetails.localBankDirectoryTitle,
-                        subtitle = strings.profileDetails.localBankDirectorySubtitle,
+                        subtitle = dynamicBankSubtitle,
                         buttonLabel = strings.profileDetails.checkUpdatesBtn,
                         testTag = "bank_directory_updates_button",
                         onClick = { showBankDirectoryDialog = true }
@@ -680,89 +720,110 @@ fun DetailedProfileSubPage(
                     DatabaseDirectoryRow(
                         icon = Icons.Filled.PhoneAndroid,
                         title = strings.profileDetails.mfsDirectoryTitle,
-                        subtitle = strings.profileDetails.mfsDirectorySubtitle,
+                        subtitle = dynamicMfsSubtitle,
                         buttonLabel = strings.profileDetails.browseBtn,
                         testTag = "mfs_directory_browse_button",
                         onClick = { showMfsDirectoryDialog = true }
                     )
                 }
             }
+
+            // 6. Dedicated Log Out button at the very bottom of Profile Details
+            item {
+                Spacer(modifier = Modifier.height(4.dp))
+                OutlinedButton(
+                    onClick = onLogOut,
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.2.dp, crystal.liabilityRed.copy(alpha = 0.55f)),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = crystal.liabilityRedBg.copy(alpha = if (crystal.isDark) 0.45f else 0.72f),
+                        contentColor = crystal.liabilityRed
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 52.dp)
+                        .testTag("detailed_profile_logout_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Logout,
+                        contentDescription = "Log Out",
+                        tint = crystal.liabilityRed,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Log Out",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = crystal.liabilityRed
+                    )
+                }
+            }
         }
     }
 
-    // Region Info Dialog
-    if (showRegionDialog) {
-        AlertDialog(
-            onDismissRequest = { showRegionDialog = false },
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-            textContentColor = MaterialTheme.colorScheme.onSurface,
-            icon = {
-                Icon(
-                    imageVector = Icons.Filled.Public,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
+    // Interactive Country Picker Sheet
+    if (showCountryPicker) {
+        AppCountryPickerSheet(
+            title = strings.profileDetails.countryLabel,
+            subtitle = strings.profileDetails.regionDialogNote,
+            selectedCountry = prefs.userCountry,
+            language = lang,
+            onSelect = { selected ->
+                onSetUserCountry(selected.code)
+                showCountryPicker = false
             },
-            title = { Text("${strings.profileDetails.countryLabel}: ${strings.profileDetails.countryValue}") },
-            text = {
-                Text(
-                    text = strings.profileDetails.regionDialogNote,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = crystal.mutedText
-                )
-            },
-            confirmButton = {
-                Button(onClick = { showRegionDialog = false }) {
-                    Text(strings.close)
-                }
-            }
+            onDismiss = { showCountryPicker = false }
         )
     }
 
-    // Currency Info Dialog
-    if (showCurrencyDialog) {
-        AlertDialog(
-            onDismissRequest = { showCurrencyDialog = false },
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-            textContentColor = MaterialTheme.colorScheme.onSurface,
-            icon = {
-                Icon(
-                    imageVector = Icons.Filled.CurrencyExchange,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
+    // Interactive Main Currency Picker Sheet
+    if (showMainCurrencyPicker) {
+        AppCurrencyPickerSheet(
+            title = strings.mainCurrencyLabel,
+            subtitle = strings.mainCurrencySubtitle,
+            selectedCurrency = prefs.mainCurrency,
+            language = lang,
+            referenceCurrency = prefs.secondaryCurrency ?: AppCurrency.BDT,
+            marketSnapshot = marketSnapshot,
+            allowClear = false,
+            onSelect = { selected ->
+                onSetMainCurrency(selected.code)
+                showMainCurrencyPicker = false
             },
-            title = { Text(strings.profileDetails.accountRegionSectionTitle) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "${strings.profileDetails.primaryCurrencyTitle}: ${strings.profileDetails.primaryCurrencyValue}",
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                    )
-                    Text(
-                        text = "${strings.profileDetails.quickCurrencyTitle}: ${strings.profileDetails.quickCurrencyValue}",
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = strings.profileDetails.currencyDialogNote,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = crystal.mutedText
-                    )
-                }
-            },
-            confirmButton = {
-                Button(onClick = { showCurrencyDialog = false }) {
-                    Text(strings.close)
-                }
-            }
+            onDismiss = { showMainCurrencyPicker = false }
         )
     }
 
-    // Local Bank Directory & Updates Dialog
+    // Interactive Second Currency Picker Sheet (supports search & clear)
+    if (showSecondaryCurrencyPicker) {
+        AppCurrencyPickerSheet(
+            title = strings.secondaryCurrencyLabel,
+            subtitle = strings.secondaryCurrencySubtitle,
+            selectedCurrency = prefs.secondaryCurrency,
+            language = lang,
+            referenceCurrency = prefs.mainCurrency,
+            marketSnapshot = marketSnapshot,
+            allowClear = true,
+            onSelect = { selected ->
+                onSetSecondaryCurrency(selected.code)
+                showSecondaryCurrencyPicker = false
+            },
+            onClear = {
+                onSetSecondaryCurrency("")
+                showSecondaryCurrencyPicker = false
+            },
+            onDismiss = { showSecondaryCurrencyPicker = false }
+        )
+    }
+
+    // Local Bank Directory & Updates Dialog (All 22 Banks grouped by Government & Private)
     if (showBankDirectoryDialog) {
+        val governmentBanks = remember {
+            BangladeshiBank.entries.filter { it.category == BankCategory.GOVERNMENT }
+        }
+        val privateBanks = remember {
+            BangladeshiBank.entries.filter { it.category == BankCategory.PRIVATE }
+        }
         AlertDialog(
             onDismissRequest = { showBankDirectoryDialog = false },
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -775,13 +836,18 @@ fun DetailedProfileSubPage(
                     tint = MaterialTheme.colorScheme.primary
                 )
             },
-            title = { Text(strings.profileDetails.localBankDirectoryTitle) },
+            title = {
+                Text(
+                    "${strings.profileDetails.localBankDirectoryTitle} (${BdtFormatter.formatNumber(BangladeshiBank.entries.size, lang)})"
+                )
+            },
             text = {
                 Column(
                     modifier = Modifier
+                        .heightIn(max = 420.dp)
                         .verticalScroll(rememberScrollState())
                         .testTag("bank_directory_dialog_content"),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Surface(
                         color = crystal.assetGreenBg,
@@ -807,48 +873,26 @@ fun DetailedProfileSubPage(
                         }
                     }
 
-                    BangladeshiBank.entries.forEach { bank ->
-                        Surface(
-                            color = if (crystal.isDark) Color(0xFF161C2B) else crystal.glassSurfaceElevated,
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(0.8.dp, crystal.glassBorder),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(CircleShape)
-                                        .background(bank.brandColor),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = bank.shortCode.take(2),
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 10.sp
-                                        ),
-                                        color = Color.White
-                                    )
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = bank.label(lang),
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = bank.shortCode,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = crystal.mutedText
-                                    )
-                                }
-                            }
-                        }
+                    Text(
+                        text = "${BankCategory.GOVERNMENT.label(lang)} (${BdtFormatter.formatNumber(governmentBanks.size, lang)})",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+
+                    governmentBanks.forEach { bank ->
+                        BankDirectoryItemCard(bank = bank, lang = lang)
+                    }
+
+                    Text(
+                        text = "${BankCategory.PRIVATE.label(lang)} (${BdtFormatter.formatNumber(privateBanks.size, lang)})",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+
+                    privateBanks.forEach { bank ->
+                        BankDirectoryItemCard(bank = bank, lang = lang)
                     }
                 }
             },
@@ -860,7 +904,7 @@ fun DetailedProfileSubPage(
         )
     }
 
-    // MFS Provider Directory Dialog
+    // MFS Provider Directory Dialog (All 10 Providers)
     if (showMfsDirectoryDialog) {
         AlertDialog(
             onDismissRequest = { showMfsDirectoryDialog = false },
@@ -874,13 +918,18 @@ fun DetailedProfileSubPage(
                     tint = MaterialTheme.colorScheme.primary
                 )
             },
-            title = { Text(strings.profileDetails.mfsDirectoryTitle) },
+            title = {
+                Text(
+                    "${strings.profileDetails.mfsDirectoryTitle} (${BdtFormatter.formatNumber(MfsProvider.entries.size, lang)})"
+                )
+            },
             text = {
                 Column(
                     modifier = Modifier
+                        .heightIn(max = 420.dp)
                         .verticalScroll(rememberScrollState())
                         .testTag("mfs_directory_dialog_content"),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     MfsProvider.entries.forEach { provider ->
                         Surface(
@@ -913,7 +962,7 @@ fun DetailedProfileSubPage(
                                 }
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = provider.label(lang),
+                                        text = provider.directoryLabel(lang),
                                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
@@ -938,59 +987,127 @@ fun DetailedProfileSubPage(
 }
 
 @Composable
-private fun ProfileInfoDetailRow(
-    icon: ImageVector,
-    label: String,
-    value: String,
-    onClick: () -> Unit
+private fun BankDirectoryItemCard(
+    bank: BangladeshiBank,
+    lang: AppLanguage
 ) {
     val crystal = LocalCrystalColors.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+    Surface(
+        color = if (crystal.isDark) Color(0xFF161C2B) else crystal.glassSurfaceElevated,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(0.8.dp, crystal.glassBorder),
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(bank.brandColor),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
+                Text(
+                    text = bank.shortCode.take(2),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp
+                    ),
+                    color = Color.White
                 )
             }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = bank.label(lang),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = bank.shortCode,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = crystal.mutedText
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileInfoDetailRow(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    isHighlighted: Boolean = false,
+    testTag: String? = null,
+    onClick: () -> Unit
+) {
+    val crystal = LocalCrystalColors.current
+    val primary = MaterialTheme.colorScheme.primary
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .minimumInteractiveComponentSize()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .let { mod -> if (testTag != null) mod.testTag(testTag) else mod }
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(primary.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = primary,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                color = crystal.mutedText,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2
             )
         }
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text(
-                text = value,
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            Surface(
+                shape = CircleShape,
+                color = if (isHighlighted) {
+                    primary.copy(alpha = if (crystal.isDark) 0.22f else 0.11f)
+                } else if (crystal.isDark) {
+                    Color.White.copy(alpha = 0.08f)
+                } else {
+                    crystal.glassSurfaceElevated
+                },
+                border = BorderStroke(
+                    width = 0.8.dp,
+                    color = if (isHighlighted) primary.copy(alpha = 0.35f) else crystal.glassBorder
+                )
+            ) {
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = if (isHighlighted) primary else crystal.mutedText,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                )
+            }
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = label,

@@ -12,6 +12,7 @@ enum class DriveSyncStatus {
     SYNCED,
     PENDING_OFFLINE,
     NEEDS_PERMISSION,
+    RESTRICTED_403,
     ERROR
 }
 
@@ -29,6 +30,7 @@ sealed interface DriveAutoRestoreOutcome {
     data class Restored(val transactionCount: Int, val updatedAtMillis: Long) : DriveAutoRestoreOutcome
     data class UploadedLocal(val updatedAtMillis: Long) : DriveAutoRestoreOutcome
     data object Unauthorized : DriveAutoRestoreOutcome
+    data class Restricted403(val message: String) : DriveAutoRestoreOutcome
     data class Error(val message: String) : DriveAutoRestoreOutcome
 }
 
@@ -91,6 +93,8 @@ class DriveSyncCoordinator(
                             DriveAutoRestoreOutcome.UploadedLocal(upload.updatedAtMillis)
                         is DriveUploadOutcome.Unauthorized ->
                             DriveAutoRestoreOutcome.Unauthorized
+                        is DriveUploadOutcome.Restricted403 ->
+                            DriveAutoRestoreOutcome.Restricted403(upload.message)
                         is DriveUploadOutcome.Error ->
                             DriveAutoRestoreOutcome.Error(upload.message)
                     }
@@ -106,6 +110,8 @@ class DriveSyncCoordinator(
                             DriveAutoRestoreOutcome.UploadedLocal(upload.updatedAtMillis)
                         is DriveUploadOutcome.Unauthorized ->
                             DriveAutoRestoreOutcome.Unauthorized
+                        is DriveUploadOutcome.Restricted403 ->
+                            DriveAutoRestoreOutcome.Restricted403(upload.message)
                         is DriveUploadOutcome.Error ->
                             DriveAutoRestoreOutcome.Error(upload.message)
                     }
@@ -113,6 +119,7 @@ class DriveSyncCoordinator(
             }
 
             is DriveRestoreOutcome.Unauthorized -> DriveAutoRestoreOutcome.Unauthorized
+            is DriveRestoreOutcome.Restricted403 -> DriveAutoRestoreOutcome.Restricted403(remote.message)
             is DriveRestoreOutcome.Error -> DriveAutoRestoreOutcome.Error(remote.message)
         }
     }

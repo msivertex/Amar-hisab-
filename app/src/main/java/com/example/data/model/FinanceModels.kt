@@ -59,18 +59,47 @@ enum class CardNetwork(val label: String) {
     AMEX("American Express")
 }
 
+enum class BankCategory(val en: String, val bn: String) {
+    GOVERNMENT("Government Banks", "সরকারি ব্যাংক"),
+    PRIVATE("Private Banks", "বেসরকারি ব্যাংক");
+
+    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+}
+
 enum class BangladeshiBank(
     val en: String,
     val bn: String,
     val shortCode: String,
-    val brandColor: Color
+    val brandColor: Color,
+    val category: BankCategory = BankCategory.PRIVATE
 ) {
-    CITY_BANK("City Bank", "সিটি ব্যাংক", "CITY", BrandCityBank),
-    DBBL("Dutch-Bangla Bank", "ডাচ-বাংলা ব্যাংক", "DBBL", BrandDbbl),
-    TRUST_BANK("Trust Bank", "ট্রাস্ট ব্যাংক", "TRUST", BrandTrustBank),
-    ISLAMI_BANK("Islami Bank", "ইসলামী ব্যাংক", "IBBL", BrandIslamiBank),
-    SONALI_BANK("Sonali Bank", "সোনালী ব্যাংক", "SONALI", BrandSonaliBank),
-    BRAC_BANK("BRAC Bank", "ব্র্যাক ব্যাংক", "BRAC", BrandBracBank);
+    // Existing 6 Banks
+    CITY_BANK("City Bank", "সিটি ব্যাংক", "CITY", BrandCityBank, BankCategory.PRIVATE),
+    DBBL("Dutch-Bangla Bank", "ডাচ-বাংলা ব্যাংক", "DBBL", BrandDbbl, BankCategory.PRIVATE),
+    TRUST_BANK("Trust Bank", "ট্রাস্ট ব্যাংক", "TRUST", BrandTrustBank, BankCategory.PRIVATE),
+    ISLAMI_BANK("Islami Bank", "ইসলামী ব্যাংক", "IBBL", BrandIslamiBank, BankCategory.PRIVATE),
+    SONALI_BANK("Sonali Bank", "সোনালী ব্যাংক", "SONALI", BrandSonaliBank, BankCategory.GOVERNMENT),
+    BRAC_BANK("BRAC Bank", "ব্র্যাক ব্যাংক", "BRAC", BrandBracBank, BankCategory.PRIVATE),
+
+    // Government Banks (Additional)
+    JANATA_BANK("Janata Bank", "জনতা ব্যাংক", "JANATA", Color(0xFF0B5D3B), BankCategory.GOVERNMENT),
+    AGRANI_BANK("Agrani Bank", "অগ্রণী ব্যাংক", "AGRANI", Color(0xFF15803D), BankCategory.GOVERNMENT),
+    RUPALI_BANK("Rupali Bank", "রূপালী ব্যাংক", "RUPALI", Color(0xFF1D4ED8), BankCategory.GOVERNMENT),
+    BKB("Bangladesh Krishi Bank", "বাংলাদেশ কৃষি ব্যাংক", "BKB", Color(0xFF166534), BankCategory.GOVERNMENT),
+
+    // Private Banks (Additional)
+    EBL("Eastern Bank", "ইস্টার্ন ব্যাংক", "EBL", Color(0xFF005DAA), BankCategory.PRIVATE),
+    PRIME_BANK("Prime Bank", "প্রাইম ব্যাংক", "PRIME", Color(0xFF0F766E), BankCategory.PRIVATE),
+    MTB("Mutual Trust Bank", "মিউচুয়াল ট্রাস্ট ব্যাংক", "MTB", Color(0xFF047857), BankCategory.PRIVATE),
+    DHAKA_BANK("Dhaka Bank", "ঢাকা ব্যাংক", "DHAKA", Color(0xFF0369A1), BankCategory.PRIVATE),
+    PUBALI_BANK("Pubali Bank", "পূবালী ব্যাংক", "PUBALI", Color(0xFF15803D), BankCategory.PRIVATE),
+    BANK_ASIA("Bank Asia", "ব্যাংক এশিয়া", "BANKASIA", Color(0xFF1E40AF), BankCategory.PRIVATE),
+    SEBL("Southeast Bank", "সাউথইস্ট ব্যাংক", "SEBL", Color(0xFF0E7490), BankCategory.PRIVATE),
+    ONE_BANK("One Bank", "ওয়ান ব্যাংক", "ONE", Color(0xFFBE123C), BankCategory.PRIVATE),
+    UTTARA_BANK("Uttara Bank", "উত্তরা ব্যাংক", "UTTARA", Color(0xFF0F4C81), BankCategory.PRIVATE),
+    JAMUNA_BANK("Jamuna Bank", "যমুনা ব্যাংক", "JAMUNA", Color(0xFF1D4ED8), BankCategory.PRIVATE),
+    UCB("United Commercial Bank", "ইউনাইটেড কমার্শিয়াল ব্যাংক", "UCB", Color(0xFFB91C1C), BankCategory.PRIVATE),
+    MBL("Mercantile Bank", "মার্কেন্টাইল ব্যাংক", "MBL", Color(0xFF0D9488), BankCategory.PRIVATE);
 
     fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
 }
@@ -79,14 +108,28 @@ enum class MfsProvider(
     val en: String,
     val bn: String,
     val brandColor: Color,
-    val secondaryColor: Color
+    val secondaryColor: Color,
+    val parentBankEn: String = "",
+    val parentBankBn: String = ""
 ) {
     BKASH("bKash", "বিকাশ", BrandBkash, Color(0xFFF43F5E)),
     NAGAD("Nagad", "নগদ", BrandNagad, Color(0xFFDC2626)),
-    ROCKET("Rocket", "রকেট", BrandRocket, Color(0xFF6B21A8)),
-    UPAY("Upay", "উপায়", BrandUpay, Color(0xFFEAB308));
+    ROCKET("Rocket", "রকেট", BrandRocket, Color(0xFF6B21A8), "DBBL", "ডাচ-বাংলা ব্যাংক"),
+    UPAY("Upay", "উপায়", BrandUpay, Color(0xFFEAB308), "UCB", "ইউসিবি"),
+    TAP("Tap", "ট্যাপ", Color(0xFF006A4E), Color(0xFF10B981), "Trust Axiata Pay", "ট্রাস্ট আজিয়াটা পে"),
+    OK_WALLET("OK Wallet", "ওকে ওয়ালেট", Color(0xFFDC2626), Color(0xFFF97316), "One Bank", "ওয়ান ব্যাংক"),
+    MCASH("mCash", "এমক্যাশ", Color(0xFF047857), Color(0xFF10B981), "Islami Bank", "ইসলামী ব্যাংক"),
+    SURECASH("SureCash", "শিওরক্যাশ", Color(0xFF0284C7), Color(0xFF38BDF8)),
+    MYCASH("MyCash", "মাইক্যাশ", Color(0xFF0F766E), Color(0xFF14B8A6), "Mercantile Bank", "মার্কেন্টাইল ব্যাংক"),
+    ISLAMIC_WALLET("Islamic Wallet", "ইসলামিক ওয়ালেট", Color(0xFF166534), Color(0xFF22C55E), "Islami Bank", "ইসলামী ব্যাংক");
 
     fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+
+    fun directoryLabel(lang: AppLanguage): String {
+        val base = label(lang)
+        val parent = if (lang == AppLanguage.BN) parentBankBn else parentBankEn
+        return if (parent.isNotBlank()) "$base ($parent)" else base
+    }
 }
 
 enum class TransactionType {

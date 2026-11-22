@@ -168,11 +168,11 @@ class ExampleRobolectricTest {
         composeRule.onNodeWithText("আমার হিসাব").assertIsDisplayed()
         composeRule.onNodeWithText("AMAR HISAB").assertIsDisplayed()
         composeRule.onNodeWithText("SMART PERSONAL FINANCE VAULT").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("welcome_google_signin_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("welcome_google_signin_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("CONTINUE WITH GOOGLE").assertIsDisplayed()
-        composeRule.onNodeWithTag("welcome_guest_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("welcome_guest_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("CONTINUE AS OFFLINE GUEST").assertIsDisplayed()
-        composeRule.onNodeWithTag("welcome_developer_attribution").assertIsDisplayed()
+        composeRule.onNodeWithTag("welcome_developer_attribution").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Developed by MD Shariful Islam").assertIsDisplayed()
         composeRule.onNodeWithTag("welcome_guest_button").performClick()
         assertTrue(guestSelected)
@@ -388,19 +388,17 @@ class ExampleRobolectricTest {
         }
 
         composeRule.waitForIdle()
-        // 1. Main Settings Profile Card defaults to "গেস্ট ইউজার" and neutral Guest avatar icon
+        // 1. Main Settings Profile summary card defaults to "গেস্ট ইউজার" with no Google Sign-In button on Settings
         composeRule.onNodeWithTag("settings_profile_card").assertIsDisplayed()
         composeRule.onNodeWithText("গেস্ট ইউজার").assertIsDisplayed()
         composeRule.onNodeWithText("Tahmid Hasan").assertDoesNotExist()
         composeRule.onNodeWithTag("default_guest_avatar_icon", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithText("Bangladesh").assertIsDisplayed()
         composeRule.onNodeWithText("BDT (৳)").assertIsDisplayed()
-        composeRule.onNodeWithText("গেস্ট মোড (অফলাইন) - ক্লাউড ব্যাকআপ ও মাল্টি-ডিভাইস সিঙ্ক চালু করতে গুগল সাইন ইন করুন")
-            .assertIsDisplayed()
-        composeRule.onNodeWithTag("settings_profile_google_signin_button").assertIsDisplayed()
-        composeRule.onNodeWithText("গুগল দিয়ে সাইন ইন করুন").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_profile_google_signin_button").assertDoesNotExist()
+        composeRule.onNodeWithTag("settings_profile_guest_status").assertIsDisplayed()
 
-        // Confirm lower Security & System section has no duplicate Google Sign-In row
+        // Confirm lower Security & System section has no Google Sign-In row
         composeRule.onNodeWithTag("settings_list")
             .performScrollToNode(hasTestTag("settings_security_card"))
         composeRule.onNodeWithTag("settings_security_card").assertIsDisplayed()
@@ -414,7 +412,7 @@ class ExampleRobolectricTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("detailed_profile_screen").assertIsDisplayed()
 
-        // Prominent avatar + User Information ("ব্যবহারকারীর তথ্য") + Google Account status + Region/Currencies
+        // Prominent avatar + User Information ("ব্যবহারকারীর তথ্য") + Adaptive Google Account card + Region/Currencies
         composeRule.onNodeWithTag("detailed_profile_avatar_edit_button").assertIsDisplayed()
         composeRule.onNodeWithTag("detailed_profile_list")
             .performScrollToNode(hasTestTag("detailed_profile_user_info_card"))
@@ -3082,12 +3080,16 @@ class ExampleRobolectricTest {
             }
         }
 
-        // Scroll to Main & Second Currency tiles in Settings and select SAR as Second Currency
-        composeRule.onNodeWithTag("settings_list")
-            .performScrollToNode(hasTestTag("settings_secondary_currency_tile"))
+        // Open Profile Details from Settings and select SAR as Second Currency
+        composeRule.onNodeWithTag("settings_open_detailed_profile_button")
+            .assertIsDisplayed()
+            .performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("settings_main_currency_tile").assertIsDisplayed()
-        composeRule.onNodeWithTag("settings_secondary_currency_tile").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("detailed_profile_list")
+            .performScrollToNode(hasTestTag("detailed_profile_region_currency_card"))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("detailed_profile_main_currency_row").assertIsDisplayed()
+        composeRule.onNodeWithTag("detailed_profile_secondary_currency_row").assertIsDisplayed().performClick()
         composeRule.waitForIdle()
 
         // Currency picker opens with search and selects SAR (Saudi Arabia)

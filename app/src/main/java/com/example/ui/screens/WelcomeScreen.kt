@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -11,15 +14,16 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -30,15 +34,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.PersonOutline
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,7 +57,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -73,7 +78,6 @@ import com.example.ui.components.AmarHisabLogoBadge
 import com.example.ui.components.CrystalCard
 import com.example.ui.components.CrystalMeshBackground
 import com.example.ui.components.GoogleGLogo
-import com.example.ui.components.GooglePreviewAccountChooserDialog
 import com.example.ui.theme.HindSiliguriFamily
 import com.example.ui.theme.LocalCrystalColors
 import com.example.ui.theme.OutfitFontFamily
@@ -87,12 +91,15 @@ import java.util.Locale
 fun WelcomeScreen(
     language: AppLanguage,
     strings: AppStrings,
+    backupErrorMessage: String? = null,
     onGoogleSignedIn: (GoogleAccountProfile) -> Unit,
-    onContinueAsGuest: () -> Unit
+    onContinueAsGuest: () -> Unit,
+    onRestoreBackupUri: (Uri) -> Unit = {}
 ) {
     val crystal = LocalCrystalColors.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val isBn = language == AppLanguage.BN
 
     val logoScale = remember { Animatable(0.80f) }
     val logoAlpha = remember { Animatable(0f) }
@@ -102,8 +109,7 @@ fun WelcomeScreen(
     val buttonsSlideY = remember { Animatable(32f) }
 
     var isSigningIn by remember { mutableStateOf(false) }
-    var showPreviewAccountDialog by remember { mutableStateOf(false) }
-    var statusNotice by remember { mutableStateOf<String?>(null) }
+    var authNotice by remember { mutableStateOf<String?>(null) }
 
     val pulseTransition = rememberInfiniteTransition(label = "welcomeLogoPulse")
     val haloScale by pulseTransition.animateFloat(
@@ -146,7 +152,7 @@ fun WelcomeScreen(
 
     fun startGoogleSignIn() {
         if (isSigningIn) return
-        statusNotice = null
+        authNotice = null
         scope.launch {
             isSigningIn = true
             when (val outcome = GoogleAuthManager.signInWithGoogle(context)) {
@@ -155,19 +161,14 @@ fun WelcomeScreen(
                     onGoogleSignedIn(outcome.profile)
                 }
 
-                is GoogleSignInOutcome.NeedsPreviewChooser -> {
-                    isSigningIn = false
-                    showPreviewAccountDialog = true
-                }
-
                 is GoogleSignInOutcome.Cancelled -> {
                     isSigningIn = false
-                    statusNotice = formatWelcomeCopy(strings.googleSignInCancelled)
+                    authNotice = strings.googleSignInCancelled
                 }
 
                 is GoogleSignInOutcome.Error -> {
                     isSigningIn = false
-                    statusNotice = formatWelcomeCopy(outcome.message)
+                    authNotice = GoogleAuthManager.friendlyErrorMessage(outcome.reason, language)
                 }
             }
         }
@@ -185,15 +186,16 @@ fun WelcomeScreen(
             Column(
                 modifier = Modifier
                     .widthIn(max = 460.dp)
-                    .fillMaxSize(),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // Center Hero (Flexible area above bottom action buttons so buttons never push off-screen)
+                // Center Hero (Logo + Bangla & English Brand Title)
                 Box(
                     modifier = Modifier
-                        .weight(1f)
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
+                        .padding(top = 24.dp, bottom = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(
@@ -242,7 +244,7 @@ fun WelcomeScreen(
                                 style = MaterialTheme.typography.displayLarge.copy(
                                     fontFamily = HindSiliguriFamily,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 34.sp
+                                    fontSize = 36.sp
                                 ),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 textAlign = TextAlign.Center
@@ -253,7 +255,7 @@ fun WelcomeScreen(
                                 style = MaterialTheme.typography.headlineMedium.copy(
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 23.sp,
+                                    fontSize = 24.sp,
                                     letterSpacing = 3.2.sp
                                 ),
                                 color = MaterialTheme.colorScheme.primary,
@@ -278,7 +280,7 @@ fun WelcomeScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Bottom-Pinned Crystal Liquid Frosted-Glass Action Card
+                // Bottom-Pinned Crystal Liquid Entry Card: Continue with Google & Continue as Guest
                 CrystalCard(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -294,19 +296,18 @@ fun WelcomeScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        if (statusNotice != null) {
+                        val activeNotice = authNotice ?: backupErrorMessage
+                        if (!activeNotice.isNullOrBlank()) {
                             Surface(
                                 color = crystal.warningAmberBg,
                                 shape = RoundedCornerShape(14.dp),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("welcome_auth_notice")
                             ) {
                                 Text(
-                                    text = statusNotice!!,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.Medium,
-                                        letterSpacing = 0.8.sp
-                                    ),
+                                    text = activeNotice,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                                     color = MaterialTheme.colorScheme.onSurface,
                                     textAlign = TextAlign.Center,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
@@ -314,53 +315,26 @@ fun WelcomeScreen(
                             }
                         }
 
-                        // Primary Button: CONTINUE WITH GOOGLE
-                        ElevatedButton(
+                        // Primary Button: Continue with Google
+                        Button(
                             onClick = { startGoogleSignIn() },
                             enabled = !isSigningIn,
                             shape = RoundedCornerShape(18.dp),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
-                            colors = ButtonDefaults.elevatedButtonColors(
-                                containerColor = if (crystal.isDark) MaterialTheme.colorScheme.surfaceVariant else Color.White,
-                                contentColor = if (crystal.isDark) Color.White else Color(0xFF0F172A)
-                            ),
-                            elevation = ButtonDefaults.elevatedButtonElevation(
-                                defaultElevation = 6.dp,
-                                pressedElevation = 2.dp
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = Color.White
                             ),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(54.dp)
-                                .shadow(
-                                    elevation = 12.dp,
-                                    shape = RoundedCornerShape(18.dp),
-                                    ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.24f),
-                                    spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-                                )
-                                .border(
-                                    width = 1.dp,
-                                    color = if (crystal.isDark) Color.White.copy(alpha = 0.22f) else crystal.glassBorder,
-                                    shape = RoundedCornerShape(18.dp)
-                                )
+                                .heightIn(min = 54.dp)
                                 .testTag("welcome_google_signin_button")
                         ) {
                             if (isSigningIn) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(20.dp),
                                     strokeWidth = 2.2.dp,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = formatWelcomeCopy(strings.signingInWithGoogle),
-                                    style = MaterialTheme.typography.labelLarge.copy(
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        letterSpacing = 0.8.sp
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    color = Color.White
                                 )
                             } else {
                                 GoogleGLogo(size = 20.dp)
@@ -370,8 +344,8 @@ fun WelcomeScreen(
                                     style = MaterialTheme.typography.labelLarge.copy(
                                         fontFamily = OutfitFontFamily,
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        letterSpacing = 0.8.sp
+                                        fontSize = 13.5.sp,
+                                        letterSpacing = 0.9.sp
                                     ),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -379,7 +353,7 @@ fun WelcomeScreen(
                             }
                         }
 
-                        // Secondary Frosted-Glass Button: CONTINUE AS OFFLINE GUEST
+                        // Secondary Frosted-Glass Button: Continue as Guest
                         OutlinedButton(
                             onClick = onContinueAsGuest,
                             enabled = !isSigningIn,
@@ -392,7 +366,7 @@ fun WelcomeScreen(
                             ),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(54.dp)
+                                .heightIn(min = 52.dp)
                                 .clip(RoundedCornerShape(18.dp))
                                 .background(
                                     Brush.horizontalGradient(
@@ -416,7 +390,7 @@ fun WelcomeScreen(
                                 style = MaterialTheme.typography.labelLarge.copy(
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 13.sp,
+                                    fontSize = 12.5.sp,
                                     letterSpacing = 0.7.sp
                                 ),
                                 maxLines = 1,
@@ -450,21 +424,5 @@ fun WelcomeScreen(
                 )
             }
         }
-    }
-
-    if (showPreviewAccountDialog) {
-        GooglePreviewAccountChooserDialog(
-            strings = strings,
-            onSelectAccount = { selectedProfile ->
-                showPreviewAccountDialog = false
-                scope.launch {
-                    isSigningIn = true
-                    delay(450L)
-                    isSigningIn = false
-                    onGoogleSignedIn(selectedProfile)
-                }
-            },
-            onDismiss = { showPreviewAccountDialog = false }
-        )
     }
 }

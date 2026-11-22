@@ -24,8 +24,10 @@ import com.example.data.ai.MarketErrorCategory
 import com.example.data.ai.ReceiptScanErrorCategory
 import com.example.data.ai.TtsAudioPlayer
 import com.example.data.backup.BackupManager
+import com.example.data.backup.DriveAuthErrorKind
 import com.example.data.backup.DriveAuthOutcome
 import com.example.data.backup.DriveAutoRestoreOutcome
+import com.example.data.backup.DriveConsentExtraction
 import com.example.data.backup.DriveSyncCoordinator
 import com.example.data.backup.DriveSyncStatus
 import com.example.data.backup.DriveSyncUiState
@@ -295,170 +297,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = SupportUiState(isOnline = connectivityMonitor.isOnline.value)
     )
 
-    init {
-        connectivityMonitor.start()
-        systemClockMonitor.start()
-        AmarHisabNotificationManager.ensureChannels(application)
-        // Automatically sync live exchange rates & XAU gold spot on launch
-        // and whenever internet connectivity is restored (15-min freshness window),
-        // and flush any pending encrypted Google Drive backup changes once online.
-        viewModelScope.launch {
-            connectivityMonitor.isOnline.collect { online ->
-                if (online) {
-                    val cached = marketRepository.getCachedSnapshot()
-                    if (cached.isFreshSyncNeeded()) {
-                        refreshMarketRates(force = false)
-                    }
-                    flushPendingDriveSyncIfSignedIn(allowConsentPrompt = false)
-                } else if (uiState.value.prefs.authMode == AuthMode.GOOGLE) {
-                    val cur = _driveSyncState.value
-                    if (cur.hasPendingChanges || cur.status == DriveSyncStatus.SYNCING) {
-                        _driveSyncState.value = cur.copy(
-                            status = DriveSyncStatus.PENDING_OFFLINE,
-                            isError = false
-                        )
-                    }
-                }
-            }
-        }
-        // Observe encrypted Google Drive backup status & sync whenever database or core prefs mutate.
-        viewModelScope.launch {
-            prefsRepo.userPrefs.collect { prefs ->
-                if (prefs.authMode != AuthMode.GOOGLE || prefs.userEmail.isBlank()) {
-                    if (_driveSyncState.value.status != DriveSyncStatus.SIGNED_OUT) {
-                        _driveSyncState.value = DriveSyncUiState(status = DriveSyncStatus.SIGNED_OUT)
-                    }
-                } else {
-                    val cur = _driveSyncState.value
-                    if (cur.status == DriveSyncStatus.SIGNED_OUT || cur.status == DriveSyncStatus.IDLE) {
-                        val nextStatus = when {
-                            prefs.drivePendingSync && !connectivityMonitor.isOnline.value ->
-                                DriveSyncStatus.PENDING_OFFLINE
-                            prefs.driveLastSyncedAtMillis > 0L ->
-                                DriveSyncStatus.SYNCED
-                            else -> DriveSyncStatus.IDLE
-                        }
-                        _driveSyncState.value = cur.copy(
-                            status = nextStatus,
-                            lastSyncedAtMillis = prefs.driveLastSyncedAtMillis,
-                            hasPendingChanges = prefs.drivePendingSync,
-                            folderName = GoogleDriveBackupService.BACKUP_FOLDER_NAME
-                        )
-                    } else {
-                        _driveSyncState.value = cur.copy(
-                            lastSyncedAtMillis = maxOf(cur.lastSyncedAtMillis, prefs.driveLastSyncedAtMillis),
-                            hasPendingChanges = prefs.drivePendingSync
-                        )
-                    }
-                    if (!hasCheckedStartupDriveSync && connectivityMonitor.isOnline.value) {
-                        hasCheckedStartupDriveSync = true
-                        if (prefs.drivePendingSync || !prefs.driveFolderLinked) {
-                            scheduleImmediateDriveAutoSync(debounceMillis = 1200L)
-                        }
-                    }
-                }
-
-                // Track backup-relevant preference mutations for auto-sync
-                val prefSig = listOf(
-                    prefs.userName,
-                    prefs.monthlyBudget,
-                    prefs.language.code,
-                    prefs.isDarkTheme,
-                    prefs.enableSubcategories,
-                    prefs.startOfWeek.name,
-                    prefs.hapticFeedbackEnabled,
-                    prefs.mainCurrencyCode,
-                    prefs.secondaryCurrencyCode
-                ).hashCode()
-                val prevPrefSig = lastObservedPrefSignature
-                lastObservedPrefSignature = prefSig
-                if (prevPrefSig != null && prevPrefSig != prefSig && !isDriveRestoreInProgress) {
-                    if (prefs.authMode == AuthMode.GOOGLE && prefs.userEmail.isNotBlank()) {
-                        onLocalFinancialDataMutated()
-                    }
-                }
-            }
-        }
-        viewModelScope.launch {
-            dbFlow.collect { snapshot ->
-                val sig = snapshot.hashCode()
-                val prev = lastObservedDbSignature
-                lastObservedDbSignature = sig
-                if (prev != null && prev != sig && !isDriveRestoreInProgress) {
-                    onLocalFinancialDataMutated()
-                }
-            }
-        }
-        // Automatically schedule/reschedule local-timezone reminders whenever notification settings,
-        // loans, or the device's timezone change.
-        viewModelScope.launch {
-            combine(
-                prefsRepo.userPrefs,
-                repository.loans,
-                systemClockMonitor.timeContext
-            ) { prefs, loans, timeCtx ->
-                Triple(prefs, loans, timeCtx.timeZoneId)
-            }
-                .distinctUntilChanged { old, new ->
-                    old.third == new.third &&
-                        old.second == new.second &&
-                        old.first.language == new.first.language &&
-                        old.first.notifDailyReminderEnabled == new.first.notifDailyReminderEnabled &&
-                        old.first.notifDailyReminderHour == new.first.notifDailyReminderHour &&
-                        old.first.notifDailyReminderMinute == new.first.notifDailyReminderMinute &&
-                        old.first.notifLoanReminders == new.first.notifLoanReminders &&
-                        old.first.notifLoanDayBeforeEnabled == new.first.notifLoanDayBeforeEnabled
-                }
-                .collect { (prefs, loans, tzId) ->
-                    AmarHisabNotificationManager.scheduleAllReminders(
-                        context = getApplication(),
-                        prefs = prefs,
-                        loans = loans,
-                        nowMillis = System.currentTimeMillis(),
-                        timeZone = TimeZone.getTimeZone(tzId)
-                    )
-                }
-        }
-    }
-
-    fun refreshSystemTime(
-        nowMillis: Long = System.currentTimeMillis(),
-        timeZone: TimeZone = TimeZone.getDefault()
-    ) {
-        systemClockMonitor.refreshNow(nowMillis, timeZone)
-    }
-
-    fun onAppResumed() {
-        refreshSystemTime()
-        refreshMarketRates(force = false)
-        flushPendingDriveSyncIfSignedIn(allowConsentPrompt = false)
-    }
-
-    fun refreshMarketRates(force: Boolean = true) {
-        if (_isMarketSyncing.value) return
-        val online = connectivityMonitor.refreshNow()
-        if (!online) return
-        viewModelScope.launch {
-            if (!force) {
-                val cached = marketRepository.getCachedSnapshot()
-                if (!cached.isFreshSyncNeeded()) return@launch
-            }
-            _isMarketSyncing.value = true
-            _lastMarketSyncAttemptedMillis.value = System.currentTimeMillis()
-            try {
-                val updated = marketRepository.syncLiveMarketRates()
-                _lastMarketSyncFailed.value = (updated == null)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _lastMarketSyncFailed.value = true
-                Log.w(TAG, "Market rate auto-sync fell back to cache", e)
-            } finally {
-                _isMarketSyncing.value = false
-            }
-        }
-    }
-
     private data class PendingDashboardLayout(
         val layoutStyle: HomeLayoutStyle,
         val order: List<HomeSectionId>,
@@ -528,6 +366,98 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = MainUiState()
     )
+
+    init {
+        runCatching { connectivityMonitor.start() }
+            .onFailure { Log.w(TAG, "Connectivity monitor failed to start", it) }
+        runCatching { systemClockMonitor.start() }
+            .onFailure { Log.w(TAG, "System clock monitor failed to start", it) }
+        runCatching { AmarHisabNotificationManager.ensureChannels(application) }
+            .onFailure { Log.w(TAG, "Notification channels init skipped", it) }
+        // Automatically sync live exchange rates & XAU gold spot on launch
+        // and whenever internet connectivity is restored (15-min freshness window).
+        viewModelScope.launch {
+            connectivityMonitor.isOnline.collect { online ->
+                if (online) {
+                    val cached = marketRepository.getCachedSnapshot()
+                    if (cached.isFreshSyncNeeded()) {
+                        refreshMarketRates(force = false)
+                    }
+                }
+            }
+        }
+        // Automatically schedule/reschedule local-timezone reminders whenever notification settings,
+        // loans, or the device's timezone change.
+        viewModelScope.launch {
+            combine(
+                prefsRepo.userPrefs,
+                repository.loans,
+                systemClockMonitor.timeContext
+            ) { prefs, loans, timeCtx ->
+                Triple(prefs, loans, timeCtx.timeZoneId)
+            }
+                .distinctUntilChanged { old, new ->
+                    old.third == new.third &&
+                        old.second == new.second &&
+                        old.first.language == new.first.language &&
+                        old.first.notifDailyReminderEnabled == new.first.notifDailyReminderEnabled &&
+                        old.first.notifDailyReminderHour == new.first.notifDailyReminderHour &&
+                        old.first.notifDailyReminderMinute == new.first.notifDailyReminderMinute &&
+                        old.first.notifLoanReminders == new.first.notifLoanReminders &&
+                        old.first.notifLoanDayBeforeEnabled == new.first.notifLoanDayBeforeEnabled
+                }
+                .collect { (prefs, loans, tzId) ->
+                    runCatching {
+                        AmarHisabNotificationManager.scheduleAllReminders(
+                            context = getApplication(),
+                            prefs = prefs,
+                            loans = loans,
+                            nowMillis = System.currentTimeMillis(),
+                            timeZone = TimeZone.getTimeZone(tzId)
+                        )
+                    }.onFailure { e ->
+                        Log.w(TAG, "Reminder scheduling skipped", e)
+                    }
+                }
+        }
+    }
+
+    fun refreshSystemTime(
+        nowMillis: Long = System.currentTimeMillis(),
+        timeZone: TimeZone = TimeZone.getDefault()
+    ) {
+        systemClockMonitor.refreshNow(nowMillis, timeZone)
+    }
+
+    fun onAppResumed() {
+        refreshSystemTime()
+        refreshMarketRates(force = false)
+    }
+
+    fun refreshMarketRates(force: Boolean = true) {
+        if (_isMarketSyncing.value) return
+        val online = connectivityMonitor.refreshNow()
+        if (!online) return
+        viewModelScope.launch {
+            if (!force) {
+                val cached = marketRepository.getCachedSnapshot()
+                if (!cached.isFreshSyncNeeded()) return@launch
+            }
+            _isMarketSyncing.value = true
+            _lastMarketSyncAttemptedMillis.value = System.currentTimeMillis()
+            try {
+                val updated = marketRepository.syncLiveMarketRates()
+                _lastMarketSyncFailed.value = (updated == null)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _lastMarketSyncFailed.value = true
+                Log.w(TAG, "Market rate auto-sync fell back to cache", e)
+            } finally {
+                _isMarketSyncing.value = false
+            }
+        }
+    }
 
     fun selectTab(tab: AppTab) {
         _showAccountsScreen.value = false
@@ -682,18 +612,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefsRepo.completeWelcomeAsGuest(null)
     }
 
+    fun completeLocalProfileSetup(displayName: String) = viewModelScope.launch {
+        _backupStatus.value = null
+        prefsRepo.completeWelcomeAsGuest(displayName.trim().ifBlank { null })
+    }
+
     fun linkGoogleProfile(profile: GoogleAccountProfile) = viewModelScope.launch {
+        driveAutoSyncDebounceJob?.cancel()
+        driveAutoSyncDebounceJob = null
         cachedDriveAccessToken = null
+        _pendingDriveConsent.value = null
+
+        val currentPrefs = prefsRepo.userPrefs.first()
+        val incomingEmail = profile.email.trim().lowercase()
+        val previousOwner = currentPrefs.lastLocalOwnerEmail
+            .ifBlank { currentPrefs.userEmail }
+            .trim()
+            .lowercase()
+        val isSwitchingToDifferentUser = previousOwner.isNotBlank() &&
+            incomingEmail.isNotBlank() &&
+            previousOwner != incomingEmail
+
+        if (isSwitchingToDifferentUser) {
+            // Strictly isolate each Gmail user's local workspace so User B never sees or uploads User A's records
+            isDriveRestoreInProgress = true
+            try {
+                BackupManager.clearAllFinancialData(db)
+                prefsRepo.resetUserScopedPrefsForAccountSwitch()
+                lastObservedDbSignature = null
+                lastObservedPrefSignature = null
+                _pendingDashboardLayout.value = null
+            } finally {
+                isDriveRestoreInProgress = false
+            }
+        }
+
         prefsRepo.linkGoogleAccount(
             displayName = profile.displayName,
             email = profile.email,
             avatarUrl = profile.avatarUrl
         )
-        // Automatically check/restore encrypted Google Drive backup or create initial encrypted folder
-        initiateDriveAutoRestoreOrSync(
-            forceRestore = false,
-            allowConsentPrompt = true
-        )
+        hasCheckedStartupDriveSync = true
     }
 
     fun unlinkGoogleAccount() = viewModelScope.launch {
@@ -707,6 +666,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _driveSyncState.value = DriveSyncUiState(status = DriveSyncStatus.SIGNED_OUT)
     }
 
+    /**
+     * Cleanly logs out of the active session and navigates back to the startup welcome screen
+     * without clearing any local financial records (accounts, transactions, goals, or loans).
+     */
+    fun logOut() = viewModelScope.launch {
+        driveAutoSyncDebounceJob?.cancel()
+        driveAutoSyncDebounceJob = null
+        cachedDriveAccessToken = null
+        _pendingDriveConsent.value = null
+        hasCheckedStartupDriveSync = false
+        runCatching { GoogleAuthManager.signOut(getApplication()) }
+        prefsRepo.logOut()
+        _driveSyncState.value = DriveSyncUiState(status = DriveSyncStatus.SIGNED_OUT)
+        _showSettingsScreen.value = false
+        _showAccountsScreen.value = false
+    }
+
     // --- Encrypted Google Drive Backup, Immediate Auto-Sync & Login Auto-Restore ---
 
     fun consumePendingDriveConsent() {
@@ -715,41 +691,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onDriveConsentResult(resultOk: Boolean, data: Intent?) {
         _pendingDriveConsent.value = null
-        if (!resultOk) {
-            val isBn = uiState.value.prefs.language == AppLanguage.BN
-            _driveSyncState.value = _driveSyncState.value.copy(
-                status = DriveSyncStatus.NEEDS_PERMISSION,
-                message = if (isBn) {
-                    "এনক্রিপ্টেড অটো-ব্যাকআপ চালু করতে Google Drive অনুমতি দিন।"
-                } else {
-                    "Grant Google Drive access to enable automatic encrypted backups."
-                },
-                isError = false
-            )
-            return
-        }
-        val token = GoogleDriveAuthHelper.extractAccessTokenFromResult(getApplication(), data)
-        if (token.isNullOrBlank()) {
-            val isBn = uiState.value.prefs.language == AppLanguage.BN
-            _driveSyncState.value = _driveSyncState.value.copy(
-                status = DriveSyncStatus.NEEDS_PERMISSION,
-                message = if (isBn) {
-                    "Google Drive টোকেন পাওয়া যায়নি—আবার চেষ্টা করুন।"
-                } else {
-                    "Could not verify Google Drive permission. Please try again."
-                },
-                isError = true
-            )
-            return
-        }
-        cachedDriveAccessToken = token
-        when (pendingDriveConsentAction) {
-            DrivePendingAction.AUTO_RESTORE_OR_SYNC ->
-                initiateDriveAutoRestoreOrSync(forceRestore = false, allowConsentPrompt = false)
-            DrivePendingAction.FORCE_RESTORE ->
-                initiateDriveAutoRestoreOrSync(forceRestore = true, allowConsentPrompt = false)
-            DrivePendingAction.SYNC_NOW ->
-                syncToGoogleDriveNow(allowConsentPrompt = false)
+        val isBn = uiState.value.prefs.language == AppLanguage.BN
+        when (val extracted = GoogleDriveAuthHelper.extractConsentResult(getApplication(), resultOk, data)) {
+            is DriveConsentExtraction.Token -> {
+                cachedDriveAccessToken = extracted.accessToken
+                when (pendingDriveConsentAction) {
+                    DrivePendingAction.AUTO_RESTORE_OR_SYNC ->
+                        initiateDriveAutoRestoreOrSync(forceRestore = false, allowConsentPrompt = false)
+                    DrivePendingAction.FORCE_RESTORE ->
+                        initiateDriveAutoRestoreOrSync(forceRestore = true, allowConsentPrompt = false)
+                    DrivePendingAction.SYNC_NOW ->
+                        syncToGoogleDriveNow(allowConsentPrompt = false)
+                }
+            }
+
+            is DriveConsentExtraction.Declined -> {
+                _driveSyncState.value = _driveSyncState.value.copy(
+                    status = DriveSyncStatus.NEEDS_PERMISSION,
+                    message = if (isBn) {
+                        "Google Drive অনুমতি দেওয়া হয়নি। আপনার সব হিসাব লোকালি নিরাপদ আছে—যেকোনো সময় অনুমতি দিয়ে অটো-ব্যাকআপ চালু করতে পারবেন।"
+                    } else {
+                        "Google Drive access was declined. Your local accounts and transactions remain safe—you can grant permission anytime."
+                    },
+                    isError = false
+                )
+            }
+
+            is DriveConsentExtraction.Restricted403 -> {
+                _driveSyncState.value = _driveSyncState.value.copy(
+                    status = DriveSyncStatus.RESTRICTED_403,
+                    message = driveRestricted403Message(isBn),
+                    isError = true
+                )
+            }
+
+            is DriveConsentExtraction.Failed -> {
+                _driveSyncState.value = _driveSyncState.value.copy(
+                    status = DriveSyncStatus.NEEDS_PERMISSION,
+                    message = if (isBn) {
+                        "Google Drive টোকেন যাচাই করা যায়নি। লোকাল অ্যাপ স্বাভাবিকভাবে চলছে—আবার চেষ্টা করুন।"
+                    } else {
+                        "Could not verify Google Drive permission. Local tracking continues normally—please try again."
+                    },
+                    isError = true
+                )
+            }
         }
     }
 
@@ -820,125 +806,150 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         allowConsentPrompt: Boolean
     ) {
         viewModelScope.launch {
-            val prefs = prefsRepo.userPrefs.first()
-            val isBn = prefs.language == AppLanguage.BN
-            if (prefs.authMode != AuthMode.GOOGLE || prefs.userEmail.isBlank()) {
-                _driveSyncState.value = DriveSyncUiState(status = DriveSyncStatus.SIGNED_OUT)
-                return@launch
-            }
-            if (!connectivityMonitor.refreshNow()) {
-                _driveSyncState.value = _driveSyncState.value.copy(
-                    status = DriveSyncStatus.PENDING_OFFLINE,
-                    message = if (isBn) {
-                        "ইন্টারনেট সংযোগ নেই — অনলাইন হলে অটো-রিস্টোর/সিঙ্ক হবে।"
-                    } else {
-                        "Offline — Drive restore & encrypted sync will run once online."
-                    },
-                    isError = false
-                )
-                return@launch
-            }
-
-            val token = obtainDriveAccessToken(
-                actionOnConsent = if (forceRestore) {
-                    DrivePendingAction.FORCE_RESTORE
-                } else {
-                    DrivePendingAction.AUTO_RESTORE_OR_SYNC
-                },
+            performDriveAutoRestoreOrSync(
+                forceRestore = forceRestore,
                 allowConsentPrompt = allowConsentPrompt
-            ) ?: return@launch
+            )
+        }
+    }
 
+    private suspend fun performDriveAutoRestoreOrSync(
+        forceRestore: Boolean,
+        allowConsentPrompt: Boolean
+    ) {
+        val prefs = prefsRepo.userPrefs.first()
+        val isBn = prefs.language == AppLanguage.BN
+        if (prefs.authMode != AuthMode.GOOGLE || prefs.userEmail.isBlank()) {
+            _driveSyncState.value = DriveSyncUiState(status = DriveSyncStatus.SIGNED_OUT)
+            return
+        }
+        if (!connectivityMonitor.refreshNow()) {
             _driveSyncState.value = _driveSyncState.value.copy(
-                status = DriveSyncStatus.RESTORING,
+                status = DriveSyncStatus.PENDING_OFFLINE,
                 message = if (isBn) {
-                    "Google Drive-এ এনক্রিপ্টেড ব্যাকআপ যাচাই করা হচ্ছে..."
+                    "ইন্টারনেট সংযোগ নেই — অফলাইনে স্বাভাবিকভাবে হিসাব রাখুন, অনলাইন হলে অটো-রিস্টোর/সিঙ্ক হবে।"
                 } else {
-                    "Checking encrypted Google Drive vault..."
+                    "Offline — local tracking works normally; Drive restore & encrypted sync will run once online."
                 },
                 isError = false
             )
+            return
+        }
 
-            isDriveRestoreInProgress = true
-            try {
-                when (
-                    val outcome = driveSyncCoordinator.autoRestoreOrInitialSync(
-                        accessToken = token,
-                        userEmail = prefs.userEmail,
-                        db = db,
-                        prefsRepo = prefsRepo,
-                        forceRestore = forceRestore
+        val token = obtainDriveAccessToken(
+            userEmail = prefs.userEmail,
+            actionOnConsent = if (forceRestore) {
+                DrivePendingAction.FORCE_RESTORE
+            } else {
+                DrivePendingAction.AUTO_RESTORE_OR_SYNC
+            },
+            allowConsentPrompt = allowConsentPrompt
+        ) ?: return
+
+        _driveSyncState.value = _driveSyncState.value.copy(
+            status = DriveSyncStatus.RESTORING,
+            message = if (isBn) {
+                "Google Drive-এ এনক্রিপ্টেড ব্যাকআপ যাচাই করা হচ্ছে..."
+            } else {
+                "Checking encrypted Google Drive vault..."
+            },
+            isError = false
+        )
+
+        isDriveRestoreInProgress = true
+        try {
+            when (
+                val outcome = driveSyncCoordinator.autoRestoreOrInitialSync(
+                    accessToken = token,
+                    userEmail = prefs.userEmail,
+                    db = db,
+                    prefsRepo = prefsRepo,
+                    forceRestore = forceRestore
+                )
+            ) {
+                is DriveAutoRestoreOutcome.Restored -> {
+                    _pendingDashboardLayout.value = null
+                    val msg = if (isBn) {
+                        "Google Drive থেকে এনক্রিপ্টেড ব্যাকআপ স্বয়ংক্রিয়ভাবে রিস্টোর হয়েছে।"
+                    } else {
+                        "Encrypted backup restored automatically from Google Drive."
+                    }
+                    _driveSyncState.value = DriveSyncUiState(
+                        status = DriveSyncStatus.SYNCED,
+                        lastSyncedAtMillis = outcome.updatedAtMillis,
+                        hasPendingChanges = false,
+                        message = msg,
+                        isError = false
                     )
-                ) {
-                    is DriveAutoRestoreOutcome.Restored -> {
-                        _pendingDashboardLayout.value = null
-                        val msg = if (isBn) {
-                            "Google Drive থেকে এনক্রিপ্টেড ব্যাকআপ স্বয়ংক্রিয়ভাবে রিস্টোর হয়েছে।"
-                        } else {
-                            "Encrypted backup restored automatically from Google Drive."
-                        }
-                        _driveSyncState.value = DriveSyncUiState(
-                            status = DriveSyncStatus.SYNCED,
-                            lastSyncedAtMillis = outcome.updatedAtMillis,
-                            hasPendingChanges = false,
-                            message = msg,
-                            isError = false
+                    _backupStatus.value = BackupMessage(msg, isError = false)
+                }
+
+                is DriveAutoRestoreOutcome.UploadedLocal -> {
+                    val msg = if (isBn) {
+                        "Google Drive-এ এনক্রিপ্টেড ব্যাকআপ ফোল্ডার সিঙ্ক হয়েছে।"
+                    } else {
+                        "Encrypted backup synced to Google Drive."
+                    }
+                    _driveSyncState.value = DriveSyncUiState(
+                        status = DriveSyncStatus.SYNCED,
+                        lastSyncedAtMillis = outcome.updatedAtMillis,
+                        hasPendingChanges = false,
+                        message = msg,
+                        isError = false
+                    )
+                }
+
+                is DriveAutoRestoreOutcome.Unauthorized -> {
+                    cachedDriveAccessToken = null
+                    if (allowConsentPrompt) {
+                        obtainDriveAccessToken(
+                            userEmail = prefs.userEmail,
+                            actionOnConsent = if (forceRestore) {
+                                DrivePendingAction.FORCE_RESTORE
+                            } else {
+                                DrivePendingAction.AUTO_RESTORE_OR_SYNC
+                            },
+                            allowConsentPrompt = true
                         )
-                        _backupStatus.value = BackupMessage(msg, isError = false)
-                    }
-
-                    is DriveAutoRestoreOutcome.UploadedLocal -> {
-                        val msg = if (isBn) {
-                            "Google Drive-এ এনক্রিপ্টেড ব্যাকআপ ফোল্ডার সিঙ্ক হয়েছে।"
-                        } else {
-                            "Encrypted backup synced to Google Drive."
-                        }
-                        _driveSyncState.value = DriveSyncUiState(
-                            status = DriveSyncStatus.SYNCED,
-                            lastSyncedAtMillis = outcome.updatedAtMillis,
-                            hasPendingChanges = false,
-                            message = msg,
-                            isError = false
-                        )
-                    }
-
-                    is DriveAutoRestoreOutcome.Unauthorized -> {
-                        cachedDriveAccessToken = null
-                        if (allowConsentPrompt) {
-                            obtainDriveAccessToken(
-                                actionOnConsent = if (forceRestore) {
-                                    DrivePendingAction.FORCE_RESTORE
-                                } else {
-                                    DrivePendingAction.AUTO_RESTORE_OR_SYNC
-                                },
-                                allowConsentPrompt = true
-                            )
-                        } else {
-                            _driveSyncState.value = _driveSyncState.value.copy(
-                                status = DriveSyncStatus.NEEDS_PERMISSION,
-                                isError = false
-                            )
-                        }
-                    }
-
-                    is DriveAutoRestoreOutcome.Error -> {
-                        val errMsg = if (isBn) {
-                            "Google Drive ব্যাকআপ যাচাই করা যায়নি: ${outcome.message}"
-                        } else {
-                            outcome.message
-                        }
+                    } else {
                         _driveSyncState.value = _driveSyncState.value.copy(
-                            status = DriveSyncStatus.ERROR,
-                            message = errMsg,
-                            isError = true
+                            status = DriveSyncStatus.NEEDS_PERMISSION,
+                            isError = false
                         )
-                        if (forceRestore) {
-                            _backupStatus.value = BackupMessage(errMsg, isError = true)
-                        }
                     }
                 }
-            } finally {
-                isDriveRestoreInProgress = false
+
+                is DriveAutoRestoreOutcome.Restricted403 -> {
+                    cachedDriveAccessToken = null
+                    val msg = driveRestricted403Message(isBn)
+                    _driveSyncState.value = _driveSyncState.value.copy(
+                        status = DriveSyncStatus.RESTRICTED_403,
+                        message = msg,
+                        isError = true
+                    )
+                    if (forceRestore) {
+                        _backupStatus.value = BackupMessage(msg, isError = true)
+                    }
+                }
+
+                is DriveAutoRestoreOutcome.Error -> {
+                    val errMsg = if (isBn) {
+                        "Google Drive ব্যাকআপ যাচাই করা যায়নি — লোকাল হিসাব নিরাপদ আছে। (${outcome.message})"
+                    } else {
+                        "Unable to reach Google Drive right now; local records remain safe. (${outcome.message})"
+                    }
+                    _driveSyncState.value = _driveSyncState.value.copy(
+                        status = DriveSyncStatus.ERROR,
+                        message = errMsg,
+                        isError = true
+                    )
+                    if (forceRestore) {
+                        _backupStatus.value = BackupMessage(errMsg, isError = true)
+                    }
+                }
             }
+        } finally {
+            isDriveRestoreInProgress = false
         }
     }
 
@@ -970,6 +981,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val token = obtainDriveAccessToken(
+            userEmail = prefs.userEmail,
             actionOnConsent = DrivePendingAction.SYNC_NOW,
             allowConsentPrompt = allowConsentPrompt
         ) ?: return
@@ -1027,7 +1039,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         isError = false
                     )
                     if (allowConsentPrompt) {
-                        obtainDriveAccessToken(DrivePendingAction.SYNC_NOW, allowConsentPrompt = true)
+                        obtainDriveAccessToken(
+                            userEmail = prefs.userEmail,
+                            actionOnConsent = DrivePendingAction.SYNC_NOW,
+                            allowConsentPrompt = true
+                        )
+                    }
+                }
+
+                is DriveUploadOutcome.Restricted403 -> {
+                    cachedDriveAccessToken = null
+                    val msg = driveRestricted403Message(isBn)
+                    _driveSyncState.value = _driveSyncState.value.copy(
+                        status = DriveSyncStatus.RESTRICTED_403,
+                        hasPendingChanges = true,
+                        message = msg,
+                        isError = true
+                    )
+                    if (allowConsentPrompt) {
+                        _backupStatus.value = BackupMessage(msg, isError = true)
                     }
                 }
 
@@ -1036,9 +1066,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         status = DriveSyncStatus.ERROR,
                         hasPendingChanges = true,
                         message = if (isBn) {
-                            "সিঙ্ক ব্যর্থ হয়েছে — পরে স্বয়ংক্রিয়ভাবে আবার চেষ্টা করা হবে।"
+                            "সিঙ্ক সাময়িকভাবে ব্যর্থ হয়েছে — লোকাল হিসাব নিরাপদ আছে, পরে স্বয়ংক্রিয়ভাবে আবার চেষ্টা হবে।"
                         } else {
-                            "Sync paused — will retry automatically."
+                            "Sync paused — local data is safe and will retry automatically."
                         },
                         isError = true
                     )
@@ -1056,13 +1086,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun obtainDriveAccessToken(
+        userEmail: String,
         actionOnConsent: DrivePendingAction,
         allowConsentPrompt: Boolean
     ): String? {
         cachedDriveAccessToken?.takeIf { it.isNotBlank() }?.let { return it }
 
         val isBn = uiState.value.prefs.language == AppLanguage.BN
-        return when (val auth = GoogleDriveAuthHelper.requestDriveAccessToken(getApplication())) {
+        return when (
+            val auth = GoogleDriveAuthHelper.requestDriveAccessToken(
+                context = getApplication(),
+                accountEmail = userEmail
+            )
+        ) {
             is DriveAuthOutcome.Authorized -> {
                 cachedDriveAccessToken = auth.accessToken
                 auth.accessToken
@@ -1086,18 +1122,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             is DriveAuthOutcome.Error -> {
-                _driveSyncState.value = _driveSyncState.value.copy(
-                    status = DriveSyncStatus.NEEDS_PERMISSION,
-                    message = if (isBn) {
-                        "Google Drive সংযোগ পাওয়া যায়নি—অনুমতি দিয়ে আবার চেষ্টা করুন।"
-                    } else {
-                        "Unable to authorize Google Drive right now."
-                    },
-                    isError = false
-                )
+                when (auth.kind) {
+                    DriveAuthErrorKind.OAUTH_RESTRICTED_403 -> {
+                        _driveSyncState.value = _driveSyncState.value.copy(
+                            status = DriveSyncStatus.RESTRICTED_403,
+                            message = driveRestricted403Message(isBn),
+                            isError = true
+                        )
+                    }
+
+                    DriveAuthErrorKind.OFFLINE -> {
+                        _driveSyncState.value = _driveSyncState.value.copy(
+                            status = DriveSyncStatus.PENDING_OFFLINE,
+                            message = if (isBn) {
+                                "অফলাইন — অনলাইন হলে Google Drive অটো-সিঙ্ক চালু হবে।"
+                            } else {
+                                "Offline — encrypted Google Drive sync will resume once online."
+                            },
+                            isError = false
+                        )
+                    }
+
+                    DriveAuthErrorKind.DECLINED -> {
+                        _driveSyncState.value = _driveSyncState.value.copy(
+                            status = DriveSyncStatus.NEEDS_PERMISSION,
+                            message = if (isBn) {
+                                "Google Drive অনুমতি বাতিল হয়েছে। লোকাল হিসাব নিরাপদ আছে—যেকোনো সময় অনুমতি দিতে পারবেন।"
+                            } else {
+                                "Google Drive permission was declined. Local records remain safe."
+                            },
+                            isError = false
+                        )
+                    }
+
+                    DriveAuthErrorKind.PLAY_SERVICES_UNAVAILABLE,
+                    DriveAuthErrorKind.GENERAL -> {
+                        _driveSyncState.value = _driveSyncState.value.copy(
+                            status = DriveSyncStatus.NEEDS_PERMISSION,
+                            message = if (isBn) {
+                                "এই মুহূর্তে Google Drive সংযোগ করা যায়নি। লোকাল অ্যাপ ও JSON/CSV ব্যাকআপ সম্পূর্ণ সচল আছে।"
+                            } else {
+                                "Unable to connect to Google Drive right now. Local tracking and JSON/CSV backup remain fully available."
+                            },
+                            isError = false
+                        )
+                    }
+                }
                 null
             }
         }
+    }
+
+    private fun driveRestricted403Message(isBn: Boolean): String = if (isBn) {
+        "Google OAuth/Drive যাচাইকরণ সীমাবদ্ধতার (Error 403) কারণে ক্লাউড সিঙ্ক সাময়িকভাবে বন্ধ আছে। আপনার সব হিসাব লোকালি নিরাপদ আছে এবং JSON/CSV ব্যাকআপ সম্পূর্ণ সচল রয়েছে।"
+    } else {
+        "Google Drive sync is temporarily blocked by external OAuth verification settings (Error 403). Your local accounts, transactions, AI tools, and JSON/CSV backup continue working safely."
     }
 
     fun setEnableSubcategories(enabled: Boolean) = viewModelScope.launch {
@@ -1122,6 +1201,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSecondaryCurrency(currencyCode: String) = viewModelScope.launch {
         prefsRepo.setSecondaryCurrency(currencyCode)
+    }
+
+    fun setUserCountry(countryCode: String) = viewModelScope.launch {
+        prefsRepo.setUserCountryCode(countryCode)
     }
 
     fun setHapticFeedback(enabled: Boolean) = viewModelScope.launch {
@@ -1432,7 +1515,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun restoreJsonFromUri(uri: Uri, successMessage: String) {
+    fun restoreJsonFromUri(
+        uri: Uri,
+        successMessage: String,
+        completeWelcome: Boolean = false
+    ) {
         viewModelScope.launch {
             try {
                 val jsonString = withContext(Dispatchers.IO) {
@@ -1440,15 +1527,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         ?.use { it.readText() }
                         ?: throw IllegalStateException("Cannot read backup file.")
                 }
+                val parsedRoot = org.json.JSONObject(jsonString)
+                val looksValid = parsedRoot.has("accounts") ||
+                    parsedRoot.has("transactions") ||
+                    parsedRoot.optString("app").equals("Amar Hisab", ignoreCase = true)
+                if (!looksValid) {
+                    throw IllegalArgumentException(
+                        if (uiState.value.prefs.language == AppLanguage.BN) {
+                            "এটি সঠিক 'আমার হিসাব' ব্যাকআপ ফাইল নয় (.json ফাইল নির্বাচন করুন)।"
+                        } else {
+                            "Not a valid Amar Hisab backup file. Please select a .json backup."
+                        }
+                    )
+                }
                 withContext(Dispatchers.IO) {
                     BackupManager.restoreFromJson(jsonString, db, prefsRepo)
+                }
+                if (completeWelcome) {
+                    prefsRepo.completeWelcomeAsGuest(null)
                 }
                 _pendingDashboardLayout.value = null
                 _backupStatus.value = BackupMessage(successMessage)
             } catch (e: Exception) {
                 Log.e(TAG, "JSON Restore failed", e)
+                val isBn = uiState.value.prefs.language == AppLanguage.BN
                 _backupStatus.value = BackupMessage(
-                    e.localizedMessage ?: "Invalid backup JSON file.",
+                    e.localizedMessage ?: if (isBn) {
+                        "ব্যাকআপ ফাইল রিস্টোর করা যায়নি—সঠিক JSON ফাইল দিন।"
+                    } else {
+                        "Invalid backup JSON file."
+                    },
+                    isError = true
+                )
+            }
+        }
+    }
+
+    fun prepareShareBackupJson(onReady: (File) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val json = withContext(Dispatchers.IO) {
+                    BackupManager.exportJson(db, uiState.value.prefs)
+                }
+                val file = withContext(Dispatchers.IO) {
+                    val dir = File(getApplication<Application>().cacheDir, "backups").apply { mkdirs() }
+                    dir.listFiles()?.forEach { old ->
+                        if (old.isFile && old.name.endsWith(".json")) old.delete()
+                    }
+                    val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmm", java.util.Locale.US)
+                        .format(java.util.Date())
+                    val outFile = File(dir, "amar_hisab_backup_$stamp.json")
+                    outFile.writeText(json, Charsets.UTF_8)
+                    outFile
+                }
+                onReady(file)
+            } catch (e: Exception) {
+                Log.e(TAG, "Share backup preparation failed", e)
+                _backupStatus.value = BackupMessage(
+                    e.localizedMessage ?: "Unable to prepare backup file.",
                     isError = true
                 )
             }
