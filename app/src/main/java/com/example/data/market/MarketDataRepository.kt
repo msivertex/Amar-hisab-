@@ -8,12 +8,13 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.localization.AppLanguage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -23,6 +24,16 @@ import kotlin.math.pow
 import kotlin.math.roundToLong
 
 private val Context.marketCacheDataStore by preferencesDataStore(name = "amar_hisab_market_cache")
+
+/**
+ * Transparent data-freshness indicator shown in Live Market panels so users always know
+ * whether figures are Live Synced, Cached / Offline, or Reference / Calculator Estimates.
+ */
+enum class MarketDataStatus {
+    LIVE_SYNCED,
+    CACHED_OFFLINE,
+    REFERENCE_ESTIMATE
+}
 
 /**
  * 15 supported multi-region currencies for flexible any-to-any conversion.
@@ -76,6 +87,7 @@ enum class GoldCarat(
     val labelEn: String,
     val labelBn: String
 ) {
+    K24(1.0000, "24K Pure (999)", "২৪ ক্যারেট (খাঁটি)"),
     K22(0.9167, "22K Hallmark", "২২ ক্যারেট হলমার্ক"),
     K21(0.8750, "21K Hallmark", "২১ ক্যারেট হলমার্ক"),
     K18(0.7500, "18K Hallmark", "১৮ ক্যারেট হলমার্ক"),
@@ -127,8 +139,8 @@ enum class MfsChannel(
 }
 
 /**
- * Snapshot of exchange rates (units per 1 USD), gold prices (BDT per 22K/21K/18K/Traditional Vori),
- * bank benchmarks, remittance incentive, and cache metadata.
+ * Snapshot of exchange rates (units per 1 USD), gold prices (24K/22K/21K/18K/Traditional per Vori + live XAU/USD spot),
+ * bank benchmarks, remittance incentive, and per-feed cache/source metadata.
  */
 data class MarketSnapshot(
     val ratesPerUsd: Map<String, Double> = defaultRatesPerUsd(),
@@ -141,7 +153,12 @@ data class MarketSnapshot(
     val avgBankDpsRatePercent: Double = 9.0,
     val lastSyncedMillis: Long = 0L,
     val isLiveSynced: Boolean = false,
-    val sourceLabel: String = "Reference"
+    val sourceLabel: String = "Reference",
+    val gold24kPerVoriBdt: Double = ((gold22kPerVoriBdt / GoldCarat.K22.purityFactor) / 50.0).roundToLong() * 50.0,
+    val xauUsdPerOunce: Double = 0.0,
+    val goldLastSyncedMillis: Long = 0L,
+    val isGoldLiveSynced: Boolean = false,
+    val goldSourceLabel: String = "Reference"
 ) {
     fun ratePerUsd(currency: MarketCurrency): Double =
         ratesPerUsd[currency.code]?.takeIf { it > 0.0 } ?: currency.defaultPerUsd
@@ -158,7 +175,21 @@ data class MarketSnapshot(
         return (amount / fromRate) * toRate
     }
 
+    /**
+     * Sign-safe currency conversion using ISO currency codes (e.g. "SAR" -> "BDT").
+     * Returns [amount] unchanged when codes match or either code is unrecognized.
+     */
+    fun convertCurrencyCode(amount: Double, fromCode: String, toCode: String): Double {
+        if (amount == 0.0 || fromCode.equals(toCode, ignoreCase = true)) return amount
+        val from = MarketCurrency.fromCode(fromCode) ?: return amount
+        val to = MarketCurrency.fromCode(toCode) ?: return amount
+        if (from == to) return amount
+        val sign = if (amount < 0.0) -1.0 else 1.0
+        return sign * convert(kotlin.math.abs(amount), from, to)
+    }
+
     fun goldPricePerVoriBdt(carat: GoldCarat): Double = when (carat) {
+        GoldCarat.K24 -> gold24kPerVoriBdt
         GoldCarat.K22 -> gold22kPerVoriBdt
         GoldCarat.K21 -> gold21kPerVoriBdt
         GoldCarat.K18 -> gold18kPerVoriBdt
@@ -173,7 +204,32 @@ data class MarketSnapshot(
         return convert(bdtValue, MarketCurrency.BDT, targetCurrency)
     }
 
+    fun resolveCurrencyStatus(isOnline: Boolean): MarketDataStatus = when {
+        isLiveSynced && lastSyncedMillis > 0L && isOnline -> MarketDataStatus.LIVE_SYNCED
+        isLiveSynced && lastSyncedMillis > 0L -> MarketDataStatus.CACHED_OFFLINE
+        else -> MarketDataStatus.REFERENCE_ESTIMATE
+    }
+
+    fun resolveGoldStatus(isOnline: Boolean): MarketDataStatus = when {
+        isGoldLiveSynced && goldLastSyncedMillis > 0L && isOnline -> MarketDataStatus.LIVE_SYNCED
+        (isGoldLiveSynced && goldLastSyncedMillis > 0L) || (isLiveSynced && lastSyncedMillis > 0L) ->
+            MarketDataStatus.CACHED_OFFLINE
+        else -> MarketDataStatus.REFERENCE_ESTIMATE
+    }
+
     fun isStale(nowMillis: Long = System.currentTimeMillis(), maxAgeMillis: Long = DAILY_SYNC_INTERVAL_MS): Boolean {
+        if (!isLiveSynced || lastSyncedMillis <= 0L) return true
+        return (nowMillis - lastSyncedMillis) >= maxAgeMillis
+    }
+
+    /**
+     * Freshness check used on app launch, resume, and opening Live Market (15-minute cadence)
+     * so rates and XAU gold spot stay current without hammering external APIs on every recomposition.
+     */
+    fun isFreshSyncNeeded(
+        nowMillis: Long = System.currentTimeMillis(),
+        maxAgeMillis: Long = FRESH_SYNC_INTERVAL_MS
+    ): Boolean {
         if (!isLiveSynced || lastSyncedMillis <= 0L) return true
         return (nowMillis - lastSyncedMillis) >= maxAgeMillis
     }
@@ -182,6 +238,7 @@ data class MarketSnapshot(
         const val GRAMS_PER_VORI = 11.664
         const val GRAMS_PER_TROY_OUNCE = 31.1034768
         const val DAILY_SYNC_INTERVAL_MS = 24L * 60L * 60L * 1000L
+        const val FRESH_SYNC_INTERVAL_MS = 15L * 60L * 1000L
 
         fun defaultRatesPerUsd(): Map<String, Double> =
             MarketCurrency.entries.associate { it.code to it.defaultPerUsd }
@@ -193,7 +250,9 @@ data class MarketSnapshot(
 data class MarketSyncUiState(
     val snapshot: MarketSnapshot = MarketSnapshot.defaultReference(),
     val isOnline: Boolean = true,
-    val isSyncing: Boolean = false
+    val isSyncing: Boolean = false,
+    val lastSyncFailed: Boolean = false,
+    val lastAttemptedMillis: Long = 0L
 )
 
 /**
@@ -221,7 +280,9 @@ object MarketCalculators {
         val baseBdt: Double,
         val incentiveBdt: Double,
         val totalReceivableBdt: Double,
-        val effectiveRatePerUnit: Double
+        val effectiveRatePerUnit: Double,
+        val appliedRatePerUnit: Double = 0.0,
+        val feeBdt: Double = 0.0
     )
 
     data class MfsFeeEstimate(
@@ -239,7 +300,7 @@ object MarketCalculators {
     ): FdrEstimate {
         val safePrincipal = principal.coerceAtLeast(0.0)
         val years = months.coerceAtLeast(1) / 12.0
-        val gross = safePrincipal * (annualRatePercent / 100.0) * years
+        val gross = safePrincipal * (annualRatePercent.coerceAtLeast(0.0) / 100.0) * years
         val taxRate = if (hasTinCertificate) 0.10 else 0.15
         val tax = gross * taxRate
         val net = (gross - tax).coerceAtLeast(0.0)
@@ -260,7 +321,7 @@ object MarketCalculators {
     ): DpsEstimate {
         val safeMonthly = monthlyDeposit.coerceAtLeast(0.0)
         val n = months.coerceAtLeast(1)
-        val r = (annualRatePercent / 100.0) / 12.0
+        val r = (annualRatePercent.coerceAtLeast(0.0) / 100.0) / 12.0
         val totalDeposited = safeMonthly * n
         val futureValue = if (r > 0.0) {
             safeMonthly * (((1.0 + r).pow(n) - 1.0) / r) * (1.0 + r)
@@ -284,22 +345,29 @@ object MarketCalculators {
         foreignAmount: Double,
         fromCurrency: MarketCurrency,
         snapshot: MarketSnapshot,
-        includeGovtIncentive: Boolean = true
+        includeGovtIncentive: Boolean = true,
+        customRateOverride: Double? = null,
+        transferFeeBdt: Double = 0.0
     ): RemittanceEstimate {
         val safeAmount = foreignAmount.coerceAtLeast(0.0)
-        val baseBdt = snapshot.convert(safeAmount, fromCurrency, MarketCurrency.BDT)
+        val marketRate = snapshot.convert(1.0, fromCurrency, MarketCurrency.BDT)
+        val appliedRate = customRateOverride?.takeIf { it > 0.0 } ?: marketRate
+        val baseBdt = safeAmount * appliedRate
         val incentive = if (includeGovtIncentive) {
             baseBdt * (snapshot.remittanceIncentivePercent / 100.0)
         } else {
             0.0
         }
-        val total = baseBdt + incentive
+        val safeFee = transferFeeBdt.coerceAtLeast(0.0)
+        val total = (baseBdt + incentive - safeFee).coerceAtLeast(0.0)
         val effectiveRate = if (safeAmount > 0.0) total / safeAmount else 0.0
         return RemittanceEstimate(
             baseBdt = baseBdt,
             incentiveBdt = incentive,
             totalReceivableBdt = total,
-            effectiveRatePerUnit = effectiveRate
+            effectiveRatePerUnit = effectiveRate,
+            appliedRatePerUnit = appliedRate,
+            feeBdt = safeFee
         )
     }
 
@@ -362,26 +430,34 @@ object MarketCalculators {
 
 /**
  * Connectivity-aware Market Data Repository:
- * - Fetches live multi-region exchange rates (all 15 currencies + spot gold where available)
- *   using zero-key public FX endpoints over OkHttp.
- * - Persists the latest synced snapshot with timestamp into DataStore for seamless offline use.
- * - Never leaks raw HTTP/JSON/network exceptions to the UI.
+ * - Fetches fresh multi-region FX rates (KWD, SAR, AED, QAR, MYR, EUR, GBP, USD, INR, BDT & more)
+ *   and live XAU spot gold benchmarks via [MarketRemoteApiService] (configurable external API keys
+ *   from BuildConfig + reliable live public fallbacks).
+ * - Persists the latest synced snapshot, XAU spot price, per-feed timestamps, and source attribution
+ *   into DataStore for instant offline use.
+ * - Never leaks raw HTTP/JSON/API-key errors to the UI.
  */
 class MarketDataRepository(
     context: Context,
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
-        .build()
+        .build(),
+    private val remoteApiService: MarketRemoteApiService = MarketRemoteApiService(httpClient)
 ) {
     private val appContext = context.applicationContext
 
     private object Keys {
         val RATES_JSON = stringPreferencesKey("market_rates_json")
+        val GOLD_24K_VORI = stringPreferencesKey("market_gold_24k_vori")
         val GOLD_22K_VORI = stringPreferencesKey("market_gold_22k_vori")
+        val XAU_USD_OZ = stringPreferencesKey("market_xau_usd_oz")
         val LAST_SYNCED_MS = longPreferencesKey("market_last_synced_ms")
         val IS_LIVE_SYNCED = booleanPreferencesKey("market_is_live_synced")
         val SOURCE_LABEL = stringPreferencesKey("market_source_label")
+        val GOLD_LAST_SYNCED_MS = longPreferencesKey("market_gold_last_synced_ms")
+        val IS_GOLD_LIVE_SYNCED = booleanPreferencesKey("market_is_gold_live_synced")
+        val GOLD_SOURCE_LABEL = stringPreferencesKey("market_gold_source_label")
     }
 
     val snapshotFlow: Flow<MarketSnapshot> = appContext.marketCacheDataStore.data.map { prefs ->
@@ -400,56 +476,82 @@ class MarketDataRepository(
         }
         val gold22k = prefs[Keys.GOLD_22K_VORI]?.toDoubleOrNull()?.takeIf { it > 50_000.0 }
             ?: MarketSnapshot.defaultReference().gold22kPerVoriBdt
-        val gold21k = ((gold22k * (GoldCarat.K21.purityFactor / GoldCarat.K22.purityFactor)) / 50.0).roundToLong() * 50.0
-        val gold18k = ((gold22k * (GoldCarat.K18.purityFactor / GoldCarat.K22.purityFactor)) / 50.0).roundToLong() * 50.0
-        val goldTrad = ((gold22k * (GoldCarat.TRADITIONAL.purityFactor / GoldCarat.K22.purityFactor)) / 50.0).roundToLong() * 50.0
+        val gold24k = prefs[Keys.GOLD_24K_VORI]?.toDoubleOrNull()?.takeIf { it > 50_000.0 }
+            ?: roundTo50(gold22k / GoldCarat.K22.purityFactor)
+        val gold21k = roundTo50(gold24k * GoldCarat.K21.purityFactor)
+        val gold18k = roundTo50(gold24k * GoldCarat.K18.purityFactor)
+        val goldTrad = roundTo50(gold24k * GoldCarat.TRADITIONAL.purityFactor)
+        val xauUsd = prefs[Keys.XAU_USD_OZ]?.toDoubleOrNull()?.takeIf { it > 0.0 } ?: 0.0
+        val lastSynced = prefs[Keys.LAST_SYNCED_MS] ?: 0L
+        val goldLastSynced = prefs[Keys.GOLD_LAST_SYNCED_MS] ?: 0L
+        val isGoldLive = prefs[Keys.IS_GOLD_LIVE_SYNCED] ?: false
 
         MarketSnapshot(
             ratesPerUsd = defaultMap,
+            gold24kPerVoriBdt = gold24k,
             gold22kPerVoriBdt = gold22k,
             gold21kPerVoriBdt = gold21k,
             gold18kPerVoriBdt = gold18k,
             goldTraditionalPerVoriBdt = goldTrad,
-            lastSyncedMillis = prefs[Keys.LAST_SYNCED_MS] ?: 0L,
+            xauUsdPerOunce = xauUsd,
+            lastSyncedMillis = lastSynced,
             isLiveSynced = prefs[Keys.IS_LIVE_SYNCED] ?: false,
-            sourceLabel = prefs[Keys.SOURCE_LABEL] ?: "Reference"
+            sourceLabel = prefs[Keys.SOURCE_LABEL] ?: "Reference",
+            goldLastSyncedMillis = goldLastSynced,
+            isGoldLiveSynced = isGoldLive,
+            goldSourceLabel = prefs[Keys.GOLD_SOURCE_LABEL] ?: "Reference"
         )
     }
 
     suspend fun getCachedSnapshot(): MarketSnapshot = snapshotFlow.first()
 
     /**
-     * Fetches fresh exchange rates from public open FX APIs and persists them to DataStore.
-     * Returns the updated [MarketSnapshot] on success or null on failure (so cached data stays intact).
+     * Fetches fresh exchange rates and live XAU spot gold prices concurrently and persists them to DataStore.
+     * Returns the updated [MarketSnapshot] on success, or null when offline/unreachable (leaving cached data intact).
      */
     suspend fun syncLiveMarketRates(nowMillis: Long = System.currentTimeMillis()): MarketSnapshot? =
         withContext(Dispatchers.IO) {
-            val fetched = fetchFromOpenErApi() ?: fetchFromFawazCurrencyApi() ?: return@withContext null
-            val merged = MarketSnapshot.defaultRatesPerUsd().toMutableMap()
-            fetched.rates.forEach { (k, v) ->
+            val previous = getCachedSnapshot()
+            val (fxResult, initialGoldResult) = coroutineScope {
+                val fxDeferred = async { remoteApiService.fetchCurrencyRates() }
+                val goldDeferred = async { remoteApiService.fetchGoldSpot(fallbackXauPerUsd = null) }
+                fxDeferred.await() to goldDeferred.await()
+            }
+
+            // If primary gold endpoint didn't respond, retry with XAU carried inside FX feed
+            val goldResult = initialGoldResult
+                ?: fxResult?.xauPerUsd?.let { remoteApiService.fetchGoldSpot(fallbackXauPerUsd = it) }
+
+            if (fxResult == null && goldResult == null) {
+                return@withContext null
+            }
+
+            val merged = previous.ratesPerUsd.toMutableMap()
+            MarketSnapshot.defaultRatesPerUsd().forEach { (code, fallbackVal) ->
+                if ((merged[code] ?: 0.0) <= 0.0) merged[code] = fallbackVal
+            }
+            fxResult?.ratesPerUsd?.forEach { (k, v) ->
                 if (v > 0.0) merged[k] = v
             }
             merged["USD"] = 1.0
 
-            // Derive updated 22K BDT per vori if live XAU (gold oz) rate is available,
-            // otherwise scale gracefully from BDT/USD shift against benchmark.
-            val currentBdt = merged["BDT"] ?: MarketCurrency.BDT.defaultPerUsd
-            val gold22kVori = if (fetched.xauPerUsd != null && fetched.xauPerUsd > 0.0) {
-                val usdPerOz = 1.0 / fetched.xauPerUsd
-                val bdtPerGram24k = (usdPerOz * currentBdt) / MarketSnapshot.GRAMS_PER_TROY_OUNCE
-                // Include standard Bangladesh local import/hallmark adjustment (~1.06x)
-                val bdtPerVori22k = bdtPerGram24k * MarketSnapshot.GRAMS_PER_VORI * GoldCarat.K22.purityFactor * 1.06
-                ((bdtPerVori22k / 50.0).roundToLong() * 50.0).coerceIn(90_000.0, 280_000.0)
-            } else {
-                val fxRatio = (currentBdt / MarketCurrency.BDT.defaultPerUsd).coerceIn(0.85, 1.35)
-                (((MarketSnapshot.defaultReference().gold22kPerVoriBdt * fxRatio) / 50.0).roundToLong() * 50.0)
-            }
+            val currentBdtPerUsd = merged["BDT"] ?: MarketCurrency.BDT.defaultPerUsd
+            val goldComputed = deriveGoldVoriPrices(
+                goldResult = goldResult,
+                currentBdtPerUsd = currentBdtPerUsd,
+                previous = previous
+            )
 
             saveSnapshot(
                 rates = merged,
-                gold22kVoriBdt = gold22kVori,
-                syncedAtMillis = nowMillis,
-                sourceLabel = fetched.sourceLabel
+                gold22kVoriBdt = goldComputed.gold22kPerVoriBdt,
+                syncedAtMillis = if (fxResult != null) nowMillis else previous.lastSyncedMillis.coerceAtLeast(nowMillis),
+                sourceLabel = fxResult?.sourceLabel ?: previous.sourceLabel,
+                gold24kVoriBdt = goldComputed.gold24kPerVoriBdt,
+                xauUsdPerOunce = goldComputed.xauUsdPerOunce,
+                goldSyncedAtMillis = if (goldResult != null) nowMillis else previous.goldLastSyncedMillis,
+                isGoldLiveSynced = goldResult != null || previous.isGoldLiveSynced,
+                goldSourceLabel = goldResult?.sourceLabel ?: previous.goldSourceLabel
             )
             snapshotFlow.first()
         }
@@ -458,66 +560,78 @@ class MarketDataRepository(
         rates: Map<String, Double>,
         gold22kVoriBdt: Double,
         syncedAtMillis: Long,
-        sourceLabel: String
+        sourceLabel: String,
+        gold24kVoriBdt: Double = roundTo50(gold22kVoriBdt / GoldCarat.K22.purityFactor),
+        xauUsdPerOunce: Double = 0.0,
+        goldSyncedAtMillis: Long = if (xauUsdPerOunce > 0.0) syncedAtMillis else 0L,
+        isGoldLiveSynced: Boolean = xauUsdPerOunce > 0.0,
+        goldSourceLabel: String = if (xauUsdPerOunce > 0.0) sourceLabel else "Reference"
     ) {
         val json = JSONObject()
         rates.forEach { (code, value) -> json.put(code, value) }
         appContext.marketCacheDataStore.edit { prefs ->
             prefs[Keys.RATES_JSON] = json.toString()
+            prefs[Keys.GOLD_24K_VORI] = gold24kVoriBdt.toString()
             prefs[Keys.GOLD_22K_VORI] = gold22kVoriBdt.toString()
+            if (xauUsdPerOunce > 0.0) {
+                prefs[Keys.XAU_USD_OZ] = xauUsdPerOunce.toString()
+            }
             prefs[Keys.LAST_SYNCED_MS] = syncedAtMillis
             prefs[Keys.IS_LIVE_SYNCED] = true
             prefs[Keys.SOURCE_LABEL] = sourceLabel
+            prefs[Keys.GOLD_LAST_SYNCED_MS] = goldSyncedAtMillis
+            prefs[Keys.IS_GOLD_LIVE_SYNCED] = isGoldLiveSynced
+            prefs[Keys.GOLD_SOURCE_LABEL] = goldSourceLabel
         }
     }
 
-    private data class RemoteFxResult(
-        val rates: Map<String, Double>,
-        val xauPerUsd: Double?,
-        val sourceLabel: String
+    internal data class DerivedGoldPrices(
+        val gold24kPerVoriBdt: Double,
+        val gold22kPerVoriBdt: Double,
+        val xauUsdPerOunce: Double
     )
 
-    private fun fetchFromOpenErApi(): RemoteFxResult? = runCatching {
-        val request = Request.Builder()
-            .url("https://open.er-api.com/v6/latest/USD")
-            .header("Accept", "application/json")
-            .build()
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return@runCatching null
-            val body = response.body?.string().orEmpty()
-            if (body.isBlank()) return@runCatching null
-            val root = JSONObject(body)
-            val ratesObj = root.optJSONObject("rates") ?: return@runCatching null
-            val parsed = mutableMapOf<String, Double>()
-            MarketCurrency.entries.forEach { cur ->
-                val v = ratesObj.optDouble(cur.code, -1.0)
-                if (v > 0.0) parsed[cur.code] = v
-            }
-            if (parsed.size < 8) return@runCatching null
-            val xau = ratesObj.optDouble("XAU", -1.0).takeIf { it > 0.0 }
-            RemoteFxResult(parsed, xau, "Open ER-API")
+    internal fun deriveGoldVoriPrices(
+        goldResult: RemoteGoldSpotResult?,
+        currentBdtPerUsd: Double,
+        previous: MarketSnapshot
+    ): DerivedGoldPrices {
+        if (goldResult != null && goldResult.xauUsdPerOunce > 0.0) {
+            val usdPerGram24k = goldResult.usdPerGram24k
+                ?: (goldResult.xauUsdPerOunce / MarketSnapshot.GRAMS_PER_TROY_OUNCE)
+            val usdPerGram22k = goldResult.usdPerGram22k
+                ?: (usdPerGram24k * GoldCarat.K22.purityFactor)
+            val bdt24kVori = roundTo50(usdPerGram24k * currentBdtPerUsd * MarketSnapshot.GRAMS_PER_VORI)
+                .coerceIn(70_000.0, 450_000.0)
+            val bdt22kVori = roundTo50(usdPerGram22k * currentBdtPerUsd * MarketSnapshot.GRAMS_PER_VORI)
+                .coerceIn(65_000.0, 420_000.0)
+            return DerivedGoldPrices(
+                gold24kPerVoriBdt = bdt24kVori,
+                gold22kPerVoriBdt = bdt22kVori,
+                xauUsdPerOunce = goldResult.xauUsdPerOunce
+            )
         }
-    }.getOrNull()
+        // Preserve previous live gold value if already cached; otherwise scale reference cleanly with FX
+        if (previous.isGoldLiveSynced && previous.xauUsdPerOunce > 0.0) {
+            val usdPerGram24k = previous.xauUsdPerOunce / MarketSnapshot.GRAMS_PER_TROY_OUNCE
+            val bdt24kVori = roundTo50(usdPerGram24k * currentBdtPerUsd * MarketSnapshot.GRAMS_PER_VORI)
+                .coerceIn(70_000.0, 450_000.0)
+            val bdt22kVori = roundTo50(bdt24kVori * GoldCarat.K22.purityFactor)
+            return DerivedGoldPrices(
+                gold24kPerVoriBdt = bdt24kVori,
+                gold22kPerVoriBdt = bdt22kVori,
+                xauUsdPerOunce = previous.xauUsdPerOunce
+            )
+        }
+        val fxRatio = (currentBdtPerUsd / MarketCurrency.BDT.defaultPerUsd).coerceIn(0.85, 1.35)
+        val scaled22k = roundTo50(MarketSnapshot.defaultReference().gold22kPerVoriBdt * fxRatio)
+        val scaled24k = roundTo50(scaled22k / GoldCarat.K22.purityFactor)
+        return DerivedGoldPrices(
+            gold24kPerVoriBdt = scaled24k,
+            gold22kPerVoriBdt = scaled22k,
+            xauUsdPerOunce = previous.xauUsdPerOunce
+        )
+    }
 
-    private fun fetchFromFawazCurrencyApi(): RemoteFxResult? = runCatching {
-        val request = Request.Builder()
-            .url("https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json")
-            .header("Accept", "application/json")
-            .build()
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return@runCatching null
-            val body = response.body?.string().orEmpty()
-            if (body.isBlank()) return@runCatching null
-            val root = JSONObject(body)
-            val usdObj = root.optJSONObject("usd") ?: return@runCatching null
-            val parsed = mutableMapOf<String, Double>()
-            MarketCurrency.entries.forEach { cur ->
-                val v = usdObj.optDouble(cur.code.lowercase(Locale.ROOT), -1.0)
-                if (v > 0.0) parsed[cur.code] = v
-            }
-            if (parsed.size < 8) return@runCatching null
-            val xau = usdObj.optDouble("xau", -1.0).takeIf { it > 0.0 }
-            RemoteFxResult(parsed, xau, "Global FX CDN")
-        }
-    }.getOrNull()
+    private fun roundTo50(value: Double): Double = ((value / 50.0).roundToLong() * 50.0)
 }

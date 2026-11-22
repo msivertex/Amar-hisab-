@@ -45,6 +45,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -63,8 +64,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.data.local.LoanEntity
 import com.example.data.local.SavingsGoalEntity
+import com.example.data.market.MarketSnapshot
+import com.example.data.model.AppCurrency
 import com.example.data.model.ExpenseCategory
 import com.example.data.model.LoanType
+import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
 import com.example.ui.components.CategoryIconBadge
@@ -92,20 +96,35 @@ fun PlanScreen(
     onDeleteGoal: (Long) -> Unit,
     onAddLoan: (String, LoanType, Double, String, Long?) -> Unit,
     onSettleLoan: (LoanEntity, Double, Long) -> Unit,
-    onDeleteLoan: (Long) -> Unit
+    onDeleteLoan: (Long) -> Unit,
+    onAddLoanWithCurrency: ((String, LoanType, Double, String, Long?, String) -> Unit)? = null,
+    onUpdateLoan: ((LoanEntity) -> Unit)? = null,
+    onSettleLoanOptionalWallet: ((LoanEntity, Double, Long?) -> Unit)? = null,
+    marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference(),
+    requestedTab: Int? = null,
+    onConsumeRequestedTab: () -> Unit = {}
 ) {
     val crystal = LocalCrystalColors.current
     val lang = state.prefs.language
+    val isBn = lang == AppLanguage.BN
     val context = LocalContext.current
     val dateFmt = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
 
-    var activePlanTab by remember { mutableIntStateOf(0) } // 0: Budgets, 1: Goals, 2: Loans
+    var activePlanTab by remember { mutableIntStateOf(requestedTab ?: 0) } // 0: Budgets, 1: Goals, 2: Loans
+    LaunchedEffect(requestedTab) {
+        if (requestedTab != null) {
+            activePlanTab = requestedTab.coerceIn(0, 2)
+            onConsumeRequestedTab()
+        }
+    }
     var showNewGoalDialog by remember { mutableStateOf(false) }
     var fundingGoal by remember { mutableStateOf<SavingsGoalEntity?>(null) }
     var editingCatBudget by remember { mutableStateOf<ExpenseCategory?>(null) }
     var showNewLoanDialog by remember { mutableStateOf(false) }
+    var editingLoan by remember { mutableStateOf<LoanEntity?>(null) }
     var settlingLoan by remember { mutableStateOf<LoanEntity?>(null) }
     var loanFilterType by remember { mutableStateOf(LoanType.I_OWE) }
+    var selectedLoanCurrencyFilter by remember { mutableStateOf<String?>(null) }
 
     val categoryBudgetMap = remember(state.categoryBudgets) {
         state.categoryBudgets.associate { it.categoryName to it.limitAmount }
@@ -124,7 +143,8 @@ fun PlanScreen(
         LazyColumn(
             modifier = Modifier
                 .widthIn(max = 620.dp)
-                .fillMaxSize(),
+                .fillMaxSize()
+                .testTag("plan_lazy_column"),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 112.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -217,7 +237,7 @@ fun PlanScreen(
                                         color = crystal.mutedText
                                     )
                                     Text(
-                                        text = BdtFormatter.format(state.prefs.monthlyBudget, lang),
+                                        text = BdtFormatter.formatCurrency(state.prefs.monthlyBudget, state.prefs.mainCurrencyCode, lang),
                                         style = MaterialTheme.typography.headlineSmall.copy(
                                             fontFamily = JetBrainsMonoFamily,
                                             fontWeight = FontWeight.Bold
@@ -264,9 +284,9 @@ fun PlanScreen(
                                         Text(cat.label(lang), style = MaterialTheme.typography.titleSmall)
                                         Text(
                                             text = if (limit > 0.0) {
-                                                "${BdtFormatter.format(spent, lang)} / ${BdtFormatter.format(limit, lang)}"
+                                                "${BdtFormatter.formatCurrency(spent, state.prefs.mainCurrencyCode, lang)} / ${BdtFormatter.formatCurrency(limit, state.prefs.mainCurrencyCode, lang)}"
                                             } else {
-                                                "${strings.spentLabel}: ${BdtFormatter.format(spent, lang)}"
+                                                "${strings.spentLabel}: ${BdtFormatter.formatCurrency(spent, state.prefs.mainCurrencyCode, lang)}"
                                             },
                                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily),
                                             color = crystal.mutedText
@@ -354,7 +374,7 @@ fun PlanScreen(
                                     Column {
                                         Text(goal.name, style = MaterialTheme.typography.titleSmall)
                                         Text(
-                                            text = "${BdtFormatter.format(goal.savedAmount, lang)} / ${BdtFormatter.format(goal.targetAmount, lang)} (${BdtFormatter.formatPercent(pct, lang)})",
+                                            text = "${BdtFormatter.formatCurrency(goal.savedAmount, state.prefs.mainCurrencyCode, lang)} / ${BdtFormatter.formatCurrency(goal.targetAmount, state.prefs.mainCurrencyCode, lang)} (${BdtFormatter.formatPercent(pct, lang)})",
                                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily),
                                             color = crystal.mutedText
                                         )
@@ -402,6 +422,15 @@ fun PlanScreen(
                 }
 
                 2 -> {
+                    val loanSummaries = LoanCurrencyAggregator.computeSummaries(
+                        loans = state.loans,
+                        mainCurrencyCode = state.prefs.mainCurrencyCode,
+                        secondaryCurrencyCode = state.prefs.secondaryCurrencyCode
+                    )
+                    val distinctLoanCurrencies = state.loans
+                        .map { AppCurrency.fromCode(it.currencyCode) }
+                        .distinct()
+
                     item {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -414,7 +443,10 @@ fun PlanScreen(
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Button(
-                                onClick = { showNewLoanDialog = true },
+                                onClick = {
+                                    editingLoan = null
+                                    showNewLoanDialog = true
+                                },
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.testTag("add_loan_button")
                             ) {
@@ -425,116 +457,87 @@ fun PlanScreen(
                         }
                     }
 
+                    // Per-Currency Summary Card (separates KD, SAR, BDT, etc. cleanly with zero-state)
+                    item {
+                        LoansMultiCurrencySummaryCard(
+                            summaries = loanSummaries,
+                            hasAnyLoans = state.loans.isNotEmpty(),
+                            language = lang,
+                            strings = strings
+                        )
+                    }
+
+                    // Payable / Receivable Filter Chips
                     item {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(
                                 selected = loanFilterType == LoanType.I_OWE,
                                 onClick = { loanFilterType = LoanType.I_OWE },
-                                label = { Text(strings.moneyIOwe) }
+                                label = { Text(strings.moneyIOwe) },
+                                modifier = Modifier.testTag("loans_filter_i_owe")
                             )
                             FilterChip(
                                 selected = loanFilterType == LoanType.OWED_TO_ME,
                                 onClick = { loanFilterType = LoanType.OWED_TO_ME },
-                                label = { Text(strings.moneyOwedToMe) }
+                                label = { Text(strings.moneyOwedToMe) },
+                                modifier = Modifier.testTag("loans_filter_owed_to_me")
                             )
                         }
                     }
 
-                    val filteredLoans = state.loans.filter { it.loanType == loanFilterType }
-                    items(filteredLoans, key = { it.id }) { loan ->
-                        val ratio = if (loan.totalAmount > 0) {
-                            (loan.paidAmount / loan.totalAmount).toFloat().coerceIn(0f, 1f)
-                        } else 0f
-                        val accent = if (loan.loanType == LoanType.I_OWE) crystal.liabilityRed else crystal.assetGreen
-
-                        CrystalCard(modifier = Modifier.fillMaxWidth()) {
+                    // Currency Filter Chips when loans exist across multiple currencies
+                    if (distinctLoanCurrencies.size > 1) {
+                        item {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(
-                                    modifier = Modifier.weight(1f),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(40.dp)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(accent.copy(alpha = 0.14f)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = if (loan.isSettled) Icons.Filled.CheckCircle else Icons.Filled.Handshake,
-                                            contentDescription = null,
-                                            tint = accent
-                                        )
-                                    }
-                                    Column {
-                                        Text(loan.personName, style = MaterialTheme.typography.titleSmall)
-                                        Text(
-                                            text = "${strings.remainingDueLabel}: ${BdtFormatter.format(loan.remainingAmount, lang)} / ${BdtFormatter.format(loan.totalAmount, lang)}",
-                                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily),
-                                            color = crystal.mutedText
-                                        )
-                                        if (loan.note.isNotBlank()) {
-                                            Text(loan.note, style = MaterialTheme.typography.bodySmall, color = crystal.mutedText)
-                                        }
-                                        if (loan.dueDateMillis != null) {
-                                            Text(
-                                                text = "${strings.dueDateLabel}: ${dateFmt.format(Date(loan.dueDateMillis))}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = accent
-                                            )
-                                        }
-                                    }
-                                }
-                                IconButton(onClick = { onDeleteLoan(loan.id) }) {
-                                    Icon(Icons.Filled.DeleteOutline, contentDescription = strings.deleteAccount, tint = crystal.mutedText)
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(8.dp)
-                                    .clip(CircleShape)
-                                    .background(accent.copy(alpha = 0.16f))
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(ratio)
-                                        .height(8.dp)
-                                        .clip(CircleShape)
-                                        .background(accent)
+                                FilterChip(
+                                    selected = selectedLoanCurrencyFilter == null,
+                                    onClick = { selectedLoanCurrencyFilter = null },
+                                    label = { Text(if (isBn) "সব মুদ্রা" else "All Currencies") },
+                                    modifier = Modifier.testTag("loans_currency_filter_ALL")
                                 )
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-                            if (loan.isSettled) {
-                                Surface(
-                                    color = crystal.assetGreenBg,
-                                    shape = CircleShape
-                                ) {
-                                    Text(
-                                        text = strings.settledBadge,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = crystal.assetGreen,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                distinctLoanCurrencies.forEach { cur ->
+                                    FilterChip(
+                                        selected = selectedLoanCurrencyFilter == cur.code,
+                                        onClick = { selectedLoanCurrencyFilter = cur.code },
+                                        label = {
+                                            Text(
+                                                text = cur.cleanBadgeLabel(),
+                                                style = MaterialTheme.typography.labelMedium.copy(
+                                                    fontFamily = JetBrainsMonoFamily,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("loans_currency_filter_${cur.code}")
                                     )
-                                }
-                            } else {
-                                FilledTonalButton(
-                                    onClick = { settlingLoan = loan },
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(strings.settleLoan)
                                 }
                             }
                         }
+                    }
+
+                    val filteredLoans = state.loans.filter { loan ->
+                        loan.loanType == loanFilterType &&
+                            (selectedLoanCurrencyFilter == null ||
+                                loan.currencyCode.equals(selectedLoanCurrencyFilter, ignoreCase = true))
+                    }
+                    items(filteredLoans, key = { it.id }) { loan ->
+                        LoanCurrencyEntryCard(
+                            loan = loan,
+                            language = lang,
+                            strings = strings,
+                            dateFormatter = dateFmt,
+                            onEdit = {
+                                editingLoan = loan
+                                showNewLoanDialog = true
+                            },
+                            onSettle = { settlingLoan = loan },
+                            onDelete = { onDeleteLoan(loan.id) }
+                        )
                     }
                 }
             }
@@ -643,7 +646,7 @@ fun PlanScreen(
                             FilterChip(
                                 selected = chosenWalletId == acc.id,
                                 onClick = { chosenWalletId = acc.id },
-                                label = { Text("${acc.name} (${BdtFormatter.format(acc.balance, lang)})") }
+                                label = { Text("${acc.name} (${BdtFormatter.formatCurrency(acc.balance, acc.currencyCode, lang)})") }
                             )
                         }
                     }
@@ -703,145 +706,57 @@ fun PlanScreen(
         )
     }
 
-    // Dialog: Add Loan / Debt Entry
+    // Dialog: Add or Edit Multi-Currency Loan / Due Entry
     if (showNewLoanDialog) {
-        var person by remember { mutableStateOf("") }
-        var amountText by remember { mutableStateOf("") }
-        var note by remember { mutableStateOf("") }
-        var type by remember { mutableStateOf(loanFilterType) }
-        var dueMillis by remember { mutableStateOf<Long?>(null) }
-
-        AlertDialog(
-            onDismissRequest = { showNewLoanDialog = false },
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-            textContentColor = MaterialTheme.colorScheme.onSurface,
-            title = { Text(strings.addLoan) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = type == LoanType.I_OWE,
-                            onClick = { type = LoanType.I_OWE },
-                            label = { Text(strings.moneyIOwe) }
-                        )
-                        FilterChip(
-                            selected = type == LoanType.OWED_TO_ME,
-                            onClick = { type = LoanType.OWED_TO_ME },
-                            label = { Text(strings.moneyOwedToMe) }
-                        )
-                    }
-                    OutlinedTextField(
-                        value = person,
-                        onValueChange = { person = it },
-                        label = { Text(strings.personNameLabel) },
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = amountText,
-                        onValueChange = { amountText = it.filter { c -> c.isDigit() || c == '.' } },
-                        label = { Text(strings.loanAmountLabel) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = note,
-                        onValueChange = { note = it },
-                        label = { Text(strings.noteOptionalLabel) },
-                        singleLine = true
-                    )
-                    OutlinedButton(
-                        onClick = {
-                            val cal = Calendar.getInstance()
-                            DatePickerDialog(
-                                context,
-                                { _, y, m, d ->
-                                    cal.set(y, m, d)
-                                    dueMillis = cal.timeInMillis
-                                },
-                                cal.get(Calendar.YEAR),
-                                cal.get(Calendar.MONTH),
-                                cal.get(Calendar.DAY_OF_MONTH)
-                            ).show()
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            dueMillis?.let { "${strings.dueDateLabel}: ${dateFmt.format(Date(it))}" }
-                                ?: "${strings.dueDateLabel} (${strings.pickDateLabel})"
-                        )
-                    }
+        LoanEditorDialog(
+            existingLoan = editingLoan,
+            initialType = loanFilterType,
+            mainCurrencyCode = state.prefs.mainCurrencyCode,
+            secondaryCurrencyCode = state.prefs.secondaryCurrencyCode,
+            marketSnapshot = marketSnapshot,
+            language = lang,
+            strings = strings,
+            dateFormatter = dateFmt,
+            onSaveNew = { person, type, amt, note, dueMillis, currencyCode ->
+                if (onAddLoanWithCurrency != null) {
+                    onAddLoanWithCurrency(person, type, amt, note, dueMillis, currencyCode)
+                } else {
+                    onAddLoan(person, type, amt, note, dueMillis)
                 }
+                loanFilterType = type
+                showNewLoanDialog = false
+                editingLoan = null
             },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val amt = amountText.toDoubleOrNull() ?: 0.0
-                        if (person.isNotBlank() && amt > 0.0) {
-                            onAddLoan(person, type, amt, note, dueMillis)
-                            loanFilterType = type
-                            showNewLoanDialog = false
-                        }
-                    }
-                ) { Text(strings.saveChanges) }
+            onSaveEdit = { updated ->
+                onUpdateLoan?.invoke(updated)
+                loanFilterType = updated.loanType
+                showNewLoanDialog = false
+                editingLoan = null
             },
-            dismissButton = {
-                TextButton(onClick = { showNewLoanDialog = false }) { Text(strings.cancel) }
+            onDismiss = {
+                showNewLoanDialog = false
+                editingLoan = null
             }
         )
     }
 
-    // Dialog: Partial or Full Loan Settlement
+    // Dialog: Multi-Currency Partial or Full Loan Settlement
     settlingLoan?.let { loan ->
-        var settleText by remember(loan) { mutableStateOf(loan.remainingAmount.toLong().toString()) }
-        var chosenWalletId by remember(state.accounts) {
-            mutableLongStateOf(state.accounts.firstOrNull()?.id ?: 0L)
-        }
-
-        AlertDialog(
-            onDismissRequest = { settlingLoan = null },
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-            textContentColor = MaterialTheme.colorScheme.onSurface,
-            title = { Text("${strings.settleLoan}: ${loan.personName}") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = settleText,
-                        onValueChange = { settleText = it.filter { c -> c.isDigit() || c == '.' } },
-                        label = { Text(strings.settlementAmountLabel) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
-                    Text(strings.selectWalletLabel, style = MaterialTheme.typography.labelLarge)
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        state.accounts.forEach { acc ->
-                            FilterChip(
-                                selected = chosenWalletId == acc.id,
-                                onClick = { chosenWalletId = acc.id },
-                                label = { Text(acc.name) }
-                            )
-                        }
-                    }
+        LoanSettlementDialog(
+            loan = loan,
+            accounts = state.accounts,
+            marketSnapshot = marketSnapshot,
+            language = lang,
+            strings = strings,
+            onConfirmSettle = { targetLoan, amt, walletId ->
+                if (onSettleLoanOptionalWallet != null) {
+                    onSettleLoanOptionalWallet(targetLoan, amt, walletId)
+                } else if (walletId != null && walletId > 0L) {
+                    onSettleLoan(targetLoan, amt, walletId)
                 }
+                settlingLoan = null
             },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val amt = settleText.toDoubleOrNull() ?: 0.0
-                        if (amt > 0.0 && chosenWalletId > 0L) {
-                            onSettleLoan(loan, amt, chosenWalletId)
-                            settlingLoan = null
-                        }
-                    }
-                ) { Text(strings.settleLoan) }
-            },
-            dismissButton = {
-                TextButton(onClick = { settlingLoan = null }) { Text(strings.cancel) }
-            }
+            onDismiss = { settlingLoan = null }
         )
     }
 }

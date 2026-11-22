@@ -19,6 +19,20 @@ data class SanitizedAiError(
     val category: MarketErrorCategory
 )
 
+enum class ReceiptScanErrorCategory {
+    APP_CHECK_INVALID,
+    OFFLINE,
+    TIMEOUT,
+    QUOTA_EXCEEDED,
+    GENERAL
+}
+
+data class SanitizedReceiptError(
+    val message: String,
+    val guidance: String,
+    val category: ReceiptScanErrorCategory
+)
+
 data class OfflineMarketGuideItem(
     val title: String,
     val value: String,
@@ -230,6 +244,109 @@ object InsightsSummaryHelper {
         }
 
         return SanitizedAiError(message = message, category = category)
+    }
+
+    /**
+     * Converts raw Firebase App Check, Gemini Vision, or network failures during AI receipt
+     * scanning into clear, reassuring Bangla or English explanations with immediate recovery steps.
+     */
+    fun sanitizeReceiptScanError(
+        rawMessage: String?,
+        throwable: Throwable? = null,
+        language: AppLanguage
+    ): SanitizedReceiptError {
+        val combined = buildString {
+            if (!rawMessage.isNullOrBlank()) append(rawMessage).append(' ')
+            if (throwable?.message != null) append(throwable.message).append(' ')
+            if (throwable?.cause?.message != null) append(throwable.cause?.message)
+        }.lowercase(Locale.ROOT)
+
+        val category = when {
+            combined.contains("app check") ||
+                combined.contains("appcheck") ||
+                combined.contains("token is invalid") ||
+                combined.contains("attestation") ||
+                combined.contains("403") ||
+                combined.contains("permission_denied") ||
+                combined.contains("unauthenticated") -> ReceiptScanErrorCategory.APP_CHECK_INVALID
+
+            combined.contains("unable to resolve host") ||
+                combined.contains("unknownhost") ||
+                combined.contains("network") ||
+                combined.contains("offline") ||
+                combined.contains("failed to connect") ||
+                combined.contains("no address associated") ||
+                combined.contains("socket") -> ReceiptScanErrorCategory.OFFLINE
+
+            combined.contains("timeout") ||
+                combined.contains("timed out") -> ReceiptScanErrorCategory.TIMEOUT
+
+            combined.contains("quota") ||
+                combined.contains("resource_exhausted") ||
+                combined.contains("429") ||
+                combined.contains("rate limit") ||
+                combined.contains("billing") -> ReceiptScanErrorCategory.QUOTA_EXCEEDED
+
+            else -> ReceiptScanErrorCategory.GENERAL
+        }
+
+        return if (language == AppLanguage.BN) {
+            when (category) {
+                ReceiptScanErrorCategory.APP_CHECK_INVALID -> SanitizedReceiptError(
+                    message = "এই মুহূর্তে এআই রসিদ যাচাইকরণ (App Check) সম্পন্ন করা যায়নি।",
+                    guidance = "ইন্টারনেট সংযোগ যাচাই করে আবার চেষ্টা করুন, অথবা অপেক্ষা না করে নিচের বাটনে ট্যাপ করে রসিদ দেখেই এখনই ম্যানুয়ালি হিসাব যোগ করুন।",
+                    category = category
+                )
+                ReceiptScanErrorCategory.OFFLINE -> SanitizedReceiptError(
+                    message = "ইন্টারনেট সংযোগ না থাকায় এআই রসিদ স্ক্যান করা যায়নি।",
+                    guidance = "ওয়াই-ফাই বা মোবাইল ডাটা চালু করে পুনরায় চেষ্টা করুন, অথবা অফলাইনেই নিচের বাটন থেকে ম্যানুয়ালি হিসাব যোগ করুন।",
+                    category = category
+                )
+                ReceiptScanErrorCategory.TIMEOUT -> SanitizedReceiptError(
+                    message = "রসিদটি বিশ্লেষণ করতে নির্ধারিত সময়ের চেয়ে বেশি সময় লেগেছে।",
+                    guidance = "পরিষ্কার আলোতে আরেকটি ছবি তুলে আবার চেষ্টা করুন, অথবা নিচের বাটন থেকে দ্রুত ম্যানুয়ালি হিসাব যোগ করুন।",
+                    category = category
+                )
+                ReceiptScanErrorCategory.QUOTA_EXCEEDED -> SanitizedReceiptError(
+                    message = "এআই রসিদ স্ক্যানের বর্তমান সীমা সাময়িকভাবে পূর্ণ হয়েছে।",
+                    guidance = "কিছুক্ষণ পর আবার চেষ্টা করুন, অথবা এখনই নিচের বাটন থেকে রসিদ দেখে ম্যানুয়ালি হিসাব যোগ করুন।",
+                    category = category
+                )
+                ReceiptScanErrorCategory.GENERAL -> SanitizedReceiptError(
+                    message = "রসিদের ছবিটি স্বয়ংক্রিয়ভাবে পড়া যায়নি।",
+                    guidance = "আরও স্পষ্ট ছবি তুলে আবার চেষ্টা করুন, অথবা ছবিটি দেখেই নিচের বাটন থেকে সরাসরি ম্যানুয়ালি হিসাব যোগ করুন।",
+                    category = category
+                )
+            }
+        } else {
+            when (category) {
+                ReceiptScanErrorCategory.APP_CHECK_INVALID -> SanitizedReceiptError(
+                    message = "AI receipt verification (App Check) could not be completed right now.",
+                    guidance = "Check your connection and retry, or tap below to record this receipt manually right away while viewing your photo.",
+                    category = category
+                )
+                ReceiptScanErrorCategory.OFFLINE -> SanitizedReceiptError(
+                    message = "No internet connection detected for AI receipt scanning.",
+                    guidance = "Reconnect and retry, or tap below to record the receipt manually offline right now.",
+                    category = category
+                )
+                ReceiptScanErrorCategory.TIMEOUT -> SanitizedReceiptError(
+                    message = "Receipt scanning took longer than expected.",
+                    guidance = "Retry with a clear, well-lit photo, or tap below to enter the receipt details manually.",
+                    category = category
+                )
+                ReceiptScanErrorCategory.QUOTA_EXCEEDED -> SanitizedReceiptError(
+                    message = "AI receipt scanning capacity is temporarily reached.",
+                    guidance = "Try again shortly, or tap below to log this receipt manually right now.",
+                    category = category
+                )
+                ReceiptScanErrorCategory.GENERAL -> SanitizedReceiptError(
+                    message = "Could not read this receipt automatically.",
+                    guidance = "Try again with a sharper photo, or tap below to enter the currency, amount, merchant, and date manually.",
+                    category = category
+                )
+            }
+        }
     }
 
     /**

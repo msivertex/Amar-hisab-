@@ -33,14 +33,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.Diamond
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingBasket
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.VolunteerActivism
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -58,6 +63,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -72,10 +78,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.market.EssentialGroceryItem
 import com.example.data.market.EssentialGroup
 import com.example.data.market.GoldCarat
 import com.example.data.market.MarketCalculators
 import com.example.data.market.MarketCurrency
+import com.example.data.market.MarketDataStatus
 import com.example.data.market.MarketSnapshot
 import com.example.data.market.MarketSyncUiState
 import com.example.data.market.MarketToolTab
@@ -243,6 +251,7 @@ fun MarketInteractiveToolsCard(
                 MarketToolTab.CURRENCY -> CurrencyConverterPanel(
                     language = language,
                     snapshot = snapshot,
+                    isOnline = marketSyncState.isOnline,
                     fromCurrency = fromCurrency,
                     toCurrency = toCurrency,
                     onPickFrom = { activePickerTarget = CurrencyPickerTarget.CONVERTER_FROM },
@@ -264,6 +273,7 @@ fun MarketInteractiveToolsCard(
                 MarketToolTab.GOLD -> GoldPricePanel(
                     language = language,
                     snapshot = snapshot,
+                    isOnline = marketSyncState.isOnline,
                     displayCurrency = goldCurrency,
                     onPickCurrency = { activePickerTarget = CurrencyPickerTarget.GOLD_DISPLAY },
                     strings = strings
@@ -283,6 +293,7 @@ fun MarketInteractiveToolsCard(
                 MarketToolTab.REMITTANCE -> RemittanceCalculatorPanel(
                     language = language,
                     snapshot = snapshot,
+                    isOnline = marketSyncState.isOnline,
                     fromCurrency = remittanceCurrency,
                     onSelectCurrency = { remittanceCurrency = it },
                     onOpenPicker = { activePickerTarget = CurrencyPickerTarget.REMITTANCE_FROM },
@@ -323,9 +334,92 @@ fun MarketInteractiveToolsCard(
     }
 }
 
+@Composable
+internal fun MarketSourceTransparencyChip(
+    status: MarketDataStatus,
+    language: AppLanguage,
+    sourceLabel: String? = null,
+    timestampMillis: Long = 0L,
+    customLabelBn: String? = null,
+    customLabelEn: String? = null,
+    testTag: String = "market_source_transparency_badge"
+) {
+    val crystal = LocalCrystalColors.current
+    val primary = MaterialTheme.colorScheme.primary
+
+    val (tint, bg, icon, defaultLabel) = when (status) {
+        MarketDataStatus.LIVE_SYNCED -> Quad(
+            crystal.assetGreen,
+            crystal.assetGreen.copy(alpha = if (crystal.isDark) 0.18f else 0.11f),
+            Icons.Filled.CloudDone,
+            if (language == AppLanguage.BN) "লাইভ সিঙ্কড" else "Live Synced"
+        )
+        MarketDataStatus.CACHED_OFFLINE -> Quad(
+            crystal.warningAmber,
+            crystal.warningAmberBg,
+            Icons.Filled.CloudOff,
+            if (language == AppLanguage.BN) "ক্যাশড / অফলাইন" else "Cached / Offline"
+        )
+        MarketDataStatus.REFERENCE_ESTIMATE -> Quad(
+            primary,
+            primary.copy(alpha = if (crystal.isDark) 0.18f else 0.10f),
+            Icons.Filled.Info,
+            if (language == AppLanguage.BN) "রেফারেন্স / আনুমানিক হিসাব" else "Reference / Estimate"
+        )
+    }
+
+    val title = if (language == AppLanguage.BN) (customLabelBn ?: defaultLabel) else (customLabelEn ?: defaultLabel)
+    val detailParts = buildList {
+        if (!sourceLabel.isNullOrBlank() && status != MarketDataStatus.REFERENCE_ESTIMATE) {
+            add(sourceLabel)
+        }
+        if (timestampMillis > 0L) {
+            add(MarketCalculators.formatTimestamp(timestampMillis, language))
+        }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = bg,
+        border = BorderStroke(0.8.dp, tint.copy(alpha = 0.36f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTag)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(15.dp)
+            )
+            Text(
+                text = if (detailParts.isEmpty()) title else "$title • ${detailParts.joinToString(" • ")}",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = HindSiliguriFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 15.sp
+                ),
+                color = tint,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CurrencyConverterPanel(
+internal fun CurrencyConverterPanel(
     language: AppLanguage,
     snapshot: MarketSnapshot,
     fromCurrency: MarketCurrency,
@@ -334,7 +428,8 @@ private fun CurrencyConverterPanel(
     onPickTo: () -> Unit,
     onSwap: () -> Unit,
     onQuickSelectFrom: (MarketCurrency) -> Unit,
-    strings: AppStrings
+    strings: AppStrings,
+    isOnline: Boolean = true
 ) {
     val crystal = LocalCrystalColors.current
     val primary = MaterialTheme.colorScheme.primary
@@ -342,9 +437,15 @@ private fun CurrencyConverterPanel(
 
     // Default amount starts at "1" (never hardcoded to a single pair; editable to any value >= 1)
     var amountText by remember { mutableStateOf("1") }
+    var useCustomRate by remember { mutableStateOf(false) }
+    var customRateText by remember(fromCurrency, toCurrency) { mutableStateOf("") }
+
     val parsedAmount = amountText.toDoubleOrNull()?.takeIf { it > 0.0 } ?: 1.0
-    val converted = snapshot.convert(parsedAmount, fromCurrency, toCurrency)
-    val inverseUnit = snapshot.convert(1.0, toCurrency, fromCurrency)
+    val marketUnitRate = snapshot.convert(1.0, fromCurrency, toCurrency)
+    val customUnitRate = customRateText.toDoubleOrNull()?.takeIf { it > 0.0 }
+    val effectiveUnitRate = if (useCustomRate && customUnitRate != null) customUnitRate else marketUnitRate
+    val converted = parsedAmount * effectiveUnitRate
+    val inverseUnit = if (effectiveUnitRate > 0.0) 1.0 / effectiveUnitRate else 0.0
 
     Column(
         modifier = Modifier
@@ -352,6 +453,14 @@ private fun CurrencyConverterPanel(
             .testTag("market_currency_converter_panel"),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        MarketSourceTransparencyChip(
+            status = snapshot.resolveCurrencyStatus(isOnline),
+            language = language,
+            sourceLabel = snapshot.sourceLabel,
+            timestampMillis = snapshot.lastSyncedMillis,
+            testTag = "currency_source_transparency_badge"
+        )
+
         // From <-> To Selector Row
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -448,6 +557,60 @@ private fun CurrencyConverterPanel(
                     testTag = "currency_amount_preset_$preset"
                 )
             }
+        }
+
+        // Optional Custom Exchange Rate Override (e.g., local money exchange / bank counter rate)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (language == AppLanguage.BN) {
+                    "কাস্টম এক্সচেঞ্জ রেট ব্যবহার করুন"
+                } else {
+                    "Use custom bank / exchange rate"
+                },
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = HindSiliguriFamily),
+                color = crystal.mutedText,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = useCustomRate,
+                onCheckedChange = { enabled ->
+                    useCustomRate = enabled
+                    if (enabled && customRateText.isBlank()) {
+                        customRateText = String.format(java.util.Locale.US, "%.2f", marketUnitRate)
+                    }
+                },
+                modifier = Modifier.testTag("currency_custom_rate_toggle")
+            )
+        }
+
+        if (useCustomRate) {
+            OutlinedTextField(
+                value = customRateText,
+                onValueChange = { raw ->
+                    val cleaned = raw.filter { it.isDigit() || it == '.' }
+                    if (cleaned.count { it == '.' } <= 1) customRateText = cleaned
+                },
+                label = {
+                    Text(
+                        text = if (language == AppLanguage.BN) {
+                            "১ ${fromCurrency.code} = কত ${toCurrency.code}?"
+                        } else {
+                            "Custom rate: 1 ${fromCurrency.code} in ${toCurrency.code}"
+                        },
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily)
+                    )
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("currency_custom_rate_input")
+            )
         }
 
         // Result Display Card
@@ -635,12 +798,13 @@ private fun CurrencyDropdownButton(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun GoldPricePanel(
+internal fun GoldPricePanel(
     language: AppLanguage,
     snapshot: MarketSnapshot,
     displayCurrency: MarketCurrency,
     onPickCurrency: () -> Unit,
-    strings: AppStrings
+    strings: AppStrings,
+    isOnline: Boolean = true
 ) {
     val crystal = LocalCrystalColors.current
     val primary = MaterialTheme.colorScheme.primary
@@ -650,11 +814,13 @@ private fun GoldPricePanel(
     var selectedCarat by remember { mutableStateOf(GoldCarat.K22) }
     var weightText by remember { mutableStateOf("1") }
     var includeVatMaking by remember { mutableStateOf(false) }
+    var vatMakingPercentText by remember { mutableStateOf("5") }
 
     val qty = weightText.toDoubleOrNull()?.takeIf { it > 0.0 } ?: 1.0
+    val markupPct = vatMakingPercentText.toDoubleOrNull()?.coerceIn(0.0, 40.0) ?: 5.0
     val unitPrice = snapshot.goldPriceInCurrency(selectedCarat, perGram, displayCurrency)
     val baseTotal = unitPrice * qty
-    val finalTotal = if (includeVatMaking) baseTotal * 1.05 else baseTotal
+    val finalTotal = if (includeVatMaking) baseTotal * (1.0 + markupPct / 100.0) else baseTotal
 
     Column(
         modifier = Modifier
@@ -662,6 +828,48 @@ private fun GoldPricePanel(
             .testTag("market_gold_panel"),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        MarketSourceTransparencyChip(
+            status = snapshot.resolveGoldStatus(isOnline),
+            language = language,
+            sourceLabel = snapshot.goldSourceLabel,
+            timestampMillis = snapshot.goldLastSyncedMillis.takeIf { it > 0L } ?: snapshot.lastSyncedMillis,
+            testTag = "gold_source_transparency_badge"
+        )
+
+        if (snapshot.xauUsdPerOunce > 0.0) {
+            val spotText = MarketCalculators.formatDecimal(snapshot.xauUsdPerOunce, 2, language)
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = crystal.warningAmberBg,
+                border = BorderStroke(0.8.dp, crystal.warningAmber.copy(alpha = 0.42f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("gold_xau_spot_pill")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (language == AppLanguage.BN) "আন্তর্জাতিক XAU স্পট (প্রতি আউন্স)" else "Global XAU Spot (per troy oz)",
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily),
+                        color = crystal.mutedText
+                    )
+                    Text(
+                        text = "$$spotText USD",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontFamily = JetBrainsMonoFamily,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = crystal.warningAmber
+                    )
+                }
+            }
+        }
+
         // Unit toggle (Vori vs Gram) + Currency Selector
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -712,7 +920,7 @@ private fun GoldPricePanel(
             }
         }
 
-        // 2x2 Carat Cards (22K, 21K, 18K, Traditional)
+        // Carat Cards (24K Pure, 22K, 21K, 18K, Traditional)
         val rows = GoldCarat.entries.chunked(2)
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             rows.forEach { pair ->
@@ -767,6 +975,9 @@ private fun GoldPricePanel(
                                 )
                             }
                         }
+                    }
+                    if (pair.size == 1) {
+                        Spacer(modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -840,11 +1051,37 @@ private fun GoldPricePanel(
                 onCheckedChange = { includeVatMaking = it }
             )
         }
+
+        if (includeVatMaking) {
+            OutlinedTextField(
+                value = vatMakingPercentText,
+                onValueChange = { raw ->
+                    val cleaned = raw.filter { it.isDigit() || it == '.' }
+                    if (cleaned.count { it == '.' } <= 1) vatMakingPercentText = cleaned
+                },
+                label = {
+                    Text(
+                        text = if (language == AppLanguage.BN) {
+                            "ভ্যাট ও মজুরি হার (%) — কাস্টমাইজযোগ্য"
+                        } else {
+                            "Custom VAT & Making Charge (%)"
+                        },
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily)
+                    )
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("gold_custom_markup_input")
+            )
+        }
     }
 }
 
 @Composable
-private fun EssentialsMarketPanel(
+internal fun EssentialsMarketPanel(
     language: AppLanguage,
     strings: AppStrings
 ) {
@@ -856,6 +1093,9 @@ private fun EssentialsMarketPanel(
     var selectedGroup by remember { mutableStateOf(EssentialGroup.ALL) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    val customPrices = remember { mutableStateMapOf<String, Int>() }
+    var editingItem by remember { mutableStateOf<EssentialGroceryItem?>(null) }
+    var editPriceText by remember { mutableStateOf("") }
 
     val filtered = remember(catalog, selectedGroup, searchQuery, language) {
         catalog.filter { item ->
@@ -868,8 +1108,8 @@ private fun EssentialsMarketPanel(
         }
     }
 
-    val basketTotal = remember(catalog, selectedIds) {
-        catalog.filter { it.id in selectedIds }.sumOf { it.midPriceBdt }
+    val basketTotal = catalog.filter { it.id in selectedIds }.sumOf { item ->
+        customPrices[item.id]?.toDouble() ?: item.midPriceBdt
     }
 
     Column(
@@ -878,6 +1118,14 @@ private fun EssentialsMarketPanel(
             .testTag("market_essentials_panel"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        MarketSourceTransparencyChip(
+            status = MarketDataStatus.REFERENCE_ESTIMATE,
+            language = language,
+            customLabelBn = "রেফারেন্স বাজার দর • যেকোনো পণ্যের দাম এডিট করুন",
+            customLabelEn = "Reference Market Estimates • Tap edit to customize local prices",
+            testTag = "essentials_source_transparency_badge"
+        )
+
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
@@ -960,8 +1208,15 @@ private fun EssentialsMarketPanel(
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             filtered.take(8).forEach { item ->
                 val picked = item.id in selectedIds
-                val minStr = if (language == AppLanguage.BN) MarketCalculators.toBanglaDigits(item.minPriceBdt.toString()) else item.minPriceBdt.toString()
-                val maxStr = if (language == AppLanguage.BN) MarketCalculators.toBanglaDigits(item.maxPriceBdt.toString()) else item.maxPriceBdt.toString()
+                val customPrice = customPrices[item.id]
+                val priceLabel = if (customPrice != null) {
+                    val cStr = if (language == AppLanguage.BN) MarketCalculators.toBanglaDigits(customPrice.toString()) else customPrice.toString()
+                    "৳$cStr"
+                } else {
+                    val minStr = if (language == AppLanguage.BN) MarketCalculators.toBanglaDigits(item.minPriceBdt.toString()) else item.minPriceBdt.toString()
+                    val maxStr = if (language == AppLanguage.BN) MarketCalculators.toBanglaDigits(item.maxPriceBdt.toString()) else item.maxPriceBdt.toString()
+                    "৳$minStr–৳$maxStr"
+                }
                 Surface(
                     onClick = {
                         selectedIds = if (picked) selectedIds - item.id else selectedIds + item.id
@@ -985,7 +1240,7 @@ private fun EssentialsMarketPanel(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                            .padding(start = 12.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -999,23 +1254,44 @@ private fun EssentialsMarketPanel(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "${item.group.label(language)} • /${item.unit(language)}",
+                                text = buildString {
+                                    append("${item.group.label(language)} • /${item.unit(language)}")
+                                    if (customPrice != null) {
+                                        append(if (language == AppLanguage.BN) " • কাস্টম" else " • Custom")
+                                    }
+                                },
                                 style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily),
-                                color = crystal.mutedText
+                                color = if (customPrice != null) crystal.assetGreen else crystal.mutedText
                             )
                         }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = "৳$minStr–৳$maxStr",
+                                text = priceLabel,
                                 style = MaterialTheme.typography.labelMedium.copy(
                                     fontFamily = JetBrainsMonoFamily,
                                     fontWeight = FontWeight.Bold
                                 ),
-                                color = primary
+                                color = if (customPrice != null) crystal.assetGreen else primary
                             )
+                            IconButton(
+                                onClick = {
+                                    editingItem = item
+                                    editPriceText = (customPrice ?: item.midPriceBdt.toInt()).toString()
+                                },
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .testTag("essential_edit_price_${item.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Edit,
+                                    contentDescription = if (language == AppLanguage.BN) "দাম পরিবর্তন করুন" else "Edit local price",
+                                    tint = crystal.mutedText,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                             if (picked) {
                                 Icon(
                                     imageVector = Icons.Filled.CheckCircle,
@@ -1030,11 +1306,70 @@ private fun EssentialsMarketPanel(
             }
         }
     }
+
+    editingItem?.let { item ->
+        AlertDialog(
+            onDismissRequest = { editingItem = null },
+            title = {
+                Text(
+                    text = item.name(language),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = HindSiliguriFamily
+                    )
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = if (language == AppLanguage.BN) {
+                            "আপনার এলাকার বর্তমান বাজার দর (প্রতি ${item.unit(language)}) লিখুন:"
+                        } else {
+                            "Enter your local market price (per ${item.unit(language)}):"
+                        },
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = HindSiliguriFamily)
+                    )
+                    OutlinedTextField(
+                        value = editPriceText,
+                        onValueChange = { editPriceText = it.filter { ch -> ch.isDigit() } },
+                        prefix = { Text("৳ ") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("essential_price_dialog_input")
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val v = editPriceText.toIntOrNull()?.takeIf { it > 0 }
+                        if (v != null) {
+                            customPrices[item.id] = v
+                        } else {
+                            customPrices.remove(item.id)
+                        }
+                        editingItem = null
+                    },
+                    modifier = Modifier.testTag("essential_price_dialog_save")
+                ) {
+                    Text(if (language == AppLanguage.BN) "সংরক্ষণ" else "Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingItem = null }) {
+                    Text(if (language == AppLanguage.BN) "বাতিল" else "Cancel")
+                }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BankFdrDpsPanel(
+internal fun BankFdrDpsPanel(
     language: AppLanguage,
     snapshot: MarketSnapshot,
     strings: AppStrings
@@ -1046,12 +1381,16 @@ private fun BankFdrDpsPanel(
     var isDps by remember { mutableStateOf(false) }
     var amountText by remember { mutableStateOf("100000") }
     var months by remember { mutableIntStateOf(12) }
+    var customMonthsText by remember { mutableStateOf("12") }
     var ratePercent by remember { mutableDoubleStateOf(snapshot.avgBankFdrRatePercent) }
+    var customRateText by remember { mutableStateOf(String.format(java.util.Locale.US, "%.1f", snapshot.avgBankFdrRatePercent)) }
     var hasTin by remember { mutableStateOf(true) }
 
     val amount = amountText.toDoubleOrNull()?.takeIf { it > 0.0 } ?: 0.0
-    val fdr = MarketCalculators.calculateFdr(amount, ratePercent, months, hasTin)
-    val dps = MarketCalculators.calculateDps(amount, ratePercent, months, hasTin)
+    val effectiveMonths = customMonthsText.toIntOrNull()?.coerceIn(1, 360) ?: months
+    val effectiveRate = customRateText.toDoubleOrNull()?.coerceIn(0.1, 35.0) ?: ratePercent
+    val fdr = MarketCalculators.calculateFdr(amount, effectiveRate, effectiveMonths, hasTin)
+    val dps = MarketCalculators.calculateDps(amount, effectiveRate, effectiveMonths, hasTin)
 
     Column(
         modifier = Modifier
@@ -1059,6 +1398,14 @@ private fun BankFdrDpsPanel(
             .testTag("market_bank_panel"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        MarketSourceTransparencyChip(
+            status = MarketDataStatus.REFERENCE_ESTIMATE,
+            language = language,
+            customLabelBn = "ক্যালকুলেটর আনুমানিক হিসাব • রেট ও মেয়াদ কাস্টমাইজযোগ্য",
+            customLabelEn = "Calculator Estimate • Customize interest rate & tenure below",
+            testTag = "bank_source_transparency_badge"
+        )
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1070,6 +1417,7 @@ private fun BankFdrDpsPanel(
                     isDps = false
                     if (amountText == "5000") amountText = "100000"
                     ratePercent = snapshot.avgBankFdrRatePercent
+                    customRateText = String.format(java.util.Locale.US, "%.1f", snapshot.avgBankFdrRatePercent)
                 },
                 testTag = "bank_mode_fdr"
             )
@@ -1080,6 +1428,7 @@ private fun BankFdrDpsPanel(
                     isDps = true
                     if (amountText == "100000") amountText = "5000"
                     ratePercent = snapshot.avgBankDpsRatePercent
+                    customRateText = String.format(java.util.Locale.US, "%.1f", snapshot.avgBankDpsRatePercent)
                 },
                 testTag = "bank_mode_dps"
             )
@@ -1102,7 +1451,7 @@ private fun BankFdrDpsPanel(
                 .testTag("bank_amount_input")
         )
 
-        // Tenure Chips
+        // Tenure Chips + Custom Months Input
         Text(
             text = hub.tenureLabel,
             style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily),
@@ -1123,8 +1472,11 @@ private fun BankFdrDpsPanel(
                 }
                 SmallPresetChip(
                     text = label,
-                    selected = months == m,
-                    onClick = { months = m }
+                    selected = effectiveMonths == m,
+                    onClick = {
+                        months = m
+                        customMonthsText = m.toString()
+                    }
                 )
             }
         }
@@ -1143,10 +1495,62 @@ private fun BankFdrDpsPanel(
                 val label = "${MarketCalculators.formatDecimal(r, 1, language)}%"
                 SmallPresetChip(
                     text = label,
-                    selected = ratePercent == r,
-                    onClick = { ratePercent = r }
+                    selected = kotlin.math.abs(effectiveRate - r) < 0.01,
+                    onClick = {
+                        ratePercent = r
+                        customRateText = String.format(java.util.Locale.US, "%.1f", r)
+                    }
                 )
             }
+        }
+
+        // Custom Tenure (Months) & Custom Interest Rate (%) Row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = customMonthsText,
+                onValueChange = { raw ->
+                    val cleaned = raw.filter { it.isDigit() }.take(3)
+                    customMonthsText = cleaned
+                    cleaned.toIntOrNull()?.takeIf { it > 0 }?.let { months = it }
+                },
+                label = {
+                    Text(
+                        text = if (language == AppLanguage.BN) "কাস্টম মাস" else "Months",
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily)
+                    )
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("bank_custom_tenure_input")
+            )
+            OutlinedTextField(
+                value = customRateText,
+                onValueChange = { raw ->
+                    val cleaned = raw.filter { it.isDigit() || it == '.' }
+                    if (cleaned.count { it == '.' } <= 1) {
+                        customRateText = cleaned
+                        cleaned.toDoubleOrNull()?.takeIf { it > 0.0 }?.let { ratePercent = it }
+                    }
+                },
+                label = {
+                    Text(
+                        text = if (language == AppLanguage.BN) "কাস্টম হার (%)" else "Rate (%)",
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily)
+                    )
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("bank_custom_rate_input")
+            )
         }
 
         Row(
@@ -1167,7 +1571,9 @@ private fun BankFdrDpsPanel(
             shape = RoundedCornerShape(14.dp),
             color = if (crystal.isDark) Color(0xFF132238) else Color(0xFFEFF6FF),
             border = BorderStroke(1.dp, primary.copy(alpha = 0.35f)),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("bank_estimate_result_card")
         ) {
             Row(
                 modifier = Modifier
@@ -1215,13 +1621,14 @@ private fun BankFdrDpsPanel(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun RemittanceCalculatorPanel(
+internal fun RemittanceCalculatorPanel(
     language: AppLanguage,
     snapshot: MarketSnapshot,
     fromCurrency: MarketCurrency,
     onSelectCurrency: (MarketCurrency) -> Unit,
     onOpenPicker: () -> Unit,
-    strings: AppStrings
+    strings: AppStrings,
+    isOnline: Boolean = true
 ) {
     val crystal = LocalCrystalColors.current
     val hub = strings.marketHub
@@ -1229,9 +1636,20 @@ private fun RemittanceCalculatorPanel(
 
     var amountText by remember { mutableStateOf("1") }
     var includeIncentive by remember { mutableStateOf(true) }
+    var customRateText by remember(fromCurrency) { mutableStateOf("") }
+    var feeBdtText by remember { mutableStateOf("") }
 
     val amount = amountText.toDoubleOrNull()?.takeIf { it > 0.0 } ?: 1.0
-    val estimate = MarketCalculators.calculateRemittance(amount, fromCurrency, snapshot, includeIncentive)
+    val customRate = customRateText.toDoubleOrNull()?.takeIf { it > 0.0 }
+    val feeBdt = feeBdtText.toDoubleOrNull()?.takeIf { it > 0.0 } ?: 0.0
+    val estimate = MarketCalculators.calculateRemittance(
+        foreignAmount = amount,
+        fromCurrency = fromCurrency,
+        snapshot = snapshot,
+        includeGovtIncentive = includeIncentive,
+        customRateOverride = customRate,
+        transferFeeBdt = feeBdt
+    )
 
     Column(
         modifier = Modifier
@@ -1239,6 +1657,38 @@ private fun RemittanceCalculatorPanel(
             .testTag("market_remittance_panel"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        MarketSourceTransparencyChip(
+            status = snapshot.resolveCurrencyStatus(isOnline),
+            language = language,
+            sourceLabel = snapshot.sourceLabel,
+            timestampMillis = snapshot.lastSyncedMillis,
+            testTag = "remittance_source_transparency_badge"
+        )
+
+        // Indicative Estimate Disclaimer (explains market estimate before bank/exchange fees)
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = accent.copy(alpha = if (crystal.isDark) 0.14f else 0.07f),
+            border = BorderStroke(0.8.dp, accent.copy(alpha = 0.28f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("remittance_estimate_disclaimer")
+        ) {
+            Text(
+                text = if (language == AppLanguage.BN) {
+                    "আনুমানিক বাজার রেট — ব্যাংক বা এক্সচেঞ্জ হাউসের ফি ও রেট অনুযায়ী চূড়ান্ত টাকা ভিন্ন হতে পারে।"
+                } else {
+                    "Indicative market estimate before bank or exchange-house fees & spreads. Customize rate/fee below."
+                },
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = HindSiliguriFamily,
+                    lineHeight = 16.sp
+                ),
+                color = crystal.mutedText,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+            )
+        }
+
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -1286,6 +1736,58 @@ private fun RemittanceCalculatorPanel(
                 .testTag("remittance_amount_input")
         )
 
+        // Optional Exchange House Rate Override + Transfer Fee
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = customRateText,
+                onValueChange = { raw ->
+                    val cleaned = raw.filter { it.isDigit() || it == '.' }
+                    if (cleaned.count { it == '.' } <= 1) customRateText = cleaned
+                },
+                label = {
+                    Text(
+                        text = if (language == AppLanguage.BN) "কাস্টম রেট (৳)" else "Custom Rate (৳)",
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily)
+                    )
+                },
+                placeholder = {
+                    Text(
+                        text = MarketCalculators.formatDecimal(snapshot.convert(1.0, fromCurrency, MarketCurrency.BDT), 2, language),
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily)
+                    )
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("remittance_custom_rate_input")
+            )
+            OutlinedTextField(
+                value = feeBdtText,
+                onValueChange = { raw ->
+                    val cleaned = raw.filter { it.isDigit() || it == '.' }
+                    if (cleaned.count { it == '.' } <= 1) feeBdtText = cleaned
+                },
+                label = {
+                    Text(
+                        text = if (language == AppLanguage.BN) "এক্সচেঞ্জ ফি (৳)" else "Fee (BDT)",
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily)
+                    )
+                },
+                placeholder = { Text("0") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("remittance_fee_input")
+            )
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1304,7 +1806,9 @@ private fun RemittanceCalculatorPanel(
             shape = RoundedCornerShape(14.dp),
             color = accent.copy(alpha = if (crystal.isDark) 0.18f else 0.09f),
             border = BorderStroke(1.dp, accent.copy(alpha = 0.36f)),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("remittance_estimate_result_card")
         ) {
             Column(
                 modifier = Modifier.padding(12.dp),
@@ -1348,6 +1852,26 @@ private fun RemittanceCalculatorPanel(
                         )
                     }
                 }
+                if (estimate.feeBdt > 0.0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = if (language == AppLanguage.BN) "এক্সচেঞ্জ / ব্যাংক ফি" else "Transfer / Exchange Fee",
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Text(
+                            text = "-${BdtFormatter.format(estimate.feeBdt, language)}",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFamily = JetBrainsMonoFamily,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
                 HorizontalDivider(thickness = 0.6.dp, color = crystal.glassBorder)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1378,7 +1902,7 @@ private fun RemittanceCalculatorPanel(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun MfsFeeCalculatorPanel(
+internal fun MfsFeeCalculatorPanel(
     language: AppLanguage,
     strings: AppStrings
 ) {
@@ -1398,6 +1922,14 @@ private fun MfsFeeCalculatorPanel(
             .testTag("market_mfs_panel"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        MarketSourceTransparencyChip(
+            status = MarketDataStatus.REFERENCE_ESTIMATE,
+            language = language,
+            customLabelBn = "রেফারেন্স ক্যাশ-আউট চার্জ ক্যালকুলেটর",
+            customLabelEn = "Reference Cash-Out Tariff Calculator",
+            testTag = "mfs_source_transparency_badge"
+        )
+
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -1516,7 +2048,7 @@ private fun MfsFeeCalculatorPanel(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CurrencyPickerModalSheet(
+internal fun CurrencyPickerModalSheet(
     language: AppLanguage,
     snapshot: MarketSnapshot,
     selected: MarketCurrency,
@@ -1669,7 +2201,7 @@ private fun CurrencyPickerModalSheet(
 }
 
 @Composable
-private fun SmallPresetChip(
+internal fun SmallPresetChip(
     text: String,
     selected: Boolean,
     onClick: () -> Unit,

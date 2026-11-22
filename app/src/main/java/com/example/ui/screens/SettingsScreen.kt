@@ -156,10 +156,13 @@ import com.example.core.GoogleAccountProfile
 import com.example.core.GoogleAuthManager
 import com.example.core.GoogleSignInOutcome
 import com.example.core.LocationRegionContext
+import com.example.data.backup.DriveSyncUiState
 import com.example.data.local.AccountEntity
 import com.example.data.local.TransactionEntity
 import com.example.data.local.UserPrefs
+import com.example.data.market.MarketSnapshot
 import com.example.data.model.AppColourTheme
+import com.example.data.model.AppCurrency
 import com.example.data.model.AppThemeMode
 import com.example.data.model.AuthMode
 import com.example.data.model.CategorySortMode
@@ -175,6 +178,7 @@ import com.example.data.support.SupportUiState
 import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
+import com.example.ui.components.AppCurrencyPickerSheet
 import com.example.ui.components.BuiltInPresetAvatars
 import com.example.ui.components.CategoryIconBadge
 import com.example.ui.components.CrystalCard
@@ -259,7 +263,17 @@ fun SettingsScreen(
     onSelectSupportQuickOption: (SupportQuickOption) -> Unit = {},
     onSendSupportMessage: (String) -> Unit = {},
     onRequestLiveCareAfterTroubleshooting: () -> Unit = {},
-    onResetSupportChat: () -> Unit = {}
+    onResetSupportChat: () -> Unit = {},
+    marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference(),
+    onSetMainCurrency: (String) -> Unit = {},
+    onSetSecondaryCurrency: (String) -> Unit = {},
+    onSetDailyReminder: (enabled: Boolean, hour: Int, minute: Int) -> Unit = { _, _, _ -> },
+    onSetLoanDayBefore: (enabled: Boolean) -> Unit = {},
+    onSetHighSpendAlert: (enabled: Boolean) -> Unit = {},
+    driveSyncState: DriveSyncUiState = DriveSyncUiState(),
+    onSyncDriveNow: (() -> Unit)? = null,
+    onRestoreFromDrive: () -> Unit = {},
+    onGrantDriveAccess: () -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
     val crystal = LocalCrystalColors.current
@@ -291,6 +305,8 @@ fun SettingsScreen(
 
     var showDashboardCustomizer by remember { mutableStateOf(false) }
     var showWeekStartSheet by remember { mutableStateOf(false) }
+    var showMainCurrencyPicker by remember { mutableStateOf(false) }
+    var showSecondaryCurrencyPicker by remember { mutableStateOf(false) }
     var showPinSetupDialog by remember { mutableStateOf(false) }
     var isGoogleSignInLoading by remember { mutableStateOf(false) }
     var showGooglePreviewChooser by remember { mutableStateOf(false) }
@@ -406,7 +422,11 @@ fun SettingsScreen(
                     },
                     onTriggerGoogleSignIn = { triggerGoogleLink() },
                     onDeleteAllFinancialData = onDeleteAllFinancialData,
-                    onClearBackupStatus = onClearBackupStatus
+                    onClearBackupStatus = onClearBackupStatus,
+                    driveSyncState = driveSyncState,
+                    onSyncDriveNow = onSyncDriveNow,
+                    onRestoreFromDrive = onRestoreFromDrive,
+                    onGrantDriveAccess = onGrantDriveAccess
                 )
             }
 
@@ -747,65 +767,14 @@ fun SettingsScreen(
                         color = crystal.glassBorder
                     )
 
-                    // Financial Alerts Sub-header
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(horizontal = 2.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.NotificationsActive,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = refined.financialAlertsGroupTitle,
-                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    SettingSwitchRow(
-                        label = strings.notifBudgetAlerts,
-                        subtitle = refined.notifBudgetAlertsSubtitle,
-                        icon = Icons.Filled.PieChart,
-                        iconTint = MaterialTheme.colorScheme.primary,
-                        checked = prefs.notifBudgetAlerts,
-                        testTag = "settings_toggle_budget_alert",
-                        onCheckedChange = {
-                            onSetNotifications(it, prefs.notifCreditAlerts, prefs.notifLoanReminders)
-                        }
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    SettingSwitchRow(
-                        label = strings.notifCreditAlerts,
-                        subtitle = refined.notifCreditAlertsSubtitle,
-                        icon = Icons.Filled.CreditCard,
-                        iconTint = crystal.warningAmber,
-                        checked = prefs.notifCreditAlerts,
-                        testTag = "settings_toggle_credit_alert",
-                        onCheckedChange = {
-                            onSetNotifications(prefs.notifBudgetAlerts, it, prefs.notifLoanReminders)
-                        }
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    SettingSwitchRow(
-                        label = strings.notifLoanReminders,
-                        subtitle = refined.notifLoanRemindersSubtitle,
-                        icon = Icons.Filled.EventNote,
-                        iconTint = crystal.assetGreen,
-                        checked = prefs.notifLoanReminders,
-                        testTag = "settings_toggle_loan_reminder",
-                        onCheckedChange = {
-                            onSetNotifications(prefs.notifBudgetAlerts, prefs.notifCreditAlerts, it)
-                        }
+                    NotificationSettingsSection(
+                        prefs = prefs,
+                        strings = strings,
+                        deviceTimeContext = deviceTimeContext,
+                        onSetNotifications = onSetNotifications,
+                        onSetDailyReminder = onSetDailyReminder,
+                        onSetLoanDayBefore = onSetLoanDayBefore,
+                        onSetHighSpendAlert = onSetHighSpendAlert
                     )
                 }
             }
@@ -840,63 +809,45 @@ fun SettingsScreen(
                                 FilterChip(
                                     selected = acc.id == effectiveDefaultId,
                                     onClick = { onSetDefaultAccount(acc.id) },
-                                    label = { Text("${acc.name} (${BdtFormatter.format(acc.balance, lang)})") }
+                                    label = {
+                                        Text("${acc.name} (${BdtFormatter.formatCurrency(acc.balance, acc.currencyCode, lang)})")
+                                    }
                                 )
                             }
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                     }
 
-                    // Main Currency (BDT)
-                    Surface(
-                        color = if (crystal.isDark) Color(0xFF161C2B) else crystal.glassSurfaceElevated,
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                        shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, crystal.glassBorder),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(
-                                            MaterialTheme.colorScheme.primary.copy(
-                                                alpha = if (crystal.isDark) 0.22f else 0.14f
-                                            )
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.CurrencyExchange,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                                Text(
-                                    text = strings.mainCurrencyLabel,
-                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            Text(
-                                text = strings.mainCurrencyValue,
-                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
+                    // Main Currency (interactive picker with flag, country & currency name)
+                    val activeMainCurrency = prefs.mainCurrency
+                    val activeSecondaryCurrency = prefs.secondaryCurrency
+                    CurrencySelectionTile(
+                        title = strings.mainCurrencyLabel,
+                        subtitle = "${activeMainCurrency.countryName(lang)} • ${activeMainCurrency.currencyName(lang)}",
+                        flag = activeMainCurrency.flag,
+                        badgeText = "${activeMainCurrency.code} (${activeMainCurrency.symbol})",
+                        isSelected = true,
+                        testTag = "settings_main_currency_tile",
+                        onClick = { showMainCurrencyPicker = true }
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Current / Second Currency (for expat living/work country or multi-currency tracking)
+                    CurrencySelectionTile(
+                        title = strings.secondaryCurrencyLabel,
+                        subtitle = if (activeSecondaryCurrency != null) {
+                            "${activeSecondaryCurrency.countryName(lang)} • ${activeSecondaryCurrency.currencyName(lang)}"
+                        } else {
+                            strings.secondaryCurrencySubtitle
+                        },
+                        flag = activeSecondaryCurrency?.flag,
+                        badgeText = activeSecondaryCurrency?.let { "${it.code} (${it.symbol})" }
+                            ?: strings.secondaryCurrencyNotSet,
+                        isSelected = activeSecondaryCurrency != null,
+                        testTag = "settings_secondary_currency_tile",
+                        onClick = { showSecondaryCurrencyPicker = true }
+                    )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
@@ -962,16 +913,6 @@ fun SettingsScreen(
                         onClick = { showWeekStartSheet = true }
                     )
                 }
-            }
-
-            // 4b. Device Permissions & Google Location
-            item {
-                DevicePermissionsSettingsCard(
-                    strings = strings,
-                    permissionsOverride = permissionsOverride,
-                    locationContextOverride = locationContextOverride,
-                    onRequestPermissionOverride = onRequestPermissionOverride
-                )
             }
 
             // 5. Security & System
@@ -1286,6 +1227,44 @@ fun SettingsScreen(
             strings = strings,
             onSelectDay = onSetStartOfWeek,
             onDismiss = { showWeekStartSheet = false }
+        )
+    }
+
+    if (showMainCurrencyPicker) {
+        AppCurrencyPickerSheet(
+            title = strings.mainCurrencyLabel,
+            subtitle = strings.mainCurrencySubtitle,
+            selectedCurrency = prefs.mainCurrency,
+            language = lang,
+            referenceCurrency = prefs.secondaryCurrency ?: AppCurrency.BDT,
+            marketSnapshot = marketSnapshot,
+            allowClear = false,
+            onSelect = { selected ->
+                onSetMainCurrency(selected.code)
+                showMainCurrencyPicker = false
+            },
+            onDismiss = { showMainCurrencyPicker = false }
+        )
+    }
+
+    if (showSecondaryCurrencyPicker) {
+        AppCurrencyPickerSheet(
+            title = strings.secondaryCurrencyLabel,
+            subtitle = strings.secondaryCurrencySubtitle,
+            selectedCurrency = prefs.secondaryCurrency,
+            language = lang,
+            referenceCurrency = prefs.mainCurrency,
+            marketSnapshot = marketSnapshot,
+            allowClear = true,
+            onSelect = { selected ->
+                onSetSecondaryCurrency(selected.code)
+                showSecondaryCurrencyPicker = false
+            },
+            onClear = {
+                onSetSecondaryCurrency("")
+                showSecondaryCurrencyPicker = false
+            },
+            onDismiss = { showSecondaryCurrencyPicker = false }
         )
     }
 
@@ -2530,3 +2509,122 @@ private fun LayoutStylePreviewCard(
         }
     }
 }
+
+@Composable
+private fun CurrencySelectionTile(
+    title: String,
+    subtitle: String,
+    flag: String?,
+    badgeText: String,
+    isSelected: Boolean,
+    testTag: String,
+    onClick: () -> Unit
+) {
+    val crystal = LocalCrystalColors.current
+    val primary = MaterialTheme.colorScheme.primary
+    val shape = RoundedCornerShape(16.dp)
+
+    Surface(
+        color = if (crystal.isDark) Color(0xFF161C2B) else crystal.glassSurfaceElevated,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = shape,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (isSelected) primary.copy(alpha = if (crystal.isDark) 0.42f else 0.30f) else crystal.glassBorder
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .minimumInteractiveComponentSize()
+            .clip(shape)
+            .clickable(onClick = onClick)
+            .testTag(testTag)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            primary.copy(alpha = if (crystal.isDark) 0.22f else 0.14f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (!flag.isNullOrBlank()) {
+                        Text(
+                            text = flag,
+                            fontSize = 21.sp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Filled.CurrencyExchange,
+                            contentDescription = null,
+                            tint = primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = crystal.mutedText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Surface(
+                    color = if (isSelected) {
+                        primary.copy(alpha = if (crystal.isDark) 0.24f else 0.13f)
+                    } else {
+                        if (crystal.isDark) Color(0xFF1E293B) else Color(0xFFEAF2FA)
+                    },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(
+                        text = badgeText,
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = if (isSelected) primary else crystal.mutedText,
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                    )
+                }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = title,
+                    tint = crystal.mutedText,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+

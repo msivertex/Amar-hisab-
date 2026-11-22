@@ -3,10 +3,14 @@ package com.example
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.FragmentActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -20,6 +24,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,6 +38,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.foundation.isSystemInDarkTheme
+import com.example.core.DevicePermissionsHelper
 import com.example.core.configureAppCheck
 import com.example.data.model.AppTab
 import com.example.data.model.AppThemeMode
@@ -49,6 +55,7 @@ import com.example.ui.screens.EditProfileBudgetDialog
 import com.example.ui.screens.GlobalSearchSheet
 import com.example.ui.screens.HomeDashboardScreen
 import com.example.ui.screens.InsightsScreen
+import com.example.ui.screens.LiveMarketScreen
 import com.example.ui.screens.NotificationsSheet
 import com.example.ui.screens.PlanScreen
 import com.example.ui.screens.ReceiptScanSheet
@@ -57,25 +64,60 @@ import com.example.ui.screens.SmartTransactionModal
 import com.example.ui.screens.SplashScreen
 import com.example.ui.screens.VoiceEntrySheet
 import com.example.ui.screens.WelcomeScreen
+import com.example.notifications.AmarHisabNotificationManager
+import com.example.notifications.NotificationActionRoute
 import com.example.ui.theme.AmarHisabTheme
 import com.example.ui.viewmodel.MainViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class MainActivity : FragmentActivity() {
+
+    private val _pendingNotificationRoute = MutableStateFlow<NotificationActionRoute?>(null)
+    private val pendingNotificationRoute: StateFlow<NotificationActionRoute?> =
+        _pendingNotificationRoute.asStateFlow()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         // Configure Firebase App Check with launch intent before any UI or ViewModels.
         configureAppCheck(this, intent)
+        AmarHisabNotificationManager.ensureChannels(this)
+        dispatchNotificationRoute(intent)
 
         enableEdgeToEdge()
         setContent {
-            AmarHisabApp()
+            val externalRoute by pendingNotificationRoute.collectAsStateWithLifecycle()
+            AmarHisabApp(
+                pendingNotificationRoute = externalRoute,
+                onConsumeNotificationRoute = { _pendingNotificationRoute.value = null }
+            )
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        dispatchNotificationRoute(intent)
+    }
+
+    private fun dispatchNotificationRoute(intent: Intent?) {
+        val rawRoute = intent?.getStringExtra(AmarHisabNotificationManager.EXTRA_NOTIFICATION_ROUTE)
+        val parsed = NotificationActionRoute.fromWireName(rawRoute)
+        if (parsed != null) {
+            _pendingNotificationRoute.value = parsed
+            intent?.removeExtra(AmarHisabNotificationManager.EXTRA_NOTIFICATION_ROUTE)
         }
     }
 }
 
 @Composable
-fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
+fun AmarHisabApp(
+    viewModel: MainViewModel = viewModel(),
+    pendingNotificationRoute: NotificationActionRoute? = null,
+    onConsumeNotificationRoute: () -> Unit = {}
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val receiptState by viewModel.receiptState.collectAsStateWithLifecycle()
     val searchAiState by viewModel.searchAiState.collectAsStateWithLifecycle()
@@ -85,6 +127,8 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
     val supportUiState by viewModel.supportUiState.collectAsStateWithLifecycle()
     val isAppUnlocked by viewModel.isAppUnlocked.collectAsStateWithLifecycle()
     val backupStatus by viewModel.backupStatus.collectAsStateWithLifecycle()
+    val driveSyncState by viewModel.driveSyncState.collectAsStateWithLifecycle()
+    val pendingDriveConsent by viewModel.pendingDriveConsent.collectAsStateWithLifecycle()
 
     val strings = remember(uiState.prefs.language) {
         StringsProvider.get(uiState.prefs.language)
@@ -99,10 +143,113 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
     var showGlobalSearch by remember { mutableStateOf(false) }
     var showNotifications by remember { mutableStateOf(false) }
     var showProfileBudgetDialog by remember { mutableStateOf(false) }
+    var requestedPlanTab by remember { mutableStateOf<Int?>(null) }
+
+    val navigateNotificationRoute: (NotificationActionRoute) -> Unit = { route ->
+        when (route) {
+            NotificationActionRoute.QUICK_ADD_TX -> {
+                viewModel.selectTab(AppTab.HOME)
+                smartModalInitialMode = TransactionType.EXPENSE
+                showSmartTxModal = true
+            }
+            NotificationActionRoute.OPEN_PLAN_LOANS -> {
+                requestedPlanTab = 2
+                viewModel.selectTab(AppTab.PLAN)
+            }
+            NotificationActionRoute.OPEN_INSIGHTS_BUDGET -> {
+                viewModel.selectTab(AppTab.INSIGHTS)
+            }
+            NotificationActionRoute.OPEN_ACCOUNTS -> {
+                viewModel.openAccountsScreen()
+            }
+            NotificationActionRoute.OPEN_HOME -> {
+                viewModel.selectTab(AppTab.HOME)
+            }
+        }
+    }
+
+    LaunchedEffect(
+        pendingNotificationRoute,
+        uiState.isPrefsLoaded,
+        uiState.prefs.hasCompletedWelcome,
+        showSplash,
+        isAppUnlocked
+    ) {
+        val route = pendingNotificationRoute
+        val canNavigate = route != null &&
+            uiState.isPrefsLoaded &&
+            !showSplash &&
+            uiState.prefs.hasCompletedWelcome &&
+            (!uiState.prefs.isLaunchLockActive || isAppUnlocked)
+        if (canNavigate && route != null) {
+            navigateNotificationRoute(route)
+            onConsumeNotificationRoute()
+        }
+    }
 
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val isLaunchLockActive = uiState.prefs.isLaunchLockActive
+
+    // Standard system runtime permissions requested once on initial app launch/setup
+    // (Microphone for Voice Entry, Camera for Receipt Scan, Google Location for travel/region context).
+    // Denying or modifying later still preserves full manual & offline functionality gracefully.
+    var launchPermissionPromptDispatched by remember { mutableStateOf(false) }
+    val launchPermissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        viewModel.markLaunchPermissionsRequested()
+        val locationGranted = results.entries.any { (perm, granted) ->
+            granted && perm in DevicePermissionsHelper.locationPermissions
+        }
+        if (locationGranted) {
+            viewModel.refreshSystemTime()
+            DevicePermissionsHelper.fetchGoogleLocationContext(context) { }
+        }
+    }
+
+    LaunchedEffect(
+        uiState.isPrefsLoaded,
+        showSplash,
+        uiState.prefs.hasRequestedLaunchPermissions
+    ) {
+        if (
+            uiState.isPrefsLoaded &&
+            !showSplash &&
+            !uiState.prefs.hasRequestedLaunchPermissions &&
+            !launchPermissionPromptDispatched
+        ) {
+            launchPermissionPromptDispatched = true
+            val missing = DevicePermissionsHelper.missingLaunchPermissions(context)
+            if (missing.isEmpty()) {
+                viewModel.markLaunchPermissionsRequested()
+            } else {
+                launchPermissionsLauncher.launch(missing)
+            }
+        }
+    }
+
+    // Launch Google Drive OAuth consent resolution whenever required for encrypted Drive auto-sync/restore
+    val driveConsentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        viewModel.onDriveConsentResult(
+            resultOk = result.resultCode == Activity.RESULT_OK,
+            data = result.data
+        )
+    }
+
+    LaunchedEffect(pendingDriveConsent) {
+        val pendingIntent = pendingDriveConsent ?: return@LaunchedEffect
+        val launched = runCatching {
+            driveConsentLauncher.launch(
+                IntentSenderRequest.Builder(pendingIntent.intentSender).build()
+            )
+        }.isSuccess
+        if (!launched) {
+            viewModel.consumePendingDriveConsent()
+        }
+    }
 
     // Protect sensitive financial data from Recent Apps screenshots whenever vault lock is active
     DisposableEffect(context, isLaunchLockActive) {
@@ -121,7 +268,7 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
             when (event) {
                 Lifecycle.Event.ON_STOP -> viewModel.onAppBackgrounded()
                 Lifecycle.Event.ON_START -> viewModel.onAppForegrounded()
-                Lifecycle.Event.ON_RESUME -> viewModel.refreshSystemTime()
+                Lifecycle.Event.ON_RESUME -> viewModel.onAppResumed()
                 else -> Unit
             }
         }
@@ -186,7 +333,7 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                         containerColor = Color.Transparent,
                         contentWindowInsets = WindowInsets.statusBars,
                         bottomBar = {
-                            if (!uiState.showAccountsScreen && !uiState.showSettingsScreen) {
+                            if (!uiState.showAccountsScreen && !uiState.showSettingsScreen && !uiState.showLiveMarketScreen) {
                                 FloatingCrystalBottomBar(
                                     selectedTab = uiState.selectedTab,
                                     strings = strings,
@@ -213,7 +360,10 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                                         strings = strings,
                                         onBack = { viewModel.closeAccountsScreen() },
                                         onOpenAddWizard = { showAddAccountWizard = true },
-                                        onDeleteAccount = { viewModel.deleteAccount(it) }
+                                        onDeleteAccount = { viewModel.deleteAccount(it) },
+                                        mainCurrencyCode = uiState.prefs.mainCurrencyCode,
+                                        secondaryCurrencyCode = uiState.prefs.secondaryCurrencyCode,
+                                        marketSnapshot = marketSyncState.snapshot
                                     )
                                 }
 
@@ -290,7 +440,33 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                                         onSelectSupportQuickOption = { viewModel.selectSupportQuickOption(it) },
                                         onSendSupportMessage = { viewModel.sendCustomerSupportMessage(it) },
                                         onRequestLiveCareAfterTroubleshooting = { viewModel.requestLiveCareAfterTroubleshooting() },
-                                        onResetSupportChat = { viewModel.resetCustomerSupportChat() }
+                                        onResetSupportChat = { viewModel.resetCustomerSupportChat() },
+                                        marketSnapshot = marketSyncState.snapshot,
+                                        onSetMainCurrency = { viewModel.setMainCurrency(it) },
+                                        onSetSecondaryCurrency = { viewModel.setSecondaryCurrency(it) },
+                                        onSetDailyReminder = { enabled, hour, minute ->
+                                            viewModel.setDailyReminderConfig(enabled, hour, minute)
+                                        },
+                                        onSetLoanDayBefore = { enabled ->
+                                            viewModel.setLoanDayBeforeEnabled(enabled)
+                                        },
+                                        onSetHighSpendAlert = { enabled ->
+                                            viewModel.setHighSpendAlertEnabled(enabled)
+                                        },
+                                        driveSyncState = driveSyncState,
+                                        onSyncDriveNow = { viewModel.syncToGoogleDriveNow(allowConsentPrompt = true) },
+                                        onRestoreFromDrive = { viewModel.restoreFromGoogleDriveNow() },
+                                        onGrantDriveAccess = { viewModel.requestDrivePermissionAndSync() }
+                                    )
+                                }
+
+                                uiState.showLiveMarketScreen -> {
+                                    LiveMarketScreen(
+                                        language = uiState.prefs.language,
+                                        marketSyncState = marketSyncState,
+                                        strings = strings,
+                                        onRefreshMarketRates = { viewModel.refreshMarketRates(force = true) },
+                                        onBack = { viewModel.closeLiveMarketScreen() }
                                     )
                                 }
 
@@ -309,6 +485,7 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                                                 onOpenSettings = { viewModel.openSettingsScreen() },
                                                 onOpenProfileEdit = { showProfileBudgetDialog = true },
                                                 onOpenAllAccounts = { viewModel.openAccountsScreen() },
+                                                onOpenAddAccount = { showAddAccountWizard = true },
                                                 onOpenTransfer = {
                                                     smartModalInitialMode = TransactionType.TRANSFER
                                                     showSmartTxModal = true
@@ -329,7 +506,9 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                                                 onOpenPlan = { viewModel.selectTab(AppTab.PLAN) },
                                                 onUpdateName = { newName -> viewModel.updateDisplayName(newName) },
                                                 onPickGuestAvatar = { uri -> viewModel.updateGuestAvatarFromUri(uri) },
-                                                onClearGuestAvatar = { viewModel.clearGuestAvatar() }
+                                                onClearGuestAvatar = { viewModel.clearGuestAvatar() },
+                                                marketSyncState = marketSyncState,
+                                                onOpenLiveMarket = { viewModel.openLiveMarketScreen() }
                                             )
 
                                             AppTab.ACTIVITY -> ActivityScreen(
@@ -339,7 +518,8 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                                                     viewModel.resetReceiptScan()
                                                     showReceiptScanSheet = true
                                                 },
-                                                onDeleteTransaction = { viewModel.deleteTransaction(it) }
+                                                onDeleteTransaction = { viewModel.deleteTransaction(it) },
+                                                marketSnapshot = marketSyncState.snapshot
                                             )
 
                                             AppTab.PLAN -> PlanScreen(
@@ -361,10 +541,22 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                                                 onAddLoan = { person, type, amount, note, dueDate ->
                                                     viewModel.addLoan(person, type, amount, note, dueDate)
                                                 },
+                                                onAddLoanWithCurrency = { person, type, amount, note, dueDate, currencyCode ->
+                                                    viewModel.addLoan(person, type, amount, note, dueDate, currencyCode)
+                                                },
+                                                onUpdateLoan = { updated ->
+                                                    viewModel.updateLoan(updated)
+                                                },
                                                 onSettleLoan = { loan, amount, walletId ->
                                                     viewModel.settleLoan(loan, amount, walletId)
                                                 },
-                                                onDeleteLoan = { viewModel.deleteLoan(it) }
+                                                onSettleLoanOptionalWallet = { loan, amount, walletId ->
+                                                    viewModel.settleLoan(loan, amount, walletId)
+                                                },
+                                                onDeleteLoan = { viewModel.deleteLoan(it) },
+                                                marketSnapshot = marketSyncState.snapshot,
+                                                requestedTab = requestedPlanTab,
+                                                onConsumeRequestedTab = { requestedPlanTab = null }
                                             )
 
                                             AppTab.INSIGHTS -> InsightsScreen(
@@ -421,7 +613,19 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                                     note = note,
                                     timestamp = timestamp
                                 )
-                            }
+                            },
+                            onExecuteTransferWithRate = { fromId, toId, amount, note, timestamp, customRate ->
+                                viewModel.transferFunds(
+                                    fromAccountId = fromId,
+                                    toAccountId = toId,
+                                    amount = amount,
+                                    note = note,
+                                    timestamp = timestamp,
+                                    customConversionRate = customRate
+                                )
+                            },
+                            defaultCurrencyCode = uiState.prefs.mainCurrencyCode,
+                            marketSnapshot = marketSyncState.snapshot
                         )
                     }
 
@@ -431,6 +635,7 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                             receiptState = receiptState,
                             language = uiState.prefs.language,
                             strings = strings,
+                            defaultCurrencyCode = uiState.prefs.mainCurrencyCode,
                             onPickImageUri = { viewModel.analyzeReceiptUri(it) },
                             onSaveExpense = { title, amount, category, accountId, note ->
                                 viewModel.addTransaction(
@@ -442,7 +647,37 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                                     note = note
                                 )
                             },
-                            onDismiss = { showReceiptScanSheet = false }
+                            onSaveExpenseWithDate = { title, amount, category, accountId, note, timestamp ->
+                                viewModel.addTransaction(
+                                    title = title,
+                                    amount = amount,
+                                    type = TransactionType.EXPENSE,
+                                    category = category,
+                                    accountId = accountId,
+                                    note = note,
+                                    timestamp = timestamp
+                                )
+                            },
+                            onSaveVoucherTransaction = { title, amount, type, category, accountId, note, timestamp ->
+                                viewModel.addTransaction(
+                                    title = title,
+                                    amount = amount,
+                                    type = type,
+                                    category = category,
+                                    accountId = accountId,
+                                    note = note,
+                                    timestamp = timestamp
+                                )
+                            },
+                            onAddAccount = {
+                                showReceiptScanSheet = false
+                                viewModel.resetReceiptScan()
+                                showAddAccountWizard = true
+                            },
+                            onDismiss = {
+                                showReceiptScanSheet = false
+                                viewModel.resetReceiptScan()
+                            }
                         )
                     }
 
@@ -465,7 +700,18 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                                     accountId = accountId
                                 )
                             },
-                            onDismiss = { showVoiceEntrySheet = false }
+                            onDismiss = { showVoiceEntrySheet = false },
+                            defaultCurrencyCode = uiState.prefs.secondaryCurrencyCode.ifBlank {
+                                uiState.prefs.mainCurrencyCode
+                            },
+                            onExecuteTransfer = { fromId, toId, amount, note ->
+                                viewModel.transferFunds(
+                                    fromAccountId = fromId,
+                                    toAccountId = toId,
+                                    amount = amount,
+                                    note = note
+                                )
+                            }
                         )
                     }
 
@@ -474,7 +720,10 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                             language = uiState.prefs.language,
                             strings = strings,
                             onDismiss = { showAddAccountWizard = false },
-                            onSaveAccount = { viewModel.addAccount(it) }
+                            onSaveAccount = { viewModel.addAccount(it) },
+                            defaultCurrencyCode = uiState.prefs.mainCurrencyCode,
+                            secondaryCurrencyCode = uiState.prefs.secondaryCurrencyCode,
+                            marketSnapshot = marketSyncState.snapshot
                         )
                     }
 
@@ -493,6 +742,11 @@ fun AmarHisabApp(viewModel: MainViewModel = viewModel()) {
                         NotificationsSheet(
                             alerts = uiState.smartAlerts,
                             strings = strings,
+                            language = uiState.prefs.language,
+                            onSelectActionRoute = { route ->
+                                navigateNotificationRoute(route)
+                            },
+                            onClearHistory = { viewModel.clearNotificationHistory() },
                             onDismiss = { showNotifications = false }
                         )
                     }

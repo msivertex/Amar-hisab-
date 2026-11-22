@@ -25,13 +25,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -63,14 +66,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.example.data.backup.BackupManager
+import com.example.data.backup.DriveSyncStatus
+import com.example.data.backup.DriveSyncUiState
 import com.example.data.local.UserPrefs
 import com.example.data.model.AuthMode
+import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.ui.components.CrystalCard
 import com.example.ui.components.GoogleGLogo
 import com.example.ui.theme.LocalCrystalColors
 import com.example.ui.viewmodel.BackupMessage
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun BackupRestoreSubPage(
@@ -86,12 +95,20 @@ fun BackupRestoreSubPage(
     onDownloadSampleTemplateClick: () -> Unit,
     onTriggerGoogleSignIn: () -> Unit,
     onDeleteAllFinancialData: () -> Unit,
-    onClearBackupStatus: () -> Unit
+    onClearBackupStatus: () -> Unit,
+    driveSyncState: DriveSyncUiState = DriveSyncUiState(),
+    onSyncDriveNow: (() -> Unit)? = null,
+    onRestoreFromDrive: () -> Unit = {},
+    onGrantDriveAccess: () -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
     val crystal = LocalCrystalColors.current
     val context = LocalContext.current
     val br = strings.backupRestore
+    val isBn = prefs.language == AppLanguage.BN
+    val syncTimeFmt = remember(prefs.language) {
+        SimpleDateFormat("dd MMM, hh:mm a", if (isBn) Locale.forLanguageTag("bn-BD") else Locale.ENGLISH)
+    }
 
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
 
@@ -523,11 +540,42 @@ fun BackupRestoreSubPage(
                             }
                         }
                     } else {
+                        val isBusy = driveSyncState.status == DriveSyncStatus.SYNCING ||
+                            driveSyncState.status == DriveSyncStatus.RESTORING
+                        val needsPermission = driveSyncState.status == DriveSyncStatus.NEEDS_PERMISSION
+                        val lastSyncedStamp = maxOf(
+                            driveSyncState.lastSyncedAtMillis,
+                            prefs.driveLastSyncedAtMillis
+                        )
+                        val syncStatusLabel = when (driveSyncState.status) {
+                            DriveSyncStatus.SYNCING ->
+                                if (isBn) "এনক্রিপ্টেড ব্যাকআপ সিঙ্ক হচ্ছে..." else "Syncing encrypted vault..."
+                            DriveSyncStatus.RESTORING ->
+                                if (isBn) "Google Drive থেকে রিস্টোর যাচাই হচ্ছে..." else "Checking & restoring from Drive..."
+                            DriveSyncStatus.PENDING_OFFLINE ->
+                                if (isBn) "অফলাইন — অনলাইন হলে অটো-সিঙ্ক হবে" else "Offline — auto-sync queued"
+                            DriveSyncStatus.NEEDS_PERMISSION ->
+                                if (isBn) "Google Drive অনুমতি প্রয়োজন" else "Google Drive permission needed"
+                            DriveSyncStatus.ERROR ->
+                                driveSyncState.message ?: if (isBn) "সিঙ্ক স্থগিত — আবার চেষ্টা করুন" else "Sync paused — retry below"
+                            else -> if (lastSyncedStamp > 0L) {
+                                val formatted = syncTimeFmt.format(Date(lastSyncedStamp))
+                                if (isBn) "সর্বশেষ সিঙ্ক: $formatted" else "Last synced: $formatted"
+                            } else {
+                                if (isBn) "পরিবর্তন হলেই অটো-সিঙ্ক চালু" else "Auto-sync on every change ready"
+                            }
+                        }
+
                         Surface(
-                            color = crystal.assetGreenBg,
+                            color = if (needsPermission) crystal.warningAmberBg else crystal.assetGreenBg,
                             shape = RoundedCornerShape(16.dp),
-                            border = BorderStroke(1.dp, crystal.assetGreen.copy(alpha = 0.35f)),
-                            modifier = Modifier.fillMaxWidth()
+                            border = BorderStroke(
+                                1.dp,
+                                (if (needsPermission) crystal.warningAmber else crystal.assetGreen).copy(alpha = 0.35f)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("backup_drive_connected_card")
                         ) {
                             Column(
                                 modifier = Modifier.padding(14.dp),
@@ -541,15 +589,26 @@ fun BackupRestoreSubPage(
                                         modifier = Modifier
                                             .size(42.dp)
                                             .clip(RoundedCornerShape(12.dp))
-                                            .background(crystal.assetGreen.copy(alpha = 0.18f)),
+                                            .background(
+                                                (if (needsPermission) crystal.warningAmber else crystal.assetGreen)
+                                                    .copy(alpha = 0.18f)
+                                            ),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.CloudDone,
-                                            contentDescription = null,
-                                            tint = crystal.assetGreen,
-                                            modifier = Modifier.size(22.dp)
-                                        )
+                                        if (isBusy) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(20.dp),
+                                                strokeWidth = 2.dp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Filled.CloudDone,
+                                                contentDescription = null,
+                                                tint = if (needsPermission) crystal.warningAmber else crystal.assetGreen,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        }
                                     }
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
@@ -561,6 +620,47 @@ fun BackupRestoreSubPage(
                                             text = prefs.userEmail.ifBlank { br.cloudReadySubtitle },
                                             style = MaterialTheme.typography.bodySmall,
                                             color = crystal.mutedText,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = syncStatusLabel,
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                            color = if (needsPermission) crystal.warningAmber else crystal.assetGreen,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+
+                                // Encrypted Drive folder & AES-256-GCM pill
+                                Surface(
+                                    color = crystal.glassSurfaceElevated,
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(0.8.dp, crystal.glassBorder),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("backup_drive_encrypted_folder_badge")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Lock,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = if (isBn) {
+                                                "Google Drive ফোল্ডার: ${driveSyncState.folderName} • AES-256 এনক্রিপ্টেড"
+                                            } else {
+                                                "Drive Folder: ${driveSyncState.folderName} • AES-256 Encrypted"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                            color = MaterialTheme.colorScheme.onSurface,
                                             maxLines = 2,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -568,7 +668,14 @@ fun BackupRestoreSubPage(
                                 }
 
                                 Button(
-                                    onClick = onExportJsonClick,
+                                    onClick = {
+                                        if (needsPermission) {
+                                            onGrantDriveAccess()
+                                        } else {
+                                            onSyncDriveNow?.invoke() ?: onExportJsonClick()
+                                        }
+                                    },
+                                    enabled = !isBusy,
                                     shape = RoundedCornerShape(14.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = MaterialTheme.colorScheme.primary,
@@ -579,11 +686,60 @@ fun BackupRestoreSubPage(
                                         .heightIn(min = 48.dp)
                                         .testTag("backup_cloud_backup_now_button")
                                 ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Sync,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = br.cloudBackupNowBtn,
+                                        text = if (needsPermission) {
+                                            if (isBn) "Google Drive অনুমতি দিন ও সিঙ্ক করুন" else "Grant Drive Access & Sync"
+                                        } else {
+                                            br.cloudBackupNowBtn
+                                        },
                                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                                     )
                                 }
+
+                                OutlinedButton(
+                                    onClick = onRestoreFromDrive,
+                                    enabled = !isBusy,
+                                    shape = RoundedCornerShape(14.dp),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (crystal.isDark) Color.White.copy(alpha = 0.24f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.42f)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp)
+                                        .testTag("backup_cloud_restore_now_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.CloudDownload,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = if (isBn) {
+                                            "Google Drive থেকে রিস্টোর করুন"
+                                        } else {
+                                            "Restore Encrypted Backup from Drive"
+                                        },
+                                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+                                    )
+                                }
+
+                                Text(
+                                    text = if (isBn) {
+                                        "নতুন হিসাব যোগ বা পরিবর্তন করলে অনলাইনে থাকা অবস্থায় স্বয়ংক্রিয়ভাবে এনক্রিপ্টেড সিঙ্ক হবে এবং একই Gmail দিয়ে লগইন করলে অটো-রিস্টোর হবে।"
+                                    } else {
+                                        "Every new entry or edit auto-syncs encrypted while online, and signing in with this Gmail on a new or reinstalled phone restores your data automatically."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = crystal.mutedText
+                                )
                             }
                         }
                     }

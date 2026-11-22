@@ -6,10 +6,12 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.model.AppColourTheme
+import com.example.data.model.AppCurrency
 import com.example.data.model.AppThemeMode
 import com.example.data.model.AuthMode
 import com.example.data.model.BuiltInCategoriesCatalog
@@ -30,7 +32,7 @@ data class UserPrefs(
     val isDarkTheme: Boolean = false,
     val themeMode: AppThemeMode = AppThemeMode.LIGHT,
     val colourTheme: AppColourTheme = AppColourTheme.SKY_CYAN,
-    val monthlyBudget: Double = 35000.0,
+    val monthlyBudget: Double = 0.0,
     val userName: String = "",
     val userEmail: String = "",
     val userAvatarUrl: String = "",
@@ -38,6 +40,7 @@ data class UserPrefs(
     val googleCustomAvatarUrl: String = "",
     val authMode: AuthMode = AuthMode.GUEST,
     val hasCompletedWelcome: Boolean = false,
+    val hasRequestedLaunchPermissions: Boolean = false,
     val enableSubcategories: Boolean = true,
     val autoOpenKeypad: Boolean = true,
     val defaultAccountId: Long = 0L,
@@ -57,8 +60,28 @@ data class UserPrefs(
     val categoryOrderTransfer: List<String> = emptyList(),
     val categorySortMode: CategorySortMode = CategorySortMode.DEFAULT,
     val managedCategoryOverrides: List<ManagedCategoryItem> = emptyList(),
-    val deletedCategoryIds: Set<String> = emptySet()
+    val deletedCategoryIds: Set<String> = emptySet(),
+    val mainCurrencyCode: String = "BDT",
+    val secondaryCurrencyCode: String = "",
+    val notifDailyReminderEnabled: Boolean = true,
+    val notifDailyReminderHour: Int = 21,
+    val notifDailyReminderMinute: Int = 0,
+    val notifLoanDayBeforeEnabled: Boolean = true,
+    val notifHighSpendAlertEnabled: Boolean = true,
+    val notifDailySpendLimit: Double = 0.0,
+    val notificationLogJson: String = "",
+    val driveLastSyncedAtMillis: Long = 0L,
+    val drivePendingSync: Boolean = false,
+    val driveLastLocalModifiedAtMillis: Long = 0L,
+    val driveFolderLinked: Boolean = false
 ) {
+    val mainCurrency: AppCurrency
+        get() = AppCurrency.fromCode(mainCurrencyCode)
+
+    val secondaryCurrency: AppCurrency?
+        get() = AppCurrency.fromCodeOrNull(secondaryCurrencyCode)
+            ?.takeIf { it != mainCurrency }
+
     val isLaunchLockActive: Boolean
         get() = appLockEnabled || biometricUnlockEnabled
 
@@ -94,6 +117,7 @@ class UserPreferencesRepository(private val context: Context) {
         val GOOGLE_CUSTOM_AVATAR_URL = stringPreferencesKey("google_custom_avatar_url")
         val AUTH_MODE = stringPreferencesKey("auth_mode")
         val HAS_COMPLETED_WELCOME = booleanPreferencesKey("has_completed_welcome")
+        val HAS_REQUESTED_LAUNCH_PERMISSIONS = booleanPreferencesKey("has_requested_launch_permissions")
         val ENABLE_SUBCATEGORIES = booleanPreferencesKey("enable_subcategories")
         val AUTO_OPEN_KEYPAD = booleanPreferencesKey("auto_open_keypad")
         val DEFAULT_ACCOUNT_ID = longPreferencesKey("default_account_id")
@@ -116,6 +140,19 @@ class UserPreferencesRepository(private val context: Context) {
         val CATEGORY_SORT_MODE = stringPreferencesKey("category_sort_mode")
         val MANAGED_CATEGORIES_JSON = stringPreferencesKey("managed_categories_json")
         val DELETED_CATEGORY_IDS = stringPreferencesKey("deleted_category_ids")
+        val MAIN_CURRENCY_CODE = stringPreferencesKey("main_currency_code")
+        val SECONDARY_CURRENCY_CODE = stringPreferencesKey("secondary_currency_code")
+        val NOTIF_DAILY_ENABLED = booleanPreferencesKey("notif_daily_reminder_enabled")
+        val NOTIF_DAILY_HOUR = intPreferencesKey("notif_daily_reminder_hour")
+        val NOTIF_DAILY_MINUTE = intPreferencesKey("notif_daily_reminder_minute")
+        val NOTIF_LOAN_DAY_BEFORE = booleanPreferencesKey("notif_loan_day_before_enabled")
+        val NOTIF_HIGH_SPEND = booleanPreferencesKey("notif_high_spend_alert_enabled")
+        val NOTIF_DAILY_SPEND_LIMIT = doublePreferencesKey("notif_daily_spend_limit")
+        val NOTIFICATION_LOG_JSON = stringPreferencesKey("notification_log_json")
+        val DRIVE_LAST_SYNCED_AT = longPreferencesKey("drive_last_synced_at_millis")
+        val DRIVE_PENDING_SYNC = booleanPreferencesKey("drive_pending_sync")
+        val DRIVE_LAST_LOCAL_MODIFIED_AT = longPreferencesKey("drive_last_local_modified_at_millis")
+        val DRIVE_FOLDER_LINKED = booleanPreferencesKey("drive_folder_linked")
     }
 
     val userPrefs: Flow<UserPrefs> = context.dataStore.data.map { prefs ->
@@ -164,7 +201,7 @@ class UserPreferencesRepository(private val context: Context) {
             isDarkTheme = legacyDark,
             themeMode = themeMode,
             colourTheme = colourTheme,
-            monthlyBudget = prefs[Keys.MONTHLY_BUDGET] ?: 35000.0,
+            monthlyBudget = prefs[Keys.MONTHLY_BUDGET] ?: 0.0,
             userName = (prefs[Keys.USER_NAME] ?: "").let { stored ->
                 if (authMode == AuthMode.GUEST && stored == "Tahmid Hasan") "" else stored
             },
@@ -174,6 +211,7 @@ class UserPreferencesRepository(private val context: Context) {
             googleCustomAvatarUrl = prefs[Keys.GOOGLE_CUSTOM_AVATAR_URL] ?: "",
             authMode = authMode,
             hasCompletedWelcome = prefs[Keys.HAS_COMPLETED_WELCOME] ?: false,
+            hasRequestedLaunchPermissions = prefs[Keys.HAS_REQUESTED_LAUNCH_PERMISSIONS] ?: false,
             enableSubcategories = prefs[Keys.ENABLE_SUBCATEGORIES] ?: true,
             autoOpenKeypad = prefs[Keys.AUTO_OPEN_KEYPAD] ?: true,
             defaultAccountId = prefs[Keys.DEFAULT_ACCOUNT_ID] ?: 0L,
@@ -210,7 +248,20 @@ class UserPreferencesRepository(private val context: Context) {
                 ?.split(",")
                 ?.filter { it.isNotBlank() }
                 ?.toSet()
-                ?: emptySet()
+                ?: emptySet(),
+            mainCurrencyCode = AppCurrency.fromCode(prefs[Keys.MAIN_CURRENCY_CODE]).code,
+            secondaryCurrencyCode = AppCurrency.fromCodeOrNull(prefs[Keys.SECONDARY_CURRENCY_CODE])?.code ?: "",
+            notifDailyReminderEnabled = prefs[Keys.NOTIF_DAILY_ENABLED] ?: true,
+            notifDailyReminderHour = (prefs[Keys.NOTIF_DAILY_HOUR] ?: 21).coerceIn(0, 23),
+            notifDailyReminderMinute = (prefs[Keys.NOTIF_DAILY_MINUTE] ?: 0).coerceIn(0, 59),
+            notifLoanDayBeforeEnabled = prefs[Keys.NOTIF_LOAN_DAY_BEFORE] ?: true,
+            notifHighSpendAlertEnabled = prefs[Keys.NOTIF_HIGH_SPEND] ?: true,
+            notifDailySpendLimit = (prefs[Keys.NOTIF_DAILY_SPEND_LIMIT] ?: 0.0).coerceAtLeast(0.0),
+            notificationLogJson = prefs[Keys.NOTIFICATION_LOG_JSON] ?: "",
+            driveLastSyncedAtMillis = prefs[Keys.DRIVE_LAST_SYNCED_AT] ?: 0L,
+            drivePendingSync = prefs[Keys.DRIVE_PENDING_SYNC] ?: false,
+            driveLastLocalModifiedAtMillis = prefs[Keys.DRIVE_LAST_LOCAL_MODIFIED_AT] ?: 0L,
+            driveFolderLinked = prefs[Keys.DRIVE_FOLDER_LINKED] ?: false
         )
     }
 
@@ -288,6 +339,12 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun setLaunchPermissionsRequested(requested: Boolean = true) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.HAS_REQUESTED_LAUNCH_PERMISSIONS] = requested
+        }
+    }
+
     suspend fun linkGoogleAccount(
         displayName: String,
         email: String,
@@ -310,6 +367,37 @@ class UserPreferencesRepository(private val context: Context) {
             prefs[Keys.USER_EMAIL] = ""
             prefs[Keys.USER_AVATAR_URL] = ""
             prefs[Keys.GOOGLE_CUSTOM_AVATAR_URL] = ""
+            prefs[Keys.DRIVE_PENDING_SYNC] = false
+            prefs[Keys.DRIVE_FOLDER_LINKED] = false
+            prefs[Keys.DRIVE_LAST_SYNCED_AT] = 0L
+        }
+    }
+
+    suspend fun markDriveSyncPending(modifiedAtMillis: Long = System.currentTimeMillis()) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.DRIVE_PENDING_SYNC] = true
+            prefs[Keys.DRIVE_LAST_LOCAL_MODIFIED_AT] = modifiedAtMillis
+        }
+    }
+
+    suspend fun markDriveSynced(syncedAtMillis: Long, clearPending: Boolean = true) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.DRIVE_LAST_SYNCED_AT] = syncedAtMillis
+            prefs[Keys.DRIVE_FOLDER_LINKED] = true
+            if (clearPending) {
+                prefs[Keys.DRIVE_PENDING_SYNC] = false
+            }
+            if ((prefs[Keys.DRIVE_LAST_LOCAL_MODIFIED_AT] ?: 0L) < syncedAtMillis) {
+                prefs[Keys.DRIVE_LAST_LOCAL_MODIFIED_AT] = syncedAtMillis
+            }
+        }
+    }
+
+    suspend fun clearDriveSyncState() {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.DRIVE_PENDING_SYNC] = false
+            prefs[Keys.DRIVE_FOLDER_LINKED] = false
+            prefs[Keys.DRIVE_LAST_SYNCED_AT] = 0L
         }
     }
 
@@ -329,6 +417,29 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.START_OF_WEEK] = startOfWeek.name }
     }
 
+    suspend fun setMainCurrency(currencyCode: String) {
+        val normalized = AppCurrency.fromCode(currencyCode).code
+        context.dataStore.edit { prefs ->
+            prefs[Keys.MAIN_CURRENCY_CODE] = normalized
+            // If user picked the same currency as secondary, clear secondary so they don't duplicate
+            if (prefs[Keys.SECONDARY_CURRENCY_CODE]?.equals(normalized, ignoreCase = true) == true) {
+                prefs[Keys.SECONDARY_CURRENCY_CODE] = ""
+            }
+        }
+    }
+
+    suspend fun setSecondaryCurrency(currencyCode: String) {
+        val normalized = AppCurrency.fromCodeOrNull(currencyCode)?.code ?: ""
+        context.dataStore.edit { prefs ->
+            val currentMain = AppCurrency.fromCode(prefs[Keys.MAIN_CURRENCY_CODE]).code
+            prefs[Keys.SECONDARY_CURRENCY_CODE] = if (normalized.equals(currentMain, ignoreCase = true)) {
+                ""
+            } else {
+                normalized
+            }
+        }
+    }
+
     suspend fun setHapticFeedback(enabled: Boolean) {
         context.dataStore.edit { it[Keys.HAPTIC_ENABLED] = enabled }
     }
@@ -338,6 +449,47 @@ class UserPreferencesRepository(private val context: Context) {
             prefs[Keys.NOTIF_BUDGET] = budget
             prefs[Keys.NOTIF_CREDIT] = credit
             prefs[Keys.NOTIF_LOAN] = loan
+        }
+    }
+
+    suspend fun setDailyReminderConfig(enabled: Boolean, hour: Int, minute: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.NOTIF_DAILY_ENABLED] = enabled
+            prefs[Keys.NOTIF_DAILY_HOUR] = hour.coerceIn(0, 23)
+            prefs[Keys.NOTIF_DAILY_MINUTE] = minute.coerceIn(0, 59)
+        }
+    }
+
+    suspend fun setLoanDayBeforeEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.NOTIF_LOAN_DAY_BEFORE] = enabled
+        }
+    }
+
+    suspend fun setHighSpendAlertConfig(enabled: Boolean, dailyLimit: Double = 0.0) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.NOTIF_HIGH_SPEND] = enabled
+            if (dailyLimit >= 0.0) {
+                prefs[Keys.NOTIF_DAILY_SPEND_LIMIT] = dailyLimit
+            }
+        }
+    }
+
+    suspend fun appendNotificationLogEntry(item: com.example.notifications.NotificationLogItem) {
+        context.dataStore.edit { prefs ->
+            val current = com.example.notifications.NotificationLogItem
+                .decodeListFromJson(prefs[Keys.NOTIFICATION_LOG_JSON] ?: "")
+                .filterNot { it.id == item.id }
+            val updated = (listOf(item) + current)
+                .take(com.example.notifications.NotificationLogItem.MAX_STORED_ITEMS)
+            prefs[Keys.NOTIFICATION_LOG_JSON] =
+                com.example.notifications.NotificationLogItem.encodeListToJson(updated)
+        }
+    }
+
+    suspend fun clearNotificationLog() {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.NOTIFICATION_LOG_JSON] = ""
         }
     }
 

@@ -39,7 +39,8 @@ data class CrystalColors(
     val warningAmber: Color,
     val warningAmberBg: Color,
     val navBarBackground: Color,
-    val mutedText: Color
+    val mutedText: Color,
+    val numericInk: Color
 )
 
 private fun buildLightCrystalColors(colourTheme: AppColourTheme): CrystalColors {
@@ -62,7 +63,8 @@ private fun buildLightCrystalColors(colourTheme: AppColourTheme): CrystalColors 
         warningAmber = WarningAmber,
         warningAmberBg = WarningAmberSoft,
         navBarBackground = Color.White.copy(alpha = 0.86f),
-        mutedText = SlateOcean
+        mutedText = SlateOcean,
+        numericInk = CharcoalSlateInk
     )
 }
 
@@ -84,7 +86,8 @@ private val DarkCrystalColors = CrystalColors(
     warningAmber = Color(0xFFFBBF24),
     warningAmberBg = Color(0xFF78350F),
     navBarBackground = Color(0xFF0E131E),
-    mutedText = DarkTextOffWhite
+    mutedText = DarkTextOffWhite,
+    numericInk = CrispDarkNumericInk
 )
 
 private val DefaultLightCrystalColors = buildLightCrystalColors(AppColourTheme.SKY_CYAN)

@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
@@ -21,11 +22,13 @@ import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
 import androidx.fragment.app.FragmentActivity
 import androidx.test.core.app.ApplicationProvider
+import android.Manifest
 import com.example.core.AppPermissionKind
 import com.example.core.BiometricAuthFailureReason
 import com.example.core.BiometricAuthHelper
 import com.example.core.BiometricAvailability
 import com.example.core.BiometricCapabilityInfo
+import com.example.core.DevicePermissionsHelper
 import com.example.core.DevicePermissionsSnapshot
 import com.example.core.DeviceTimeContext
 import com.example.core.LocationRegionContext
@@ -47,8 +50,10 @@ import com.example.data.market.MarketToolTab
 import com.example.data.market.MfsChannel
 import com.example.data.model.AccountType
 import com.example.data.model.AppColourTheme
+import com.example.data.model.AppCurrency
 import com.example.data.model.AppThemeMode
 import com.example.data.model.AuthMode
+import com.example.data.model.BankRegion
 import com.example.data.model.CategorySortMode
 import com.example.data.model.CategorySpend
 import com.example.data.model.DailyTrendPoint
@@ -56,8 +61,10 @@ import com.example.data.model.ExpenseCategory
 import com.example.data.model.HomeLayoutStyle
 import com.example.data.model.HomeSectionId
 import com.example.data.model.InsightTimeFilter
+import com.example.data.model.InternationalBankCatalog
 import com.example.data.model.StartOfWeek
 import com.example.data.model.TransactionType
+import com.example.data.repository.FinanceRepository
 import com.example.data.support.CustomerSupportCatalog
 import com.example.data.support.CustomerSupportEngine
 import com.example.data.support.SUPPORT_GREETING_REPLY_BN
@@ -69,12 +76,15 @@ import com.example.data.support.SupportChatMessage
 import com.example.data.support.SupportSender
 import com.example.data.support.SupportUiState
 import com.example.localization.AppLanguage
+import com.example.localization.BdtFormatter
 import com.example.localization.StringsProvider
+import com.example.ui.screens.AddAccountWizardSheet
 import com.example.ui.screens.AppLockScreen
 import com.example.ui.screens.BiometricPromptRequest
 import com.example.ui.screens.CategoriesManagementSubPage
 import com.example.ui.screens.HomeDashboardScreen
 import com.example.ui.screens.InsightsScreen
+import com.example.ui.screens.LiveMarketScreen
 import com.example.ui.screens.ReceiptScanSheet
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.WelcomeScreen
@@ -1952,39 +1962,15 @@ class ExampleRobolectricTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("tts_briefing_button").assertIsDisplayed()
 
-        // 4. Verify Live Market & Rates wrapping chips, aligned search row, and polite quota fallback
-        composeRule.onNodeWithTag("insights_list")
-            .performScrollToNode(hasTestTag("live_market_card"))
-        composeRule.onNodeWithTag("live_market_card").assertIsDisplayed()
-        composeRule.onNodeWithTag("market_quick_chip_0").assertIsDisplayed()
-        composeRule.onNodeWithTag("market_quick_chip_1").assertIsDisplayed()
-        composeRule.onNodeWithTag("market_search_input").assertIsDisplayed()
-        composeRule.onNodeWithTag("market_search_button").assertIsDisplayed()
+        // 4. Verify Live Market & Rates has been completely removed from Insights
+        composeRule.onNodeWithTag("live_market_card").assertDoesNotExist()
+        composeRule.onNodeWithTag("market_interactive_tools_card").assertDoesNotExist()
+        composeRule.onNodeWithTag("market_offline_guide_card").assertDoesNotExist()
 
-        // Tap quick chip -> triggers simulated raw quota error -> UI displays polite Bangla notice + offline reference guide
-        composeRule.onNodeWithTag("market_quick_chip_0").performClick()
-        composeRule.waitForIdle()
-        assertTrue(searchedQuery.isNotBlank())
-        composeRule.onNodeWithTag("insights_list").performTouchInput {
-            swipeUp(startY = bottom * 0.75f, endY = bottom * 0.35f)
-        }
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("market_error_card").assertIsDisplayed()
-        composeRule.onNodeWithTag("market_retry_button").assertIsDisplayed()
-        composeRule.onNodeWithTag("insights_list")
-            .performScrollToNode(hasTestTag("market_offline_guide_card"))
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("market_offline_guide_card").assertIsDisplayed()
-        composeRule.onNodeWithText("অফলাইন রেফারেন্স গাইড").assertIsDisplayed()
-        composeRule.onNodeWithText("exceeded your current quota", substring = true, ignoreCase = true)
-            .assertDoesNotExist()
-        composeRule.onNodeWithText("https://", substring = true, ignoreCase = true)
-            .assertDoesNotExist()
-
-        // Verify Dark mode rendering
+        // Verify Dark mode rendering on Insights analytics & voice summary
         useDark = true
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("market_offline_guide_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("tts_briefing_button").assertIsDisplayed()
     }
 
     @Test
@@ -2450,42 +2436,72 @@ class ExampleRobolectricTest {
         val mfs = MarketCalculators.calculateMfsCashOut(1000.0, MfsChannel.BKASH_PRIYO)
         assertEquals(14.90, mfs.feeBdt, 0.01)
 
-        // 3. Compose UI verification: Smart Offline Notice auto-hides when online + 15-currency switcher & tools
+        // 3. Compose UI verification: Home -> highlighted Live Market directly below Financial Health (options collapsed) -> 5-option Hub -> Single-option Detail View
         var syncState by mutableStateOf(MarketSyncUiState(snapshot = snapshot, isOnline = false, isSyncing = false))
         var useDark by mutableStateOf(false)
+        var showLiveMarket by mutableStateOf(false)
 
         composeRule.setContent {
             AmarHisabTheme(darkTheme = useDark, isBangla = true) {
-                InsightsScreen(
-                    state = MainUiState(
-                        prefs = UserPrefs(language = AppLanguage.BN),
-                        analytics = AnalyticsSnapshot(
-                            totalIncome = 50_000.0,
-                            totalExpense = 20_000.0,
-                            netFlow = 30_000.0,
-                            dailyAverage = 1_000.0,
-                            peakAmount = 3_500.0,
-                            periodLabel = "নভেম্বর ২০২৬"
-                        )
-                    ),
-                    ttsState = TtsUiState.Idle,
-                    searchAiState = SearchAiUiState.Idle,
-                    strings = StringsProvider.bangla,
-                    onSelectFilter = {},
-                    onShiftMonth = {},
-                    onPlayBriefingTts = {},
-                    onStopTts = {},
-                    onSearchMarket = {},
-                    marketSyncState = syncState
-                )
+                if (!showLiveMarket) {
+                    HomeDashboardScreen(
+                        state = MainUiState(
+                            prefs = UserPrefs(language = AppLanguage.BN),
+                            incomeThisMonth = 50_000.0,
+                            spentThisMonth = 20_000.0
+                        ),
+                        strings = StringsProvider.bangla,
+                        onOpenSearch = {},
+                        onOpenNotifications = {},
+                        onOpenSettings = {},
+                        onOpenProfileEdit = {},
+                        onOpenAllAccounts = {},
+                        onOpenTransfer = {},
+                        onOpenReceiptScan = {},
+                        onOpenQuickExpense = {},
+                        onOpenVoiceEntry = {},
+                        onSeeAllActivity = {},
+                        marketSyncState = syncState,
+                        onOpenLiveMarket = { showLiveMarket = true }
+                    )
+                } else {
+                    LiveMarketScreen(
+                        language = AppLanguage.BN,
+                        marketSyncState = syncState,
+                        strings = StringsProvider.bangla,
+                        onRefreshMarketRates = {},
+                        onBack = { showLiveMarket = false }
+                    )
+                }
             }
         }
 
-        composeRule.onNodeWithTag("insights_list")
-            .performScrollToNode(hasTestTag("live_market_card"))
+        // Scroll Home to Financial Health -> verify highlighted Live Market card sits directly below it
+        composeRule.onNodeWithTag("home_dashboard_list")
+            .performScrollToNode(hasTestTag("home_live_market_entry_card"))
         composeRule.waitForIdle()
+        composeRule.onNodeWithTag("home_section_FINANCIAL_HEALTH").assertIsDisplayed()
+        composeRule.onNodeWithTag("home_live_market_entry_card").assertIsDisplayed()
 
-        // Offline mode shows the smart offline notice banner & offline reference guide
+        val healthBounds = composeRule.onNodeWithTag("home_section_FINANCIAL_HEALTH").getUnclippedBoundsInRoot()
+        val liveMarketBounds = composeRule.onNodeWithTag("home_live_market_entry_card").getUnclippedBoundsInRoot()
+        assertTrue(
+            "Expected Live Market card directly below Financial Health (${liveMarketBounds.top} >= ${healthBounds.bottom})",
+            liveMarketBounds.top >= healthBounds.bottom
+        )
+
+        // All 5 inner options & calculators remain completely hidden while on Home
+        composeRule.onNodeWithTag("live_market_options_menu").assertDoesNotExist()
+        composeRule.onNodeWithTag("live_market_option_CURRENCY_RATE").assertDoesNotExist()
+        composeRule.onNodeWithTag("market_currency_converter_panel").assertDoesNotExist()
+
+        // Tap highlighted Home Live Market card -> opens Live Market hub showing ONLY the 5 core options
+        composeRule.onNodeWithTag("home_live_market_entry_card").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("live_market_screen").assertIsDisplayed()
+        composeRule.onNodeWithTag("live_market_options_menu").assertIsDisplayed()
+
+        // Offline mode shows the smart Bangla offline notice banner
         composeRule.onNodeWithTag("market_offline_notice_banner").assertIsDisplayed()
 
         // Switching online immediately hides the offline notice banner
@@ -2493,15 +2509,24 @@ class ExampleRobolectricTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("market_offline_notice_banner").assertDoesNotExist()
 
-        // Scroll to interactive tools card -> default currency converter starts from 1 and lets user pick KWD
-        composeRule.onNodeWithTag("insights_list")
-            .performScrollToNode(hasTestTag("market_interactive_tools_card"))
+        // Verify all 5 options exist and NO calculator is stacked underneath on the menu view
+        composeRule.onNodeWithTag("live_market_option_CURRENCY_RATE").assertIsDisplayed()
+        composeRule.onNodeWithTag("live_market_option_GOLD_PRICE").assertIsDisplayed()
+        composeRule.onNodeWithTag("live_market_option_ESSENTIALS").assertIsDisplayed()
+        composeRule.onNodeWithTag("live_market_option_BANK_FDR_DPS").assertIsDisplayed()
+        composeRule.onNodeWithTag("live_market_option_REMITTANCE_WALLET").assertIsDisplayed()
+        composeRule.onNodeWithTag("market_currency_converter_panel").assertDoesNotExist()
+        composeRule.onNodeWithTag("market_gold_panel").assertDoesNotExist()
+
+        // Option 1: Currency Rate -> opens ONLY Currency Converter (starts at 1, supports KWD & swap)
+        composeRule.onNodeWithTag("live_market_option_CURRENCY_RATE").performClick()
         composeRule.waitForIdle()
+        composeRule.onNodeWithTag("live_market_option_detail").assertIsDisplayed()
+        composeRule.onNodeWithTag("live_market_options_menu").assertDoesNotExist()
         composeRule.onNodeWithTag("market_currency_converter_panel").assertIsDisplayed()
+        composeRule.onNodeWithTag("market_gold_panel").assertDoesNotExist()
         composeRule.onNodeWithTag("currency_swap_button").assertIsDisplayed().performClick()
         composeRule.waitForIdle()
-
-        // Open From Currency Picker -> select KWD
         composeRule.onNodeWithTag("currency_from_selector").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("currency_picker_sheet").assertIsDisplayed()
@@ -2511,36 +2536,56 @@ class ExampleRobolectricTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("currency_conversion_result").assertIsDisplayed()
 
-        // Switch across Gold, Essentials, Bank FDR/DPS, Remittance, and bKash/Nagad tabs cleanly
-        composeRule.onNodeWithTag("market_tool_tab_gold").performScrollTo().performClick()
+        // Back to 5-option menu -> Option 2: Gold Price
+        composeRule.onNodeWithTag("live_market_back_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("live_market_options_menu").assertIsDisplayed()
+        composeRule.onNodeWithTag("live_market_option_GOLD_PRICE").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("market_gold_panel").assertIsDisplayed()
+        composeRule.onNodeWithTag("market_currency_converter_panel").assertDoesNotExist()
         composeRule.onNodeWithTag("gold_unit_gram").performClick()
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag("market_tool_tab_essentials").performScrollTo().performClick()
+        // Back to 5-option menu -> Option 3: Essentials / Groceries
+        composeRule.onNodeWithTag("live_market_all_options_chip").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("live_market_option_ESSENTIALS").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("market_essentials_panel").assertIsDisplayed()
         composeRule.onNodeWithTag("essential_item_rice_miniket").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("essentials_basket_summary").assertIsDisplayed()
 
-        composeRule.onNodeWithTag("market_tool_tab_bank").performScrollTo().performClick()
+        // Back to 5-option menu -> Option 4: Bank FDR & DPS
+        composeRule.onNodeWithTag("live_market_back_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("live_market_option_BANK_FDR_DPS").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("market_bank_panel").assertIsDisplayed()
 
-        composeRule.onNodeWithTag("market_tool_tab_remittance").performScrollTo().performClick()
+        // Back to 5-option menu -> Option 5: Remittance & Wallet Fee (Remittance + bKash/Nagad switcher)
+        composeRule.onNodeWithTag("live_market_back_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("live_market_option_REMITTANCE_WALLET").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("market_remittance_panel").assertIsDisplayed()
-
-        composeRule.onNodeWithTag("market_tool_tab_mfs").performScrollTo().performClick()
+        composeRule.onNodeWithTag("market_mfs_panel").assertDoesNotExist()
+        composeRule.onNodeWithTag("remittance_wallet_subtab_mfs").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("market_mfs_panel").assertIsDisplayed()
+        composeRule.onNodeWithTag("market_remittance_panel").assertDoesNotExist()
 
-        // Verify Dark Mode contrast & layout
+        // Verify Dark Mode contrast & layout inside Live Market detail & back to Home
         useDark = true
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("market_interactive_tools_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("market_mfs_panel").assertIsDisplayed()
+        composeRule.onNodeWithTag("live_market_back_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("live_market_options_menu").assertIsDisplayed()
+        composeRule.onNodeWithTag("live_market_back_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("home_live_market_entry_card").assertIsDisplayed()
     }
 
     @Test
@@ -2583,94 +2628,108 @@ class ExampleRobolectricTest {
         assertEquals("2026-11-18", nyState.deviceTimeContext.dayKey)
         assertTrue(nyState.analytics.periodLabel.contains("18"))
 
-        // 3. Verify SettingsScreen Live Device Clock Banner + Mic/Camera/Google Location Permissions Card (Light & Dark)
-        var requestedKinds by mutableStateOf(listOf<AppPermissionKind>())
-        var permSnapshot by mutableStateOf(
-            DevicePermissionsSnapshot(microphoneGranted = false, cameraGranted = false, locationGranted = false)
+        // 3. Verify launch permission set includes Microphone, Camera, and Google Location
+        assertEquals(
+            setOf(
+                Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.CAMERA,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ),
+            DevicePermissionsHelper.initialLaunchPermissions.toSet()
         )
+        assertTrue(DevicePermissionsHelper.missingLaunchPermissions(app).isNotEmpty())
+
+        // 4. Verify fresh installs start cleanly with zero demo data & 0 balances
+        assertTrue(dhakaState.accounts.isEmpty())
+        assertTrue(dhakaState.transactions.isEmpty())
+        assertTrue(dhakaState.goals.isEmpty())
+        assertTrue(dhakaState.loans.isEmpty())
+        assertEquals(0.0, dhakaState.totalLiquidBalance, 0.001)
+        assertEquals(0.0, dhakaState.dailyAverageSpend, 0.001)
+        assertEquals(0.0, dhakaState.prefs.monthlyBudget, 0.001)
+
+        // 5. Verify SettingsScreen keeps Live Device Clock & Timezone sync while removing Device Permissions UI
         var refreshedClock by mutableStateOf(false)
         var useDark by mutableStateOf(false)
+        var showEmptyHome by mutableStateOf(false)
+        var addAccountClicked by mutableStateOf(false)
 
         composeRule.setContent {
             AmarHisabTheme(darkTheme = useDark, isBangla = true) {
-                SettingsScreen(
-                    prefs = UserPrefs(language = AppLanguage.BN, startOfWeek = StartOfWeek.SATURDAY),
-                    accounts = emptyList(),
-                    backupStatus = null,
-                    strings = StringsProvider.bangla,
-                    onBack = {},
-                    onEditProfileBudget = {},
-                    onLinkGoogleProfile = {},
-                    onUnlinkGoogleAccount = {},
-                    onOpenAccounts = {},
-                    onSetLanguage = {},
-                    onSetDarkTheme = {},
-                    onSetEnableSubcategories = {},
-                    onSetAutoOpenKeypad = {},
-                    onSetDefaultAccount = {},
-                    onSetStartOfWeek = {},
-                    onSetHapticFeedback = {},
-                    onSetNotifications = { _, _, _ -> },
-                    onUpdateDashboardLayout = { _, _, _ -> },
-                    onSetAppLock = { _, _ -> },
-                    onSetBiometricUnlock = {},
-                    onLockNow = {},
-                    onExportJson = {},
-                    onExportCsv = {},
-                    onRestoreJson = {},
-                    onClearBackupStatus = {},
-                    deviceTimeContext = riyadhCtx,
-                    onRefreshSystemTime = { refreshedClock = true },
-                    permissionsOverride = permSnapshot,
-                    locationContextOverride = LocationRegionContext(
-                        label = "Riyadh, Saudi Arabia",
-                        countryCode = "SA",
-                        timeZoneId = "Asia/Riyadh",
-                        isFromGoogleLocation = permSnapshot.locationGranted
-                    ),
-                    onRequestPermissionOverride = { kind ->
-                        requestedKinds = requestedKinds + kind
-                        permSnapshot = when (kind) {
-                            AppPermissionKind.MICROPHONE -> permSnapshot.copy(microphoneGranted = true)
-                            AppPermissionKind.CAMERA -> permSnapshot.copy(cameraGranted = true)
-                            AppPermissionKind.LOCATION -> permSnapshot.copy(locationGranted = true)
-                        }
-                    }
-                )
+                if (!showEmptyHome) {
+                    SettingsScreen(
+                        prefs = UserPrefs(language = AppLanguage.BN, startOfWeek = StartOfWeek.SATURDAY),
+                        accounts = emptyList(),
+                        backupStatus = null,
+                        strings = StringsProvider.bangla,
+                        onBack = {},
+                        onEditProfileBudget = {},
+                        onLinkGoogleProfile = {},
+                        onUnlinkGoogleAccount = {},
+                        onOpenAccounts = {},
+                        onSetLanguage = {},
+                        onSetDarkTheme = {},
+                        onSetEnableSubcategories = {},
+                        onSetAutoOpenKeypad = {},
+                        onSetDefaultAccount = {},
+                        onSetStartOfWeek = {},
+                        onSetHapticFeedback = {},
+                        onSetNotifications = { _, _, _ -> },
+                        onUpdateDashboardLayout = { _, _, _ -> },
+                        onSetAppLock = { _, _ -> },
+                        onSetBiometricUnlock = {},
+                        onLockNow = {},
+                        onExportJson = {},
+                        onExportCsv = {},
+                        onRestoreJson = {},
+                        onClearBackupStatus = {},
+                        deviceTimeContext = riyadhCtx,
+                        onRefreshSystemTime = { refreshedClock = true }
+                    )
+                } else {
+                    HomeDashboardScreen(
+                        state = MainUiState(prefs = UserPrefs(language = AppLanguage.BN)),
+                        strings = StringsProvider.bangla,
+                        onOpenSearch = {},
+                        onOpenNotifications = {},
+                        onOpenSettings = {},
+                        onOpenProfileEdit = {},
+                        onOpenAllAccounts = {},
+                        onOpenAddAccount = { addAccountClicked = true },
+                        onOpenTransfer = {},
+                        onOpenReceiptScan = {},
+                        onOpenQuickExpense = {},
+                        onOpenVoiceEntry = {},
+                        onSeeAllActivity = {}
+                    )
+                }
             }
         }
 
-        // Verify live device clock & timezone card
+        // Verify live device clock & timezone card is present while Device Permissions card is completely removed from Settings
         composeRule.onNodeWithTag("settings_list")
             .performScrollToNode(hasTestTag("settings_date_time_card"))
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("settings_live_timezone_tile").assertIsDisplayed()
         composeRule.onNodeWithTag("settings_refresh_time_button").performClick()
         assertTrue(refreshedClock)
+        composeRule.onNodeWithTag("settings_permissions_card").assertDoesNotExist()
+        composeRule.onNodeWithTag("settings_permission_microphone_allow_btn").assertDoesNotExist()
 
-        // Verify Microphone, Camera, and Google Location permission cards & grant flows
-        composeRule.onNodeWithTag("settings_list")
-            .performScrollToNode(hasTestTag("settings_permissions_card"))
+        // Verify Home blank placeholder card & Add Account prompt when accounts is empty (Light & Dark)
+        showEmptyHome = true
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("settings_permission_microphone_allow_btn").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("home_dashboard_list")
+            .performScrollToNode(hasTestTag("empty_wallet_placeholder_card"))
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("settings_permission_camera_allow_btn").assertIsDisplayed().performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("settings_list").performTouchInput { swipeUp() }
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("settings_permission_location_allow_btn").assertIsDisplayed().performClick()
-        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("empty_wallet_placeholder_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("empty_wallet_add_button").assertIsDisplayed().performClick()
+        assertTrue(addAccountClicked)
 
-        assertEquals(
-            listOf(AppPermissionKind.MICROPHONE, AppPermissionKind.CAMERA, AppPermissionKind.LOCATION),
-            requestedKinds
-        )
-        composeRule.onNodeWithTag("settings_location_context_badge").assertIsDisplayed()
-
-        // Verify Dark mode rendering
         useDark = true
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("settings_permissions_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("empty_wallet_placeholder_card").assertIsDisplayed()
     }
 
     @Test
@@ -2883,4 +2942,834 @@ class ExampleRobolectricTest {
         composeRule.onNodeWithTag("support_offline_banner").assertDoesNotExist()
         composeRule.onNodeWithTag("customer_support_screen").assertIsDisplayed()
     }
+
+    @Test
+    fun `multi-currency picker supports all 10 currencies, international banks across 9 regions, and multi-currency tracking`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. Verify all 10 requested AppCurrency codes & flags
+        val expectedCurrencies = setOf("BDT", "KWD", "SAR", "AED", "QAR", "MYR", "EUR", "GBP", "USD", "INR")
+        assertEquals(expectedCurrencies, AppCurrency.entries.map { it.code }.toSet())
+        AppCurrency.entries.forEach { cur ->
+            assertTrue("Currency ${cur.code} must have a flag", cur.flag.isNotBlank())
+            assertTrue("Currency ${cur.code} must have EN & BN names", cur.nameEn.isNotBlank() && cur.nameBn.isNotBlank())
+            assertTrue("Currency ${cur.code} must format cleanly", BdtFormatter.formatCurrency(1250.5, cur.code, AppLanguage.EN).isNotBlank())
+            assertTrue("Currency ${cur.code} must format cleanly in BN", BdtFormatter.formatCurrency(1250.5, cur.code, AppLanguage.BN).isNotBlank())
+        }
+
+        // 2. Verify all 9 banking regions (Bangladesh + 8 international expat hubs) have banks
+        assertEquals(
+            setOf(
+                BankRegion.BANGLADESH,
+                BankRegion.SAUDI_ARABIA,
+                BankRegion.QATAR,
+                BankRegion.KUWAIT,
+                BankRegion.UAE,
+                BankRegion.MALAYSIA,
+                BankRegion.ITALY,
+                BankRegion.EUROPE,
+                BankRegion.UK
+            ),
+            BankRegion.entries.toSet()
+        )
+        BankRegion.entries.forEach { region ->
+            val banks = InternationalBankCatalog.banksForRegion(region)
+            assertTrue("Region ${region.name} must provide banks", banks.size >= 4)
+        }
+
+        // 3. Verify FinanceRepository stamps account currencyCode & converts cross-currency transfers
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(
+            context,
+            com.example.data.local.AppDatabase::class.java
+        ).allowMainThreadQueries().build()
+        val repo = FinanceRepository(db)
+        runBlocking {
+            val sarAccountId = repo.addAccount(
+                AccountEntity(
+                    name = "Al Rajhi Salary",
+                    type = AccountType.DEBIT_BANK,
+                    balance = 2000.0,
+                    bankOrProvider = "Al Rajhi Bank",
+                    colorArgb = 0xFF006C35L,
+                    currencyCode = "SAR"
+                )
+            )
+            val bdtAccountId = repo.addAccount(
+                AccountEntity(
+                    name = "bKash Family",
+                    type = AccountType.MFS,
+                    balance = 5000.0,
+                    bankOrProvider = "bKash",
+                    colorArgb = 0xFFE2136EL,
+                    currencyCode = "BDT"
+                )
+            )
+            // Expense in SAR stamps currencyCode = "SAR" and deducts SAR balance
+            repo.addTransaction(
+                title = "Riyadh Groceries",
+                amount = 150.0,
+                type = TransactionType.EXPENSE,
+                category = ExpenseCategory.GROCERIES,
+                accountId = sarAccountId
+            )
+            val afterExpenseSar = db.accountDao().getAccountById(sarAccountId)!!
+            assertEquals(1850.0, afterExpenseSar.balance, 0.01)
+            val txs = db.transactionDao().getAllTransactionsOnce()
+            assertEquals("SAR", txs.first().currencyCode)
+
+            // Cross-currency transfer 100 SAR -> BDT at rate 32.4 credits 3,240 BDT
+            val transferred = repo.transferFunds(
+                fromAccountId = sarAccountId,
+                toAccountId = bdtAccountId,
+                amount = 100.0,
+                note = "Family Remittance",
+                conversionRate = 32.4
+            )
+            assertTrue(transferred)
+            assertEquals(1750.0, db.accountDao().getAccountById(sarAccountId)!!.balance, 0.01)
+            assertEquals(8240.0, db.accountDao().getAccountById(bdtAccountId)!!.balance, 0.01)
+        }
+        db.close()
+
+        // 4. UI verification: Settings Main & Second Currency pickers + International Card Wizard
+        var prefs by mutableStateOf(UserPrefs(language = AppLanguage.EN, mainCurrencyCode = "BDT", secondaryCurrencyCode = ""))
+        var showWizard by mutableStateOf(false)
+        var savedAccount by mutableStateOf<AccountEntity?>(null)
+        var useDark by mutableStateOf(false)
+
+        composeRule.setContent {
+            AmarHisabTheme(darkTheme = useDark, isBangla = false) {
+                if (!showWizard) {
+                    SettingsScreen(
+                        prefs = prefs,
+                        accounts = emptyList(),
+                        backupStatus = null,
+                        strings = StringsProvider.english,
+                        onBack = {},
+                        onEditProfileBudget = {},
+                        onLinkGoogleProfile = {},
+                        onUnlinkGoogleAccount = {},
+                        onOpenAccounts = {},
+                        onSetLanguage = {},
+                        onSetDarkTheme = {},
+                        onSetEnableSubcategories = {},
+                        onSetAutoOpenKeypad = {},
+                        onSetDefaultAccount = {},
+                        onSetStartOfWeek = {},
+                        onSetHapticFeedback = {},
+                        onSetNotifications = { _, _, _ -> },
+                        onUpdateDashboardLayout = { _, _, _ -> },
+                        onSetAppLock = { _, _ -> },
+                        onSetBiometricUnlock = {},
+                        onLockNow = {},
+                        onExportJson = {},
+                        onExportCsv = {},
+                        onRestoreJson = {},
+                        onClearBackupStatus = {},
+                        onSetMainCurrency = { code -> prefs = prefs.copy(mainCurrencyCode = code) },
+                        onSetSecondaryCurrency = { code -> prefs = prefs.copy(secondaryCurrencyCode = code) }
+                    )
+                } else {
+                    AddAccountWizardSheet(
+                        language = AppLanguage.EN,
+                        strings = StringsProvider.english,
+                        defaultCurrencyCode = prefs.mainCurrencyCode,
+                        secondaryCurrencyCode = prefs.secondaryCurrencyCode,
+                        onDismiss = { showWizard = false },
+                        onSaveAccount = { savedAccount = it }
+                    )
+                }
+            }
+        }
+
+        // Scroll to Main & Second Currency tiles in Settings and select SAR as Second Currency
+        composeRule.onNodeWithTag("settings_list")
+            .performScrollToNode(hasTestTag("settings_secondary_currency_tile"))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_main_currency_tile").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_secondary_currency_tile").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        // Currency picker opens with search and selects SAR (Saudi Arabia)
+        composeRule.onNodeWithTag("app_currency_picker_sheet").assertIsDisplayed()
+        composeRule.onNodeWithTag("app_currency_picker_search").performTextReplacement("Saudi")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("app_currency_option_SAR").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        assertEquals("SAR", prefs.secondaryCurrencyCode)
+
+        // Open AddAccountWizardSheet in Dark mode, choose Kuwait -> NBK -> auto-sets KWD and saves card
+        useDark = true
+        showWizard = true
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("wizard_region_KUWAIT")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("wizard_bank_kw_nbk")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.onNodeWithTag("wizard_balance_input").performScrollTo().performTextReplacement("450")
+        composeRule.onNodeWithTag("wizard_save_account_button")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        assertTrue("Expected international card to be saved", savedAccount != null)
+        assertEquals("KWD", savedAccount!!.currencyCode)
+        assertEquals(450.0, savedAccount!!.balance, 0.01)
+        assertTrue(savedAccount!!.bankOrProvider.contains("Kuwait", ignoreCase = true))
+    }
+
+    @Test
+    fun `home total balance displays true per-currency totals with clean flag-free KD and BDT badges`() {
+        val sampleAccounts = listOf(
+            AccountEntity(
+                id = 1L,
+                name = "City Bank",
+                type = AccountType.DEBIT_BANK,
+                balance = 200000.0,
+                bankOrProvider = "City Bank",
+                colorArgb = 0xFFDC2626L,
+                currencyCode = "BDT"
+            ),
+            AccountEntity(
+                id = 2L,
+                name = "bKash",
+                type = AccountType.MFS,
+                balance = 50000.0,
+                bankOrProvider = "bKash",
+                colorArgb = 0xFFE2136EL,
+                currencyCode = "BDT"
+            ),
+            AccountEntity(
+                id = 3L,
+                name = "KFH Account",
+                type = AccountType.DEBIT_BANK,
+                balance = 58.50,
+                bankOrProvider = "Kuwait Finance House",
+                colorArgb = 0xFF059669L,
+                currencyCode = "KWD"
+            )
+        )
+        var uiState by mutableStateOf(
+            MainUiState(
+                isPrefsLoaded = true,
+                prefs = UserPrefs(
+                    language = AppLanguage.BN,
+                    mainCurrencyCode = "BDT",
+                    secondaryCurrencyCode = "KWD",
+                    homeLayoutStyle = HomeLayoutStyle.BALANCE_CARD
+                ),
+                accounts = sampleAccounts,
+                totalLiquidBalance = 273107.50, // intentionally different converted figure to verify BDT uses true BDT sum
+                liquidBalancesByCurrency = mapOf("BDT" to 250000.0, "KWD" to 58.50),
+                netWorth = com.example.data.model.NetWorthSummary(273107.50, 0.0)
+            )
+        )
+        var darkTheme by mutableStateOf(false)
+
+        composeRule.setContent {
+            AmarHisabTheme(darkTheme = darkTheme, isBangla = true) {
+                HomeDashboardScreen(
+                    state = uiState,
+                    strings = StringsProvider.bangla,
+                    onOpenSearch = {},
+                    onOpenNotifications = {},
+                    onOpenSettings = {},
+                    onOpenProfileEdit = {},
+                    onOpenAllAccounts = {},
+                    onOpenTransfer = {},
+                    onOpenReceiptScan = {},
+                    onOpenQuickExpense = {},
+                    onOpenVoiceEntry = {},
+                    onSeeAllActivity = {}
+                )
+            }
+        }
+
+        // Verify true BDT total (৳ ২,৫০,০০০) and true KD total (KD + ৫৮.৫০) without flag or ≈ conversion
+        val insideHeroCard = androidx.compose.ui.test.hasAnyAncestor(hasTestTag("hero_balance_card"))
+        composeRule.onNodeWithTag("hero_balance_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("hero_balance_currency_BDT", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("hero_balance_currency_KWD", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNode(insideHeroCard and hasText("BDT"), useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNode(insideHeroCard and hasText("৳ ২,৫০,০০০"), useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNode(insideHeroCard and hasText("KD"), useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNode(insideHeroCard and hasText("৫৮.৫০"), useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNode(insideHeroCard and hasText("≈", substring = true), useUnmergedTree = true).assertDoesNotExist()
+        composeRule.onNode(insideHeroCard and hasText("🇰🇼", substring = true), useUnmergedTree = true).assertDoesNotExist()
+
+        // Verify clean zero-state in Dark mode when accounts are empty
+        darkTheme = true
+        uiState = uiState.copy(
+            accounts = emptyList(),
+            totalLiquidBalance = 0.0,
+            liquidBalancesByCurrency = emptyMap(),
+            netWorth = com.example.data.model.NetWorthSummary(0.0, 0.0)
+        )
+        composeRule.waitForIdle()
+        val insideBdtRow = androidx.compose.ui.test.hasAnyAncestor(hasTestTag("hero_balance_currency_BDT"))
+        val insideKwdRow = androidx.compose.ui.test.hasAnyAncestor(hasTestTag("hero_balance_currency_KWD"))
+        composeRule.onNodeWithTag("hero_balance_currency_BDT", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("hero_balance_currency_KWD", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNode(insideBdtRow and hasText("৳ ০"), useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNode(insideKwdRow and hasText("০"), useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNode(insideHeroCard and hasText("🇰🇼", substring = true), useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `receipt scanner handles App Check error with clear Bangla guidance and one-tap manual entry fallback`() {
+        // 1. Verify error sanitization for "Firebase App Check token is invalid." and offline/timeout errors
+        val appCheckErr = InsightsSummaryHelper.sanitizeReceiptScanError(
+            rawMessage = "Firebase App Check token is invalid.",
+            language = AppLanguage.BN
+        )
+        assertEquals(com.example.data.ai.ReceiptScanErrorCategory.APP_CHECK_INVALID, appCheckErr.category)
+        assertFalse(appCheckErr.message.contains("Firebase App Check token is invalid", ignoreCase = true))
+        assertTrue(appCheckErr.guidance.contains("ম্যানুয়ালি"))
+
+        val offlineErr = InsightsSummaryHelper.sanitizeReceiptScanError(
+            rawMessage = "Unable to resolve host",
+            language = AppLanguage.BN
+        )
+        assertEquals(com.example.data.ai.ReceiptScanErrorCategory.OFFLINE, offlineErr.category)
+
+        // 2. Verify ReceiptScanSheet error recovery UI and one-tap "ম্যানুয়ালি হিসাব যোগ করুন" workflow
+        val wallets = listOf(
+            AccountEntity(
+                id = 1L,
+                name = "City Bank",
+                type = AccountType.DEBIT_BANK,
+                balance = 100000.0,
+                bankOrProvider = "City Bank",
+                colorArgb = 0xFFDC2626L,
+                currencyCode = "BDT"
+            ),
+            AccountEntity(
+                id = 2L,
+                name = "KFH Account",
+                type = AccountType.DEBIT_BANK,
+                balance = 120.0,
+                bankOrProvider = "Kuwait Finance House",
+                colorArgb = 0xFF059669L,
+                currencyCode = "KWD"
+            )
+        )
+        var savedTitle = ""
+        var savedAmount = 0.0
+        var savedAccountId = 0L
+        var savedNote = ""
+        var savedTimestamp = 0L
+
+        composeRule.setContent {
+            AmarHisabTheme(darkTheme = false, isBangla = true) {
+                ReceiptScanSheet(
+                    accounts = wallets,
+                    receiptState = ReceiptScanUiState.Error(
+                        message = appCheckErr.message,
+                        guidance = appCheckErr.guidance,
+                        category = appCheckErr.category
+                    ),
+                    language = AppLanguage.BN,
+                    strings = StringsProvider.bangla,
+                    defaultCurrencyCode = "BDT",
+                    onPickImageUri = {},
+                    onSaveExpense = { _, _, _, _, _ -> },
+                    onSaveExpenseWithDate = { title, amount, _, accId, note, ts ->
+                        savedTitle = title
+                        savedAmount = amount
+                        savedAccountId = accId
+                        savedNote = note
+                        savedTimestamp = ts
+                    },
+                    onDismiss = {}
+                )
+            }
+        }
+
+        // Error card shows clear Bangla explanation and one-tap "ম্যানুয়ালি হিসাব যোগ করুন" button
+        composeRule.onNodeWithTag("receipt_error_card").assertIsDisplayed()
+        composeRule.onNodeWithText(appCheckErr.message).assertIsDisplayed()
+        composeRule.onNodeWithTag("receipt_manual_entry_button")
+            .assertIsDisplayed()
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        // Inline manual entry form opens with wallet/currency, amount, merchant, note, and date controls
+        composeRule.onNodeWithTag("receipt_wallet_chip_2")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.onNodeWithTag("receipt_amount_input").performTextReplacement("58.50")
+        composeRule.onNodeWithTag("receipt_merchant_input").performTextReplacement("Lulu Hypermarket")
+        composeRule.onNodeWithTag("receipt_note_input").performTextReplacement("Weekly groceries")
+        composeRule.onNodeWithTag("receipt_date_yesterday")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.onNodeWithTag("receipt_save_expense_button")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        assertEquals("Lulu Hypermarket", savedTitle)
+        assertEquals(58.50, savedAmount, 0.001)
+        assertEquals(2L, savedAccountId)
+        assertEquals("Weekly groceries", savedNote)
+        assertTrue("Expected valid timestamp", savedTimestamp > 0L)
+    }
+
+    @Test
+    fun receipt_voucher_matcher_classifies_direction_auto_matches_cards_and_cleans_temp_files() {
+        // 1. Money In / Income (+) classification (English + Bangla)
+        listOf(
+            "Cash In",
+            "Received Money",
+            "Add Money",
+            "Remittance",
+            "Deposit",
+            "Credit",
+            "ক্যাশ ইন",
+            "জমা"
+        ).forEach { kw ->
+            assertEquals(
+                "Expected INCOME for keyword '$kw'",
+                TransactionType.INCOME,
+                com.example.data.ai.ReceiptVoucherMatcher.classifyTransactionDirection(detectedKeyword = kw)
+            )
+        }
+
+        // 2. Money Out / Expense (-) classification (English + Bangla) + Credit Card POS guard
+        listOf(
+            "Send Money",
+            "Payment",
+            "Cash Out",
+            "Pay Bill",
+            "Mobile Recharge",
+            "Transfer",
+            "SALE",
+            "Debit",
+            "Credit Card SALE",
+            "সেন্ড মানি",
+            "পেমেন্ট",
+            "ক্যাশ আউট"
+        ).forEach { kw ->
+            assertEquals(
+                "Expected EXPENSE for keyword '$kw'",
+                TransactionType.EXPENSE,
+                com.example.data.ai.ReceiptVoucherMatcher.classifyTransactionDirection(detectedKeyword = kw)
+            )
+        }
+
+        // 3. Auto-matching across bKash, Nagad, Rocket, Bank last-4, and KD currency
+        val accounts = listOf(
+            AccountEntity(
+                id = 10L,
+                name = "bKash Personal",
+                type = AccountType.MFS,
+                balance = 4500.0,
+                bankOrProvider = "bKash",
+                accountNumberLast4 = "1947",
+                colorArgb = 0xFFE2136EL,
+                currencyCode = "BDT"
+            ),
+            AccountEntity(
+                id = 20L,
+                name = "নগদ ওয়ালেট",
+                type = AccountType.MFS,
+                balance = 2000.0,
+                bankOrProvider = "Nagad",
+                accountNumberLast4 = "4411",
+                colorArgb = 0xFFEA580CL,
+                currencyCode = "BDT"
+            ),
+            AccountEntity(
+                id = 30L,
+                name = "Rocket DBBL",
+                type = AccountType.MFS,
+                balance = 1200.0,
+                bankOrProvider = "Rocket",
+                accountNumberLast4 = "8899",
+                colorArgb = 0xFF7C3AEDL,
+                currencyCode = "BDT"
+            ),
+            AccountEntity(
+                id = 40L,
+                name = "City Bank Visa",
+                type = AccountType.DEBIT_BANK,
+                balance = 50000.0,
+                bankOrProvider = "City Bank",
+                accountNumberLast4 = "7721",
+                colorArgb = 0xFFDC2626L,
+                currencyCode = "BDT"
+            ),
+            AccountEntity(
+                id = 50L,
+                name = "KFH Kuwait",
+                type = AccountType.DEBIT_BANK,
+                balance = 140.5,
+                bankOrProvider = "Kuwait Finance House (KFH)",
+                accountNumberLast4 = "3308",
+                colorArgb = 0xFF007A3DL,
+                currencyCode = "KWD"
+            )
+        )
+
+        val bkashMatch = com.example.data.ai.ReceiptVoucherMatcher.matchAccount(accounts, providerHint = "বিকাশ", currencyCode = "BDT")
+        assertTrue(bkashMatch.isAutoMatched)
+        assertEquals(10L, bkashMatch.account?.id)
+
+        val nagadMatch = com.example.data.ai.ReceiptVoucherMatcher.matchAccount(accounts, providerHint = "Nagad", currencyCode = "BDT")
+        assertTrue(nagadMatch.isAutoMatched)
+        assertEquals(20L, nagadMatch.account?.id)
+
+        val rocketMatch = com.example.data.ai.ReceiptVoucherMatcher.matchAccount(accounts, providerHint = "রকেট", currencyCode = "BDT")
+        assertTrue(rocketMatch.isAutoMatched)
+        assertEquals(30L, rocketMatch.account?.id)
+
+        val last4Match = com.example.data.ai.ReceiptVoucherMatcher.matchAccount(accounts, providerHint = "", accountLast4Hint = "**** 7721", currencyCode = "BDT")
+        assertTrue(last4Match.isAutoMatched)
+        assertEquals(40L, last4Match.account?.id)
+
+        val kwdCurrencyMatch = com.example.data.ai.ReceiptVoucherMatcher.matchAccount(accounts, providerHint = "POS Terminal", currencyCode = "KD")
+        assertTrue(kwdCurrencyMatch.isAutoMatched)
+        assertEquals(50L, kwdCurrencyMatch.account?.id)
+
+        // 4. Temporary camera image cleanup removes cacheDir/receipts files completely
+        val appContext = org.robolectric.RuntimeEnvironment.getApplication()
+        val cacheDir = com.example.data.ai.TempReceiptImageCleaner.receiptCacheDir(appContext)
+        val tempFile = java.io.File(cacheDir, "receipt_test_temp.jpg").apply { writeText("temp-bytes") }
+        assertTrue("Temp receipt capture file should exist before cleanup", tempFile.exists())
+        com.example.data.ai.TempReceiptImageCleaner.cleanupAllTempReceipts(appContext)
+        assertFalse("Temp receipt capture file must be deleted on cleanup", tempFile.exists())
+    }
+
+    @Test
+    fun receipt_scanner_confirmation_preview_auto_matches_card_and_updates_balance_for_income_and_expense() = runBlocking {
+        val accounts = listOf(
+            AccountEntity(
+                id = 1L,
+                name = "City Bank",
+                type = AccountType.DEBIT_BANK,
+                balance = 25000.0,
+                bankOrProvider = "City Bank",
+                colorArgb = 0xFFDC2626L,
+                currencyCode = "BDT"
+            ),
+            AccountEntity(
+                id = 2L,
+                name = "bKash Personal",
+                type = AccountType.MFS,
+                balance = 3000.0,
+                bankOrProvider = "bKash",
+                accountNumberLast4 = "1947",
+                colorArgb = 0xFFE2136EL,
+                currencyCode = "BDT"
+            )
+        )
+
+        // Create a temporary camera file to confirm ReceiptScanSheet cleans it up on save
+        val appContext = org.robolectric.RuntimeEnvironment.getApplication()
+        val staleTempFile = java.io.File(
+            com.example.data.ai.TempReceiptImageCleaner.receiptCacheDir(appContext),
+            "receipt_stale_capture.jpg"
+        ).apply { writeText("img") }
+
+        val cashInScan = com.example.data.model.ReceiptScanResult(
+            merchantName = "bKash Agent Uttara",
+            amountBdt = 5000.0,
+            category = ExpenseCategory.SALARY_INCOME,
+            dateLabel = "Today",
+            itemsSummary = "Cash In from Agent",
+            transactionType = TransactionType.INCOME,
+            feeAmount = 0.0,
+            currencyCode = "BDT",
+            providerHint = "bKash",
+            accountLast4Hint = "1947",
+            referenceId = "BKS987654",
+            detectedDirectionKeyword = "Cash In"
+        )
+
+        var capturedType: TransactionType? = null
+        var capturedAmount = 0.0
+        var capturedAccountId = 0L
+        var capturedNote = ""
+        var dismissed = false
+
+        composeRule.setContent {
+            AmarHisabTheme(darkTheme = false, isBangla = true) {
+                ReceiptScanSheet(
+                    accounts = accounts,
+                    receiptState = ReceiptScanUiState.Success(cashInScan),
+                    language = AppLanguage.BN,
+                    strings = StringsProvider.bangla,
+                    defaultCurrencyCode = "BDT",
+                    onPickImageUri = {},
+                    onSaveExpense = { _, _, _, _, _ -> },
+                    onSaveVoucherTransaction = { _, amount, type, _, accId, note, _ ->
+                        capturedAmount = amount
+                        capturedType = type
+                        capturedAccountId = accId
+                        capturedNote = note
+                    },
+                    onDismiss = { dismissed = true }
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // Confirmation preview card, auto-matched bKash badge, projected balance, and temp storage notice render cleanly
+        composeRule.onNodeWithTag("receipt_confirmation_preview").assertIsDisplayed()
+        composeRule.onNodeWithTag("receipt_matched_account_badge").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("receipt_projected_balance").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("receipt_temp_storage_notice").assertExists()
+
+        // Tap Save -> confirms INCOME (+5000) to auto-matched bKash account (id=2) and cleans temp files
+        composeRule.onNodeWithTag("receipt_save_expense_button")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        assertEquals(TransactionType.INCOME, capturedType)
+        assertEquals(5000.0, capturedAmount, 0.001)
+        assertEquals(2L, capturedAccountId)
+        assertTrue("Note should preserve detected TrxID", capturedNote.contains("BKS987654"))
+        assertTrue("Sheet should dismiss cleanly after save", dismissed)
+        assertFalse("Temp camera cache file must be cleared automatically", staleTempFile.exists())
+
+        // Verify FinanceRepository updates card balance accurately (+ for Income, - for Expense with Fee)
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(
+            appContext,
+            com.example.data.local.AppDatabase::class.java
+        )
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val repo = com.example.data.repository.FinanceRepository(db)
+            val bkashId = repo.addAccount(accounts[1].copy(id = 0L))
+            // 1. Apply scanned Cash In (+5000) -> 3000 + 5000 = 8000
+            repo.addTransaction(
+                title = "bKash Agent Uttara",
+                amount = 5000.0,
+                type = TransactionType.INCOME,
+                category = ExpenseCategory.SALARY_INCOME,
+                accountId = bkashId,
+                note = "TrxID: BKS987654"
+            )
+            assertEquals(8000.0, db.accountDao().getAccountById(bkashId)!!.balance, 0.001)
+
+            // 2. Apply scanned Cash Out (-1000 - 18.50 fee = -1018.50) -> 8000 - 1018.50 = 6981.50
+            repo.addTransaction(
+                title = "bKash Cash Out",
+                amount = 1018.50,
+                type = TransactionType.EXPENSE,
+                category = ExpenseCategory.OTHER,
+                accountId = bkashId,
+                note = "Fee: ৳ 18.50"
+            )
+            assertEquals(6981.50, db.accountDao().getAccountById(bkashId)!!.balance, 0.001)
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun multi_currency_dues_and_loans_group_by_currency_support_picker_edit_and_settlement() = runBlocking {
+        // 1. Verify smart default currency & clean zero-state per-currency summary
+        assertEquals(
+            "KWD",
+            com.example.ui.screens.LoanCurrencyAggregator.defaultLoanCurrencyCode(
+                mainCurrencyCode = "BDT",
+                secondaryCurrencyCode = "KWD"
+            )
+        )
+        assertEquals(
+            "BDT",
+            com.example.ui.screens.LoanCurrencyAggregator.defaultLoanCurrencyCode(
+                mainCurrencyCode = "BDT",
+                secondaryCurrencyCode = ""
+            )
+        )
+
+        val zeroSummaries = com.example.ui.screens.LoanCurrencyAggregator.computeSummaries(
+            loans = emptyList(),
+            mainCurrencyCode = "BDT",
+            secondaryCurrencyCode = "KWD"
+        )
+        assertEquals(listOf("KWD", "BDT"), zeroSummaries.map { it.currency.code })
+        zeroSummaries.forEach { s ->
+            assertEquals(0.0, s.totalPayableRemaining, 0.001)
+            assertEquals(0.0, s.totalReceivableRemaining, 0.001)
+        }
+
+        // 2. Verify strictly separate per-currency totals (no mixing KD and BDT!)
+        val sampleLoans = listOf(
+            com.example.data.local.LoanEntity(
+                id = 1L,
+                personName = "Faisal Kuwait",
+                loanType = com.example.data.model.LoanType.I_OWE,
+                totalAmount = 40.50,
+                paidAmount = 10.50,
+                currencyCode = "KWD"
+            ),
+            com.example.data.local.LoanEntity(
+                id = 2L,
+                personName = "Rahim Dhaka",
+                loanType = com.example.data.model.LoanType.I_OWE,
+                totalAmount = 12000.0,
+                paidAmount = 2000.0,
+                currencyCode = "BDT"
+            ),
+            com.example.data.local.LoanEntity(
+                id = 3L,
+                personName = "Kamal Kuwait",
+                loanType = com.example.data.model.LoanType.OWED_TO_ME,
+                totalAmount = 75.0,
+                paidAmount = 0.0,
+                currencyCode = "KWD"
+            )
+        )
+        val multiSummaries = com.example.ui.screens.LoanCurrencyAggregator.computeSummaries(
+            loans = sampleLoans,
+            mainCurrencyCode = "BDT",
+            secondaryCurrencyCode = "KWD"
+        )
+        val kdSummary = multiSummaries.first { it.currency == com.example.data.model.AppCurrency.KWD }
+        val bdtSummary = multiSummaries.first { it.currency == com.example.data.model.AppCurrency.BDT }
+        assertEquals(30.0, kdSummary.totalPayableRemaining, 0.001)
+        assertEquals(75.0, kdSummary.totalReceivableRemaining, 0.001)
+        assertEquals(10000.0, bdtSummary.totalPayableRemaining, 0.001)
+        assertEquals(0.0, bdtSummary.totalReceivableRemaining, 0.001)
+
+        // 3. Verify Room persistence, edit, partial & full settlement across KWD and SAR
+        val appContext = org.robolectric.RuntimeEnvironment.getApplication()
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(
+            appContext,
+            com.example.data.local.AppDatabase::class.java
+        )
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val repo = com.example.data.repository.FinanceRepository(db)
+            val kfhId = repo.addAccount(
+                AccountEntity(
+                    name = "KFH Kuwait",
+                    type = AccountType.DEBIT_BANK,
+                    balance = 100.0,
+                    bankOrProvider = "KFH",
+                    colorArgb = 0xFF007A3DL,
+                    currencyCode = "KWD"
+                )
+            )
+
+            repo.addLoan(
+                personName = "Tariq Kuwait",
+                loanType = com.example.data.model.LoanType.I_OWE,
+                totalAmount = 40.50,
+                note = "Room rent share",
+                dueDateMillis = null,
+                currencyCode = "KWD"
+            )
+            val inserted = db.loanDao().getAllLoansOnce().single()
+            assertEquals("KWD", inserted.currencyCode)
+            assertEquals(40.50, inserted.remainingAmount, 0.001)
+
+            // Edit loan total & note cleanly
+            repo.updateLoan(inserted.copy(totalAmount = 45.50, note = "Updated rent"))
+            val edited = db.loanDao().getAllLoansOnce().single()
+            assertEquals(45.50, edited.totalAmount, 0.001)
+            assertEquals("KWD", edited.currencyCode)
+
+            // Partial settlement from matching KWD wallet: 15.50 -> remaining 30.00, wallet 84.50
+            repo.settleLoan(edited, settlementAmount = 15.50, walletId = kfhId)
+            val afterPartial = db.loanDao().getAllLoansOnce().single()
+            assertEquals(30.0, afterPartial.remainingAmount, 0.001)
+            assertFalse(afterPartial.isSettled)
+            assertEquals(84.50, db.accountDao().getAccountById(kfhId)!!.balance, 0.001)
+
+            // Full settlement of remaining 30.00 without wallet -> settled cleanly
+            repo.settleLoan(afterPartial, settlementAmount = 30.0, walletId = null)
+            val afterFull = db.loanDao().getAllLoansOnce().single()
+            assertTrue(afterFull.isSettled)
+            assertEquals(0.0, afterFull.remainingAmount, 0.001)
+            assertEquals(84.50, db.accountDao().getAccountById(kfhId)!!.balance, 0.001)
+        } finally {
+            db.close()
+        }
+
+        // 4. Verify UI renders separate KD and BDT summaries & supports adding a SAR due via currency picker
+        var addedPerson = ""
+        var addedAmount = 0.0
+        var addedCurrency = ""
+        val uiState = MainUiState(
+            prefs = UserPrefs(
+                language = AppLanguage.BN,
+                mainCurrencyCode = "BDT",
+                secondaryCurrencyCode = "KWD"
+            ),
+            loans = sampleLoans
+        )
+
+        composeRule.setContent {
+            AmarHisabTheme(darkTheme = false, isBangla = true) {
+                com.example.ui.screens.PlanScreen(
+                    state = uiState,
+                    strings = StringsProvider.bangla,
+                    onOpenAllAccounts = {},
+                    onOpenAddWizard = {},
+                    onEditBudget = {},
+                    onUpsertCategoryBudget = { _, _ -> },
+                    onAddGoal = { _, _, _, _ -> },
+                    onFundGoalFromWallet = { _, _, _ -> },
+                    onDeleteGoal = {},
+                    onAddLoan = { _, _, _, _, _ -> },
+                    onAddLoanWithCurrency = { person, _, amt, _, _, curCode ->
+                        addedPerson = person
+                        addedAmount = amt
+                        addedCurrency = curCode
+                    },
+                    onUpdateLoan = {},
+                    onSettleLoan = { _, _, _ -> },
+                    onSettleLoanOptionalWallet = { _, _, _ -> },
+                    onDeleteLoan = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // Switch to Loans tab
+        composeRule.onNodeWithTag("plan_tab_loans")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        // Scroll LazyColumn so Loans summary card is composed & visible in Robolectric viewport
+        composeRule.onNodeWithTag("plan_lazy_column")
+            .performScrollToNode(hasTestTag("loans_currency_summary_card"))
+        composeRule.waitForIdle()
+
+        // Per-currency summary shows separate KWD (KD) and BDT rows
+        composeRule.onNodeWithTag("loans_currency_summary_card").assertExists()
+        composeRule.onNodeWithTag("loans_summary_currency_KWD").assertExists()
+        composeRule.onNodeWithTag("loans_summary_currency_BDT").assertExists()
+
+        // Open Add Loan dialog, pick SAR via full currency picker, enter amount & save
+        composeRule.onNodeWithTag("plan_lazy_column")
+            .performScrollToNode(hasTestTag("add_loan_button"))
+        composeRule.onNodeWithTag("add_loan_button")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("loan_currency_picker_button")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("app_currency_option_SAR")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("loan_person_input").performTextReplacement("Saeed Riyadh")
+        composeRule.onNodeWithTag("loan_amount_input").performTextReplacement("250.50")
+        composeRule.onNodeWithTag("loan_save_button")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        assertEquals("Saeed Riyadh", addedPerson)
+        assertEquals(250.50, addedAmount, 0.001)
+        assertEquals("SAR", addedCurrency)
+    }
 }
+
+
+

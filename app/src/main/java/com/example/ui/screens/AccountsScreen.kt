@@ -4,7 +4,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,10 +21,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material3.Button
@@ -34,13 +38,18 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.data.local.AccountEntity
+import com.example.data.market.MarketSnapshot
+import com.example.data.model.AccountType
+import com.example.data.model.AppCurrency
 import com.example.data.model.NetWorthSummary
 import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
@@ -58,10 +67,26 @@ fun AccountsScreen(
     strings: AppStrings,
     onBack: () -> Unit,
     onOpenAddWizard: () -> Unit,
-    onDeleteAccount: (Long) -> Unit
+    onDeleteAccount: (Long) -> Unit,
+    mainCurrencyCode: String = "BDT",
+    secondaryCurrencyCode: String = "",
+    marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
 ) {
     BackHandler(onBack = onBack)
     val crystal = LocalCrystalColors.current
+
+    val currencyBreakdowns = remember(accounts) {
+        accounts
+            .groupBy { AppCurrency.fromCode(it.currencyCode) }
+            .entries
+            .map { (cur, list) ->
+                val netInCur = list.sumOf { acc ->
+                    if (acc.type == AccountType.CREDIT_CARD) -acc.balance else acc.balance
+                }
+                cur to netInCur
+            }
+            .sortedByDescending { it.first.code == mainCurrencyCode }
+    }
 
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -122,13 +147,85 @@ fun AccountsScreen(
                 }
             }
 
-            // Net Worth Header with Green (Assets) vs. Red (Liabilities) bar
+            // Net Worth Header with Green (Assets) vs. Red (Liabilities) bar + Multi-Currency breakdown
             item {
                 NetWorthHeaderCard(
                     netWorth = netWorth,
                     language = language,
-                    strings = strings
+                    strings = strings,
+                    mainCurrencyCode = mainCurrencyCode,
+                    secondaryCurrencyCode = secondaryCurrencyCode,
+                    marketSnapshot = marketSnapshot,
+                    currencyBreakdowns = currencyBreakdowns
                 )
+            }
+
+            if (accounts.isEmpty()) {
+                item {
+                    CrystalCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("accounts_empty_placeholder"),
+                        elevated = true
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 18.dp, horizontal = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.AccountBalanceWallet,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                            Text(
+                                text = if (language == AppLanguage.BN) {
+                                    "এখনও কোনো ব্যাংক বা কার্ড যুক্ত করা হয়নি"
+                                } else {
+                                    "No Wallets or Cards Added Yet"
+                                },
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = if (language == AppLanguage.BN) {
+                                    "বাংলাদেশ, সৌদি আরব, কাতার, কুয়েত, দুবাই, মালয়েশিয়া, ইতালি, ইউরোপ বা যুক্তরাজ্যের ব্যাংক, কার্ড বা মোবাইল ওয়ালেট যুক্ত করুন।"
+                                } else {
+                                    "Add banks, cards, cash, or MFS wallets across Bangladesh, Saudi Arabia, Qatar, Kuwait, UAE, Malaysia, Italy, Europe, or UK."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = crystal.mutedText,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Button(
+                                onClick = onOpenAddWizard,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.testTag("accounts_empty_add_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.size(6.dp))
+                                Text(strings.addAccount)
+                            }
+                        }
+                    }
+                }
             }
 
             items(accounts, key = { it.id }) { account ->
@@ -138,25 +235,23 @@ fun AccountsScreen(
                         language = language,
                         strings = strings
                     )
-                    if (accounts.size > 1) {
-                        Surface(
-                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.36f),
-                            shape = CircleShape,
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(top = 12.dp, end = 78.dp)
+                    Surface(
+                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.36f),
+                        shape = CircleShape,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 12.dp, end = 124.dp)
+                    ) {
+                        IconButton(
+                            onClick = { onDeleteAccount(account.id) },
+                            modifier = Modifier.size(36.dp)
                         ) {
-                            IconButton(
-                                onClick = { onDeleteAccount(account.id) },
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.DeleteOutline,
-                                    contentDescription = strings.deleteAccount,
-                                    tint = androidx.compose.ui.graphics.Color.White,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Filled.DeleteOutline,
+                                contentDescription = strings.deleteAccount,
+                                tint = androidx.compose.ui.graphics.Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
                 }
@@ -169,9 +264,15 @@ fun AccountsScreen(
 fun NetWorthHeaderCard(
     netWorth: NetWorthSummary,
     language: AppLanguage,
-    strings: AppStrings
+    strings: AppStrings,
+    mainCurrencyCode: String = "BDT",
+    secondaryCurrencyCode: String = "",
+    marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference(),
+    currencyBreakdowns: List<Pair<AppCurrency, Double>> = emptyList()
 ) {
     val crystal = LocalCrystalColors.current
+    val mainCur = AppCurrency.fromCode(mainCurrencyCode)
+    val secCur = AppCurrency.fromCodeOrNull(secondaryCurrencyCode)?.takeIf { it != mainCur }
     val animatedAssetRatio by animateFloatAsState(
         targetValue = netWorth.assetRatio,
         animationSpec = spring(stiffness = Spring.StiffnessLow),
@@ -182,20 +283,57 @@ fun NetWorthHeaderCard(
         modifier = Modifier.fillMaxWidth(),
         elevated = true
     ) {
-        Text(
-            text = strings.netWorth,
-            style = MaterialTheme.typography.labelMedium,
-            color = crystal.mutedText
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = strings.netWorth,
+                style = MaterialTheme.typography.labelMedium,
+                color = crystal.mutedText
+            )
+            Surface(
+                color = MaterialTheme.colorScheme.primary.copy(alpha = if (crystal.isDark) 0.22f else 0.12f),
+                shape = RoundedCornerShape(99.dp)
+            ) {
+                Text(
+                    text = mainCur.shortBadge(),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+        }
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = BdtFormatter.format(netWorth.netWorth, language),
+            text = BdtFormatter.formatCurrency(netWorth.netWorth, mainCur.code, language),
             style = MaterialTheme.typography.headlineLarge.copy(
                 fontFamily = JetBrainsMonoFamily,
                 fontWeight = FontWeight.Bold
             ),
             color = MaterialTheme.colorScheme.onSurface
         )
+
+        if (secCur != null) {
+            Spacer(modifier = Modifier.height(6.dp))
+            val secNetWorth = marketSnapshot.convertCurrencyCode(netWorth.netWorth, mainCur.code, secCur.code)
+            Surface(
+                color = if (crystal.isDark) crystal.glassSurface else crystal.glassSurfaceElevated,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, crystal.glassBorder)
+            ) {
+                Text(
+                    text = "≈ ${secCur.flag} ${BdtFormatter.formatCurrency(secNetWorth, secCur.code, language)}",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontFamily = JetBrainsMonoFamily,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.height(14.dp))
 
@@ -250,7 +388,7 @@ fun NetWorthHeaderCard(
                     )
                 }
                 Text(
-                    text = BdtFormatter.format(netWorth.totalAssets, language),
+                    text = BdtFormatter.formatCurrency(netWorth.totalAssets, mainCur.code, language),
                     style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMonoFamily),
                     color = crystal.assetGreen
                 )
@@ -274,10 +412,38 @@ fun NetWorthHeaderCard(
                     )
                 }
                 Text(
-                    text = BdtFormatter.format(netWorth.totalLiabilities, language),
+                    text = BdtFormatter.formatCurrency(netWorth.totalLiabilities, mainCur.code, language),
                     style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMonoFamily),
                     color = crystal.liabilityRed
                 )
+            }
+        }
+
+        if (currencyBreakdowns.size > 1) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                currencyBreakdowns.forEach { (cur, totalInCur) ->
+                    Surface(
+                        color = if (crystal.isDark) crystal.glassSurface else crystal.glassSurfaceElevated,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, crystal.glassBorder)
+                    ) {
+                        Text(
+                            text = "${cur.flag} ${BdtFormatter.formatCurrency(totalInCur, cur.code, language)}",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = JetBrainsMonoFamily,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                }
             }
         }
     }

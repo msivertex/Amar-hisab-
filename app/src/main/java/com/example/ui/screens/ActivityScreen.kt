@@ -45,9 +45,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import com.example.data.local.TransactionEntity
+import com.example.data.market.MarketSnapshot
+import com.example.data.model.AccountNameResolver
+import com.example.data.model.AppCurrency
 import com.example.data.model.TransactionSortOption
 import com.example.data.model.TransactionType
+import com.example.data.model.TransferNoteCodec
 import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
 import com.example.ui.components.CrystalCard
@@ -62,32 +68,43 @@ import java.util.Locale
 private data class DateGroup(
     val dateKey: String,
     val displayHeader: String,
-    val netDelta: Double,
+    val netDeltasByCurrency: Map<String, Double>,
+    val transferTotalsByCurrency: Map<String, Double>,
     val items: List<TransactionEntity>
 )
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ActivityScreen(
     state: MainUiState,
     strings: AppStrings,
     onOpenReceiptScan: () -> Unit,
-    onDeleteTransaction: (Long) -> Unit
+    onDeleteTransaction: (Long) -> Unit,
+    marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
 ) {
     val crystal = LocalCrystalColors.current
     val lang = state.prefs.language
+    val mainCurCode = state.prefs.mainCurrencyCode
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedTypeFilter by remember { mutableStateOf<TransactionType?>(null) }
     var sortOption by remember { mutableStateOf(TransactionSortOption.NEWEST) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var selectedVoucherTx by remember { mutableStateOf<TransactionEntity?>(null) }
 
-    val filteredTransactions = remember(state.transactions, searchQuery, selectedTypeFilter, sortOption) {
+    val accountsById = remember(state.accounts) {
+        state.accounts.associateBy { it.id }
+    }
+
+    val filteredTransactions = remember(state.transactions, accountsById, searchQuery, selectedTypeFilter, sortOption, lang) {
         val base = state.transactions.filter { tx ->
             val matchesType = selectedTypeFilter == null || tx.type == selectedTypeFilter
+            val walletDisplay = AccountNameResolver.resolveTransactionWalletDisplay(tx, accountsById, lang)
             val matchesQuery = searchQuery.isBlank() ||
                 tx.title.contains(searchQuery, ignoreCase = true) ||
                 tx.note.contains(searchQuery, ignoreCase = true) ||
                 tx.subcategory.contains(searchQuery, ignoreCase = true) ||
+                walletDisplay.contains(searchQuery, ignoreCase = true) ||
                 tx.category.en.contains(searchQuery, ignoreCase = true) ||
                 tx.category.bn.contains(searchQuery, ignoreCase = true)
             matchesType && matchesQuery
@@ -103,6 +120,7 @@ fun ActivityScreen(
     val groupedByDate = remember(
         filteredTransactions,
         lang,
+        mainCurCode,
         state.deviceTimeContext.dayKey,
         state.deviceTimeContext.timeZoneId
     ) {
@@ -129,17 +147,21 @@ fun ActivityScreen(
                 yestKey -> "${strings.yesterdayLabel} • $rawHeader"
                 else -> rawHeader
             }
-            val delta = list.sumOf { tx ->
+            val netByCur = linkedMapOf<String, Double>()
+            val transfersByCur = linkedMapOf<String, Double>()
+            list.forEach { tx ->
+                val cur = AppCurrency.fromCode(tx.currencyCode).code
                 when (tx.type) {
-                    TransactionType.INCOME -> tx.amount
-                    TransactionType.EXPENSE -> -tx.amount
-                    TransactionType.TRANSFER -> 0.0
+                    TransactionType.INCOME -> netByCur[cur] = (netByCur[cur] ?: 0.0) + tx.amount
+                    TransactionType.EXPENSE -> netByCur[cur] = (netByCur[cur] ?: 0.0) - tx.amount
+                    TransactionType.TRANSFER -> transfersByCur[cur] = (transfersByCur[cur] ?: 0.0) + tx.amount
                 }
             }
             DateGroup(
                 dateKey = key,
                 displayHeader = label,
-                netDelta = delta,
+                netDeltasByCurrency = netByCur.filterValues { kotlin.math.abs(it) >= 0.005 },
+                transferTotalsByCurrency = transfersByCur.filterValues { it >= 0.005 },
                 items = list
             )
         }
@@ -301,38 +323,98 @@ fun ActivityScreen(
             } else {
                 groupedByDate.forEach { group ->
                     item(key = "header_${group.dateKey}") {
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 4.dp, vertical = 2.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text(
-                                text = group.displayHeader,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = crystal.mutedText
-                            )
-                            Surface(
-                                color = if (group.netDelta >= 0) crystal.assetGreenBg else crystal.liabilityRedBg,
-                                shape = CircleShape
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "${strings.dailyNetDelta} ${BdtFormatter.format(group.netDelta, lang, includeSign = true)}",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontFamily = JetBrainsMonoFamily,
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = if (group.netDelta >= 0) crystal.assetGreen else crystal.liabilityRed,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    text = group.displayHeader,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = crystal.mutedText,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    group.netDeltasByCurrency.forEach { (curCode, deltaVal) ->
+                                        Surface(
+                                            color = if (deltaVal >= 0) crystal.assetGreenBg else crystal.liabilityRedBg,
+                                            shape = CircleShape,
+                                            modifier = Modifier.testTag("activity_delta_pill_${group.dateKey}_$curCode")
+                                        ) {
+                                            Text(
+                                                text = "${strings.dailyNetDelta} ${BdtFormatter.formatCurrency(deltaVal, curCode, lang, includeSign = true)}",
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    fontFamily = JetBrainsMonoFamily,
+                                                    fontWeight = FontWeight.Bold
+                                                ),
+                                                color = if (deltaVal >= 0) crystal.assetGreen else crystal.liabilityRed,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                    group.transferTotalsByCurrency.forEach { (curCode, transferAmt) ->
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = if (crystal.isDark) 0.22f else 0.12f),
+                                            shape = CircleShape,
+                                            modifier = Modifier.testTag("activity_transfer_pill_${group.dateKey}_$curCode")
+                                        ) {
+                                            Text(
+                                                text = "⇄ ${BdtFormatter.formatCurrency(transferAmt, curCode, lang)}",
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    fontFamily = JetBrainsMonoFamily,
+                                                    fontWeight = FontWeight.Bold
+                                                ),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                    if (group.netDeltasByCurrency.isEmpty() && group.transferTotalsByCurrency.isEmpty()) {
+                                        Surface(
+                                            color = crystal.assetGreenBg,
+                                            shape = CircleShape
+                                        ) {
+                                            Text(
+                                                text = "${strings.dailyNetDelta} ${BdtFormatter.formatCurrency(0.0, mainCurCode, lang)}",
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    fontFamily = JetBrainsMonoFamily,
+                                                    fontWeight = FontWeight.Bold
+                                                ),
+                                                color = crystal.assetGreen,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
 
                     items(group.items, key = { it.id }) { tx ->
-                        val accName = state.accounts.firstOrNull { it.id == tx.accountId }?.name.orEmpty()
-                        CrystalCard(modifier = Modifier.fillMaxWidth()) {
+                        val accName = accountsById[tx.accountId]?.let {
+                            AccountNameResolver.resolveAccountName(it, lang)
+                        }.orEmpty()
+                        val displayNote = if (tx.type == TransactionType.TRANSFER) {
+                            TransferNoteCodec.stripEncodedSegment(tx.note)
+                        } else {
+                            tx.note.trim()
+                        }
+                        val displaySubcat = if (tx.type == TransactionType.TRANSFER) "" else tx.subcategory.trim()
+                        CrystalCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("activity_tx_card_${tx.id}"),
+                            onClick = { selectedVoucherTx = tx }
+                        ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
@@ -341,12 +423,14 @@ fun ActivityScreen(
                                     TransactionRowItem(
                                         tx = tx,
                                         accountName = accName,
-                                        language = lang
+                                        language = lang,
+                                        accountsById = accountsById,
+                                        marketSnapshot = marketSnapshot
                                     )
                                 }
                                 IconButton(
                                     onClick = { onDeleteTransaction(tx.id) },
-                                    modifier = Modifier.size(40.dp)
+                                    modifier = Modifier.size(48.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.DeleteOutline,
@@ -356,9 +440,9 @@ fun ActivityScreen(
                                     )
                                 }
                             }
-                            if (tx.subcategory.isNotBlank() || tx.note.isNotBlank()) {
+                            if (displaySubcat.isNotBlank() || displayNote.isNotBlank()) {
                                 Spacer(modifier = Modifier.height(4.dp))
-                                val meta = listOf(tx.subcategory, tx.note).filter { it.isNotBlank() }.joinToString(" • ")
+                                val meta = listOf(displaySubcat, displayNote).filter { it.isNotBlank() }.joinToString(" • ")
                                 Text(
                                     text = meta,
                                     style = MaterialTheme.typography.bodySmall,
@@ -370,5 +454,17 @@ fun ActivityScreen(
                 }
             }
         }
+    }
+
+    selectedVoucherTx?.let { voucherTx ->
+        TransactionVoucherDetailSheet(
+            tx = voucherTx,
+            accountsById = accountsById,
+            language = lang,
+            strings = strings,
+            marketSnapshot = marketSnapshot,
+            onDelete = { onDeleteTransaction(voucherTx.id) },
+            onDismiss = { selectedVoucherTx = null }
+        )
     }
 }

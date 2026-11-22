@@ -104,7 +104,6 @@ fun InsightsScreen(
     var exportingFormat by remember { mutableStateOf<ReportExportFormat?>(null) }
     var exportStatusMessage by remember { mutableStateOf<String?>(null) }
     var exportStatusIsError by remember { mutableStateOf(false) }
-    var selectedMarketToolTab by remember { mutableStateOf(MarketToolTab.CURRENCY) }
 
     val monthlyReportPayload = remember(
         state.transactions,
@@ -113,9 +112,14 @@ fun InsightsScreen(
         state.insightMonthOffset,
         state.prefs.language,
         state.prefs.userName,
-        state.prefs.monthlyBudget
+        state.prefs.monthlyBudget,
+        state.prefs.mainCurrencyCode,
+        marketSyncState.snapshot
     ) {
-        MonthlyReportExporter.buildMonthlyPayload(state)
+        MonthlyReportExporter.buildMonthlyPayload(
+            state = state,
+            marketSnapshot = marketSyncState.snapshot
+        )
     }
 
     fun triggerExport(format: ReportExportFormat) {
@@ -129,7 +133,8 @@ fun InsightsScreen(
                     context = context,
                     state = state,
                     format = format,
-                    strings = strings
+                    strings = strings,
+                    marketSnapshot = marketSyncState.snapshot
                 )
             }
             exportingFormat = null
@@ -276,7 +281,7 @@ fun InsightsScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = BdtFormatter.format(analytics.totalIncome, lang),
+                            text = BdtFormatter.formatCurrency(analytics.totalIncome, state.prefs.mainCurrencyCode, lang),
                             style = MaterialTheme.typography.titleSmall.copy(
                                 fontFamily = JetBrainsMonoFamily,
                                 fontWeight = FontWeight.Bold
@@ -296,7 +301,7 @@ fun InsightsScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = BdtFormatter.format(analytics.totalExpense, lang),
+                            text = BdtFormatter.formatCurrency(analytics.totalExpense, state.prefs.mainCurrencyCode, lang),
                             style = MaterialTheme.typography.titleSmall.copy(
                                 fontFamily = JetBrainsMonoFamily,
                                 fontWeight = FontWeight.Bold
@@ -316,7 +321,7 @@ fun InsightsScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = BdtFormatter.format(analytics.netFlow, lang, includeSign = true),
+                            text = BdtFormatter.formatCurrency(analytics.netFlow, state.prefs.mainCurrencyCode, lang, includeSign = true),
                             style = MaterialTheme.typography.titleSmall.copy(
                                 fontFamily = JetBrainsMonoFamily,
                                 fontWeight = FontWeight.Bold
@@ -345,7 +350,8 @@ fun InsightsScreen(
                     dailyAverage = analytics.dailyAverage,
                     peakAmount = analytics.peakAmount,
                     language = lang,
-                    strings = strings
+                    strings = strings,
+                    currencyCode = state.prefs.mainCurrencyCode
                 )
             }
 
@@ -355,7 +361,8 @@ fun InsightsScreen(
                     breakdown = analytics.categoryBreakdown,
                     totalSpent = analytics.totalExpense,
                     language = lang,
-                    strings = strings
+                    strings = strings,
+                    currencyCode = state.prefs.mainCurrencyCode
                 )
             }
 
@@ -384,41 +391,6 @@ fun InsightsScreen(
                     onStopTts = onStopTts
                 )
             }
-
-            // Upgraded Live Market & Rates (Connectivity badge, smart offline notice, wrapping quick chips, aligned search bar, graceful fallback)
-            item {
-                LiveMarketRatesCard(
-                    language = lang,
-                    searchAiState = searchAiState,
-                    strings = strings,
-                    onSearchMarket = onSearchMarket,
-                    marketSyncState = marketSyncState,
-                    onSyncMarketRates = onRefreshMarketRates,
-                    onSelectToolTab = { selectedMarketToolTab = it }
-                )
-            }
-
-            // Smart Interactive Market Tools (15-Currency Converter starting at 1, Gold Carats, Essentials, FDR/DPS, Remittance, bKash/Nagad Fee)
-            item {
-                MarketInteractiveToolsCard(
-                    language = lang,
-                    marketSyncState = marketSyncState,
-                    selectedTab = selectedMarketToolTab,
-                    onSelectTab = { selectedMarketToolTab = it },
-                    strings = strings
-                )
-            }
-
-            // Helpful Offline Reference Guide Card when offline or live market lookup is unavailable / quota-limited
-            if (!marketSyncState.isOnline || searchAiState is SearchAiUiState.Error) {
-                item {
-                    OfflineMarketReferenceCard(
-                        language = lang,
-                        strings = strings,
-                        snapshot = marketSyncState.snapshot
-                    )
-                }
-            }
         }
     }
 
@@ -439,7 +411,8 @@ private fun SpendingTrendLineCard(
     dailyAverage: Double,
     peakAmount: Double,
     language: AppLanguage,
-    strings: AppStrings
+    strings: AppStrings,
+    currencyCode: String = "BDT"
 ) {
     val crystal = LocalCrystalColors.current
     var selectedIdx by remember(points) { mutableIntStateOf(-1) }
@@ -461,7 +434,7 @@ private fun SpendingTrendLineCard(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "${strings.dailyAverageLabel}: ${BdtFormatter.format(dailyAverage, language)}",
+                    text = "${strings.dailyAverageLabel}: ${BdtFormatter.formatCurrency(dailyAverage, currencyCode, language)}",
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily),
                     color = crystal.mutedText
                 )
@@ -471,7 +444,7 @@ private fun SpendingTrendLineCard(
                 shape = CircleShape
             ) {
                 Text(
-                    text = "${strings.peakSpendingLabel}: ${BdtFormatter.format(peakAmount, language)}",
+                    text = "${strings.peakSpendingLabel}: ${BdtFormatter.formatCurrency(peakAmount, currencyCode, language)}",
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontFamily = JetBrainsMonoFamily,
                         fontWeight = FontWeight.Bold
@@ -485,7 +458,7 @@ private fun SpendingTrendLineCard(
         if (activePoint != null) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "${activePoint.dayLabel}: ${BdtFormatter.format(activePoint.amount, language)}",
+                text = "${activePoint.dayLabel}: ${BdtFormatter.formatCurrency(activePoint.amount, currencyCode, language)}",
                 style = MaterialTheme.typography.labelLarge.copy(fontFamily = JetBrainsMonoFamily),
                 color = MaterialTheme.colorScheme.primary
             )
@@ -613,7 +586,8 @@ private fun SpendingDonutCard(
     breakdown: List<CategorySpend>,
     totalSpent: Double,
     language: AppLanguage,
-    strings: AppStrings
+    strings: AppStrings,
+    currencyCode: String = "BDT"
 ) {
     val crystal = LocalCrystalColors.current
 
@@ -667,7 +641,7 @@ private fun SpendingDonutCard(
                         color = crystal.mutedText
                     )
                     Text(
-                        text = BdtFormatter.format(totalSpent, language),
+                        text = BdtFormatter.formatCurrency(totalSpent, currencyCode, language),
                         style = MaterialTheme.typography.labelLarge.copy(
                             fontFamily = JetBrainsMonoFamily,
                             fontWeight = FontWeight.Bold

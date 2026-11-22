@@ -19,6 +19,7 @@ data class AccountEntity(
     val cardNetwork: String = "",
     val accountNumberLast4: String = "",
     val colorArgb: Long,
+    val currencyCode: String = "BDT",
     val createdAt: Long = System.currentTimeMillis()
 ) {
     val utilizationPercent: Int
@@ -38,6 +39,7 @@ data class TransactionEntity(
     val accountId: Long,
     val toAccountId: Long? = null,
     val note: String = "",
+    val currencyCode: String = "BDT",
     val timestamp: Long = System.currentTimeMillis()
 )
 
@@ -61,10 +63,11 @@ data class LoanEntity(
     val paidAmount: Double = 0.0,
     val note: String = "",
     val dueDateMillis: Long? = null,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val currencyCode: String = "BDT"
 ) {
     val remainingAmount: Double get() = (totalAmount - paidAmount).coerceAtLeast(0.0)
-    val isSettled: Boolean get() = remainingAmount <= 0.01
+    val isSettled: Boolean get() = remainingAmount <= 0.001
 }
 
 @Entity(tableName = "category_budgets")

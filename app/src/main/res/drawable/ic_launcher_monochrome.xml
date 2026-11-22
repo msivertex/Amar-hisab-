@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Stylized angled Taka banknote silhouette inside 66dp safe zone (21..87) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M29,43 L67,29 C70,28 73.5,29.5 74.5,32.5 L81,50.5 C77.5,48.5 73,47.5 68.5,48 C59.5,49 53,56.5 53,65.5 C53,68 53.5,70.5 54.5,72.5 L42,77 C39,78 35.5,76.5 34.5,73.5 L25.5,49 C24.5,46 26,44 29,43 Z" />
+    <!-- Overlapping Taka coin ring and center emblem in bottom-right -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M71,52 C79.8,52 87,59.2 87,68 C87,76.8 79.8,84 71,84 C62.2,84 55,76.8 55,68 C55,59.2 62.2,52 71,52 Z M71,57.5 C65.2,57.5 60.5,62.2 60.5,68 C60.5,73.8 65.2,78.5 71,78.5 C76.8,78.5 81.5,73.8 81.5,68 C81.5,62.2 76.8,57.5 71,57.5 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M71,61.5 C74.6,61.5 77.5,64.4 77.5,68 C77.5,71.6 74.6,74.5 71,74.5 C67.4,74.5 64.5,71.6 64.5,68 C64.5,64.4 67.4,61.5 71,61.5 Z" />
+</vector>

@@ -7,10 +7,12 @@ import com.example.data.local.CategoryBudgetEntity
 import com.example.data.local.LoanEntity
 import com.example.data.local.SavingsGoalEntity
 import com.example.data.local.TransactionEntity
+import com.example.data.model.AccountNameResolver
 import com.example.data.model.AccountType
 import com.example.data.model.ExpenseCategory
 import com.example.data.model.LoanType
 import com.example.data.model.TransactionType
+import com.example.data.model.TransferNoteCodec
 import kotlinx.coroutines.flow.Flow
 
 class FinanceRepository(val db: AppDatabase) {
@@ -26,7 +28,8 @@ class FinanceRepository(val db: AppDatabase) {
     val loans: Flow<List<LoanEntity>> = loanDao.observeAllLoans()
     val categoryBudgets: Flow<List<CategoryBudgetEntity>> = categoryBudgetDao.observeAllCategoryBudgets()
 
-    suspend fun addAccount(account: AccountEntity): Long = accountDao.insertAccount(account)
+    suspend fun addAccount(account: AccountEntity): Long =
+        accountDao.insertAccount(AccountNameResolver.normalizeAccountForSave(account))
 
     suspend fun deleteAccount(accountId: Long) = accountDao.deleteAccountById(accountId)
 
@@ -52,7 +55,8 @@ class FinanceRepository(val db: AppDatabase) {
                     subcategory = subcategory.trim(),
                     accountId = accountId,
                     note = note.trim(),
-                    timestamp = timestamp
+                    timestamp = timestamp,
+                    currencyCode = account.currencyCode
                 )
             )
             val updatedBalance = when {
@@ -73,12 +77,19 @@ class FinanceRepository(val db: AppDatabase) {
         toAccountId: Long,
         amount: Double,
         note: String,
-        timestamp: Long = System.currentTimeMillis()
+        timestamp: Long = System.currentTimeMillis(),
+        conversionRate: Double = 1.0
     ): Boolean {
         if (amount <= 0.0 || fromAccountId == toAccountId) return false
         return db.withTransaction {
             val fromAcc = accountDao.getAccountById(fromAccountId) ?: return@withTransaction false
             val toAcc = accountDao.getAccountById(toAccountId) ?: return@withTransaction false
+            val effectiveRate = if (fromAcc.currencyCode.equals(toAcc.currencyCode, ignoreCase = true)) {
+                1.0
+            } else {
+                conversionRate.takeIf { it > 0.0 } ?: 1.0
+            }
+            val creditedAmount = amount * effectiveRate
 
             val updatedFromBalance = if (fromAcc.type == AccountType.CREDIT_CARD) {
                 fromAcc.balance + amount
@@ -87,25 +98,40 @@ class FinanceRepository(val db: AppDatabase) {
             }
 
             val updatedToBalance = if (toAcc.type == AccountType.CREDIT_CARD) {
-                (toAcc.balance - amount).coerceAtLeast(0.0)
+                (toAcc.balance - creditedAmount).coerceAtLeast(0.0)
             } else {
-                toAcc.balance + amount
+                toAcc.balance + creditedAmount
             }
 
             accountDao.updateAccount(fromAcc.copy(balance = updatedFromBalance))
             accountDao.updateAccount(toAcc.copy(balance = updatedToBalance))
 
+            val allAccounts = accountDao.getAllAccountsOnce()
+            val routeTitle = AccountNameResolver.formatTransferRouteTitle(
+                fromAccount = fromAcc,
+                toAccount = toAcc,
+                allAccounts = allAccounts
+            )
+            val transferNote = TransferNoteCodec.encode(
+                userNote = note,
+                sourceCurrencyCode = fromAcc.currencyCode,
+                destCurrencyCode = toAcc.currencyCode,
+                exchangeRate = effectiveRate,
+                receivedAmount = creditedAmount
+            )
+
             transactionDao.insertTransaction(
                 TransactionEntity(
-                    title = "${fromAcc.name} → ${toAcc.name}",
+                    title = routeTitle,
                     amount = amount,
                     type = TransactionType.TRANSFER,
                     category = ExpenseCategory.TRANSFER,
                     subcategory = "Wallet Transfer",
                     accountId = fromAccountId,
                     toAccountId = toAccountId,
-                    note = note.ifBlank { "Internal wallet transfer" },
-                    timestamp = timestamp
+                    note = transferNote,
+                    timestamp = timestamp,
+                    currencyCode = fromAcc.currencyCode
                 )
             )
             true
@@ -133,10 +159,16 @@ class FinanceRepository(val db: AppDatabase) {
             if (tx.type == TransactionType.TRANSFER && tx.toAccountId != null) {
                 val dest = accountDao.getAccountById(tx.toAccountId)
                 if (dest != null) {
-                    val restoredDest = if (dest.type == AccountType.CREDIT_CARD) {
-                        dest.balance + tx.amount
+                    val parsedTransfer = TransferNoteCodec.parse(tx, dest)
+                    val destReversalAmount = if (parsedTransfer != null && parsedTransfer.isCrossCurrency && parsedTransfer.isRecordedRate) {
+                        parsedTransfer.receivedAmount
                     } else {
-                        dest.balance - tx.amount
+                        tx.amount
+                    }
+                    val restoredDest = if (dest.type == AccountType.CREDIT_CARD) {
+                        dest.balance + destReversalAmount
+                    } else {
+                        dest.balance - destReversalAmount
                     }
                     accountDao.updateAccount(dest.copy(balance = restoredDest))
                 }
@@ -185,7 +217,8 @@ class FinanceRepository(val db: AppDatabase) {
                     category = ExpenseCategory.OTHER,
                     subcategory = "Savings Contribution",
                     accountId = walletId,
-                    note = "Funded savings goal from ${account.name}"
+                    note = "Funded savings goal from ${account.name}",
+                    currencyCode = account.currencyCode
                 )
             )
         }
@@ -198,9 +231,11 @@ class FinanceRepository(val db: AppDatabase) {
         loanType: LoanType,
         totalAmount: Double,
         note: String,
-        dueDateMillis: Long?
+        dueDateMillis: Long?,
+        currencyCode: String = "BDT"
     ) {
         if (personName.isBlank() || totalAmount <= 0.0) return
+        val normalizedCurrency = com.example.data.model.AppCurrency.fromCode(currencyCode).code
         loanDao.insertLoan(
             LoanEntity(
                 personName = personName.trim(),
@@ -208,7 +243,22 @@ class FinanceRepository(val db: AppDatabase) {
                 totalAmount = totalAmount,
                 paidAmount = 0.0,
                 note = note.trim(),
-                dueDateMillis = dueDateMillis
+                dueDateMillis = dueDateMillis,
+                currencyCode = normalizedCurrency
+            )
+        )
+    }
+
+    suspend fun updateLoan(loan: LoanEntity) {
+        if (loan.personName.isBlank() || loan.totalAmount <= 0.0) return
+        val normalizedCurrency = com.example.data.model.AppCurrency.fromCode(loan.currencyCode).code
+        val clampedPaid = loan.paidAmount.coerceIn(0.0, loan.totalAmount)
+        loanDao.updateLoan(
+            loan.copy(
+                personName = loan.personName.trim(),
+                note = loan.note.trim(),
+                paidAmount = clampedPaid,
+                currencyCode = normalizedCurrency
             )
         )
     }
@@ -216,16 +266,24 @@ class FinanceRepository(val db: AppDatabase) {
     suspend fun settleLoan(
         loan: LoanEntity,
         settlementAmount: Double,
-        walletId: Long
+        walletId: Long?,
+        conversionRate: Double = 1.0
     ) {
         if (settlementAmount <= 0.0) return
         val effectiveAmount = settlementAmount.coerceAtMost(loan.remainingAmount)
         if (effectiveAmount <= 0.0) return
 
         db.withTransaction {
-            val account = accountDao.getAccountById(walletId) ?: return@withTransaction
             val newPaid = (loan.paidAmount + effectiveAmount).coerceAtMost(loan.totalAmount)
             loanDao.updateLoan(loan.copy(paidAmount = newPaid))
+
+            // Allow recording partial/full settlement even without linking a wallet
+            val targetWalletId = walletId?.takeIf { it > 0L } ?: return@withTransaction
+            val account = accountDao.getAccountById(targetWalletId) ?: return@withTransaction
+
+            val sameCurrency = account.currencyCode.equals(loan.currencyCode, ignoreCase = true)
+            val effectiveRate = if (sameCurrency) 1.0 else conversionRate.takeIf { it > 0.0 } ?: 1.0
+            val walletImpactAmount = effectiveAmount * effectiveRate
 
             // Money I Owe -> settling deducts from wallet (EXPENSE); Money Owed to Me -> adds to wallet (INCOME)
             val txType = if (loan.loanType == LoanType.I_OWE) {
@@ -235,24 +293,31 @@ class FinanceRepository(val db: AppDatabase) {
             }
             val updatedBalance = when {
                 account.type == AccountType.CREDIT_CARD && txType == TransactionType.EXPENSE ->
-                    account.balance + effectiveAmount
+                    account.balance + walletImpactAmount
                 account.type == AccountType.CREDIT_CARD && txType == TransactionType.INCOME ->
-                    (account.balance - effectiveAmount).coerceAtLeast(0.0)
-                txType == TransactionType.EXPENSE -> account.balance - effectiveAmount
-                else -> account.balance + effectiveAmount
+                    (account.balance - walletImpactAmount).coerceAtLeast(0.0)
+                txType == TransactionType.EXPENSE -> account.balance - walletImpactAmount
+                else -> account.balance + walletImpactAmount
             }
             accountDao.updateAccount(account.copy(balance = updatedBalance))
 
             val labelPrefix = if (loan.loanType == LoanType.I_OWE) "Debt Paid:" else "Loan Collected:"
+            val settlementNote = buildString {
+                append(loan.note.ifBlank { "Loan settlement" })
+                if (!sameCurrency) {
+                    append(" (${loan.currencyCode} → ${account.currencyCode})")
+                }
+            }
             transactionDao.insertTransaction(
                 TransactionEntity(
                     title = "$labelPrefix ${loan.personName}",
-                    amount = effectiveAmount,
+                    amount = walletImpactAmount,
                     type = txType,
                     category = ExpenseCategory.OTHER,
                     subcategory = "Debt Repayment",
-                    accountId = walletId,
-                    note = loan.note.ifBlank { "Loan settlement" }
+                    accountId = targetWalletId,
+                    note = settlementNote,
+                    currencyCode = account.currencyCode
                 )
             )
         }

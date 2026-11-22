@@ -43,6 +43,8 @@ object BackupManager {
                 put("enableSubcategories", prefs.enableSubcategories)
                 put("startOfWeek", prefs.startOfWeek.name)
                 put("hapticFeedbackEnabled", prefs.hapticFeedbackEnabled)
+                put("mainCurrencyCode", prefs.mainCurrencyCode)
+                put("secondaryCurrencyCode", prefs.secondaryCurrencyCode)
             })
 
             put("accounts", JSONArray().apply {
@@ -59,6 +61,7 @@ object BackupManager {
                         put("accountNumberLast4", acc.accountNumberLast4)
                         put("colorArgb", acc.colorArgb)
                         put("createdAt", acc.createdAt)
+                        put("currencyCode", acc.currencyCode)
                     })
                 }
             })
@@ -76,6 +79,7 @@ object BackupManager {
                         put("toAccountId", tx.toAccountId ?: JSONObject.NULL)
                         put("note", tx.note)
                         put("timestamp", tx.timestamp)
+                        put("currencyCode", tx.currencyCode)
                     })
                 }
             })
@@ -105,6 +109,7 @@ object BackupManager {
                         put("note", loan.note)
                         put("dueDateMillis", loan.dueDateMillis ?: JSONObject.NULL)
                         put("createdAt", loan.createdAt)
+                        put("currencyCode", loan.currencyCode)
                     })
                 }
             })
@@ -127,7 +132,7 @@ object BackupManager {
         val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
 
         val sb = StringBuilder()
-        sb.appendLine("ID,Date,Title,Type,Category,Subcategory,Account,ToAccount,Amount_BDT,Note")
+        sb.appendLine("ID,Date,Title,Type,Category,Subcategory,Account,ToAccount,Amount,Currency,Note")
         transactions.forEach { tx ->
             val dateStr = fmt.format(Date(tx.timestamp))
             val accName = accounts[tx.accountId]?.name.orEmpty()
@@ -143,6 +148,7 @@ object BackupManager {
                     csvEscape(accName),
                     csvEscape(toAccName),
                     tx.amount.toString(),
+                    tx.currencyCode,
                     csvEscape(tx.note)
                 ).joinToString(",")
             )
@@ -172,7 +178,8 @@ object BackupManager {
                 cardNetwork = o.optString("cardNetwork", ""),
                 accountNumberLast4 = o.optString("accountNumberLast4", ""),
                 colorArgb = o.optLong("colorArgb", 0xFF0284C7L),
-                createdAt = o.optLong("createdAt", System.currentTimeMillis())
+                createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+                currencyCode = o.optString("currencyCode", "BDT").ifBlank { "BDT" }
             )
         }
 
@@ -191,7 +198,8 @@ object BackupManager {
                 accountId = o.getLong("accountId"),
                 toAccountId = toAccId,
                 note = o.optString("note", ""),
-                timestamp = o.optLong("timestamp", System.currentTimeMillis())
+                timestamp = o.optLong("timestamp", System.currentTimeMillis()),
+                currencyCode = o.optString("currencyCode", "BDT").ifBlank { "BDT" }
             )
         }
 
@@ -222,7 +230,8 @@ object BackupManager {
                 paidAmount = o.optDouble("paidAmount", 0.0),
                 note = o.optString("note", ""),
                 dueDateMillis = if (o.isNull("dueDateMillis")) null else o.optLong("dueDateMillis"),
-                createdAt = o.optLong("createdAt", System.currentTimeMillis())
+                createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+                currencyCode = o.optString("currencyCode", "BDT").ifBlank { "BDT" }
             )
         }
 
@@ -253,7 +262,7 @@ object BackupManager {
         root.optJSONObject("preferences")?.let { p ->
             prefsRepo.updateProfileAndBudget(
                 userName = p.optString("userName", ""),
-                monthlyBudget = p.optDouble("monthlyBudget", 35000.0)
+                monthlyBudget = p.optDouble("monthlyBudget", 0.0)
             )
             prefsRepo.setLanguage(
                 if (p.optString("language") == AppLanguage.BN.code) AppLanguage.BN else AppLanguage.EN
@@ -264,6 +273,10 @@ object BackupManager {
             val sow = runCatching { StartOfWeek.valueOf(p.optString("startOfWeek")) }
                 .getOrDefault(StartOfWeek.SATURDAY)
             prefsRepo.setStartOfWeek(sow)
+            val mainCur = p.optString("mainCurrencyCode", "BDT")
+            if (mainCur.isNotBlank()) prefsRepo.setMainCurrency(mainCur)
+            val secCur = p.optString("secondaryCurrencyCode", "")
+            prefsRepo.setSecondaryCurrency(secCur)
         }
 
         return txList.size

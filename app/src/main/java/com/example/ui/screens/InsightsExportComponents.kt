@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.export.MonthlyReportPayload
 import com.example.data.export.ReportExportFormat
+import com.example.data.model.AccountNameResolver
 import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
@@ -478,22 +479,49 @@ fun MonthlyReportExportSheet(
                     ) {
                         SheetMetricColumn(
                             label = strings.incomeLabel,
-                            value = BdtFormatter.format(payload.totalIncome, lang),
+                            value = BdtFormatter.formatCurrency(payload.totalIncome, payload.mainCurrencyCode, lang),
                             valueColor = crystal.assetGreen,
                             modifier = Modifier.weight(1f)
                         )
                         SheetMetricColumn(
                             label = strings.expenseLabel,
-                            value = BdtFormatter.format(payload.totalExpense, lang),
+                            value = BdtFormatter.formatCurrency(payload.totalExpense, payload.mainCurrencyCode, lang),
                             valueColor = crystal.liabilityRed,
                             modifier = Modifier.weight(1f)
                         )
                         SheetMetricColumn(
                             label = strings.netFlowLabel,
-                            value = BdtFormatter.format(payload.netFlow, lang, includeSign = true),
+                            value = BdtFormatter.formatCurrency(payload.netFlow, payload.mainCurrencyCode, lang, includeSign = true),
                             valueColor = if (payload.netFlow >= 0) crystal.assetGreen else crystal.liabilityRed,
                             modifier = Modifier.weight(1f)
                         )
+                    }
+
+                    val showPerCur = payload.perCurrencyTotals.size > 1 ||
+                        payload.perCurrencyTotals.any { !it.currencyCode.equals(payload.mainCurrencyCode, ignoreCase = true) }
+                    if (showPerCur && payload.perCurrencyTotals.isNotEmpty()) {
+                        HorizontalDivider(thickness = 0.6.dp, color = crystal.glassBorder)
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            payload.perCurrencyTotals.forEach { cur ->
+                                val curBadge = AccountNameResolver.currencyShortLabel(cur.currencyCode)
+                                val incStr = BdtFormatter.formatCurrency(cur.income, cur.currencyCode, lang)
+                                val expStr = BdtFormatter.formatCurrency(cur.expense, cur.currencyCode, lang)
+                                val trfStr = BdtFormatter.formatCurrency(cur.transferOut, cur.currencyCode, lang)
+                                val lineText = if (lang == AppLanguage.BN) {
+                                    "$curBadge • আয় $incStr | ব্যয় $expStr | ট্রান্সফার $trfStr"
+                                } else {
+                                    "$curBadge • Inc $incStr | Exp $expStr | Trf $trfStr"
+                                }
+                                Text(
+                                    text = lineText,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = JetBrainsMonoFamily
+                                    ),
+                                    color = crystal.mutedText,
+                                    maxLines = 2
+                                )
+                            }
+                        }
                     }
                 }
             }

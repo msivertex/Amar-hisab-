@@ -8,32 +8,92 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.example.R
 
+// Static single-weight TTFs register only FontWeight.Normal so Compose's FontSynthesis
+// renders genuine crisp bold/extrabold strokes when FontWeight.Bold / ExtraBold is requested.
 val PlusJakartaSansFamily = FontFamily(
-    Font(R.font.plus_jakarta_sans, FontWeight.Normal),
-    Font(R.font.plus_jakarta_sans, FontWeight.Medium),
-    Font(R.font.plus_jakarta_sans, FontWeight.SemiBold),
-    Font(R.font.plus_jakarta_sans, FontWeight.Bold)
+    Font(R.font.plus_jakarta_sans, FontWeight.Normal)
 )
 
+val ManropeFontFamily = FontFamily(
+    Font(R.font.manrope, FontWeight.Normal)
+)
+
+val NumericDisplayFontFamily = ManropeFontFamily
+
 val HindSiliguriFamily = FontFamily(
-    Font(R.font.hind_siliguri, FontWeight.Normal),
-    Font(R.font.hind_siliguri, FontWeight.Medium),
-    Font(R.font.hind_siliguri, FontWeight.SemiBold),
-    Font(R.font.hind_siliguri, FontWeight.Bold)
+    Font(R.font.hind_siliguri, FontWeight.Normal)
 )
 
 val OutfitFontFamily = FontFamily(
-    Font(R.font.outfit, FontWeight.Normal),
-    Font(R.font.outfit, FontWeight.Medium),
-    Font(R.font.outfit, FontWeight.SemiBold),
-    Font(R.font.outfit, FontWeight.Bold),
-    Font(R.font.outfit, FontWeight.ExtraBold)
+    Font(R.font.outfit, FontWeight.Normal)
 )
 
 val JetBrainsMonoFamily = FontFamily(
-    Font(R.font.jetbrains_mono, FontWeight.Normal),
-    Font(R.font.jetbrains_mono, FontWeight.Medium),
-    Font(R.font.jetbrains_mono, FontWeight.Bold)
+    Font(R.font.jetbrains_mono, FontWeight.Normal)
+)
+
+// Premium tabular-nums numeric display styles for Home balances, spend metrics, and account cards
+val NumericHeroBalanceStyle = TextStyle(
+    fontFamily = NumericDisplayFontFamily,
+    fontWeight = FontWeight.ExtraBold,
+    fontSize = 30.sp,
+    lineHeight = 36.sp,
+    letterSpacing = (-0.6).sp,
+    fontFeatureSettings = "tnum"
+)
+
+val NumericSummaryPrimaryStyle = TextStyle(
+    fontFamily = NumericDisplayFontFamily,
+    fontWeight = FontWeight.ExtraBold,
+    fontSize = 21.sp,
+    lineHeight = 26.sp,
+    letterSpacing = (-0.45).sp,
+    fontFeatureSettings = "tnum"
+)
+
+val NumericSummarySecondaryStyle = TextStyle(
+    fontFamily = NumericDisplayFontFamily,
+    fontWeight = FontWeight.Bold,
+    fontSize = 15.5.sp,
+    lineHeight = 20.sp,
+    letterSpacing = (-0.25).sp,
+    fontFeatureSettings = "tnum"
+)
+
+val NumericInlineMetricStyle = TextStyle(
+    fontFamily = NumericDisplayFontFamily,
+    fontWeight = FontWeight.Bold,
+    fontSize = 13.5.sp,
+    lineHeight = 18.sp,
+    letterSpacing = (-0.2).sp,
+    fontFeatureSettings = "tnum"
+)
+
+val NumericCardBalanceStyle = TextStyle(
+    fontFamily = NumericDisplayFontFamily,
+    fontWeight = FontWeight.ExtraBold,
+    fontSize = 26.5.sp,
+    lineHeight = 32.sp,
+    letterSpacing = (-0.5).sp,
+    fontFeatureSettings = "tnum"
+)
+
+val NumericCompactCardBalanceStyle = TextStyle(
+    fontFamily = NumericDisplayFontFamily,
+    fontWeight = FontWeight.ExtraBold,
+    fontSize = 24.5.sp,
+    lineHeight = 30.sp,
+    letterSpacing = (-0.45).sp,
+    fontFeatureSettings = "tnum"
+)
+
+val NumericPeekingBadgeStyle = TextStyle(
+    fontFamily = NumericDisplayFontFamily,
+    fontWeight = FontWeight.Bold,
+    fontSize = 12.5.sp,
+    lineHeight = 16.sp,
+    letterSpacing = (-0.15).sp,
+    fontFeatureSettings = "tnum"
 )
 
 fun appTypography(isBangla: Boolean): Typography {

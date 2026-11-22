@@ -50,6 +50,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.core.CalculatorEngine
 import com.example.data.local.AccountEntity
+import com.example.data.market.MarketSnapshot
+import com.example.data.model.AccountNameResolver
+import com.example.data.model.AppCurrency
 import com.example.data.model.ExpenseCategory
 import com.example.data.model.TransactionType
 import com.example.localization.AppLanguage
@@ -90,7 +93,17 @@ fun SmartTransactionModal(
         amount: Double,
         note: String,
         timestamp: Long
-    ) -> Unit
+    ) -> Unit,
+    defaultCurrencyCode: String = "BDT",
+    marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference(),
+    onExecuteTransferWithRate: ((
+        fromId: Long,
+        toId: Long,
+        amount: Double,
+        note: String,
+        timestamp: Long,
+        customConversionRate: Double?
+    ) -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val crystal = LocalCrystalColors.current
@@ -121,10 +134,30 @@ fun SmartTransactionModal(
         )
     }
     var selectedTimestamp by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var customRateText by remember(selectedAccountId, toAccountId) { mutableStateOf("") }
 
     val evaluatedAmount = remember(expression) {
         CalculatorEngine.evaluate(expression) ?: 0.0
     }
+    val activeAccount = accounts.firstOrNull { it.id == selectedAccountId }
+    val destAccount = accounts.firstOrNull { it.id == toAccountId }
+    val activeCurrencyCode = activeAccount?.currencyCode ?: defaultCurrencyCode
+    val activeCurrency = AppCurrency.fromCode(activeCurrencyCode)
+    val isCrossCurrencyTransfer = mode == TransactionType.TRANSFER &&
+        activeAccount != null &&
+        destAccount != null &&
+        !activeAccount.currencyCode.equals(destAccount.currencyCode, ignoreCase = true)
+    val marketTransferRate = remember(activeAccount?.currencyCode, destAccount?.currencyCode, marketSnapshot) {
+        if (activeAccount != null && destAccount != null &&
+            !activeAccount.currencyCode.equals(destAccount.currencyCode, ignoreCase = true)
+        ) {
+            marketSnapshot.convertCurrencyCode(1.0, activeAccount.currencyCode, destAccount.currencyCode)
+        } else {
+            1.0
+        }
+    }
+    val effectiveTransferRate = customRateText.toDoubleOrNull()?.takeIf { it > 0.0 && it.isFinite() }
+        ?: marketTransferRate
 
     val availableCategories = remember(mode) {
         when (mode) {
@@ -257,7 +290,7 @@ fun SmartTransactionModal(
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
-                                text = strings.amountLabel,
+                                text = "${strings.amountLabel} • ${activeCurrency.shortBadge()}",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = crystal.mutedText
                             )
@@ -270,7 +303,7 @@ fun SmartTransactionModal(
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = BdtFormatter.format(evaluatedAmount, language),
+                        text = BdtFormatter.formatCurrency(evaluatedAmount, activeCurrencyCode, language),
                         style = MaterialTheme.typography.headlineLarge.copy(
                             fontFamily = JetBrainsMonoFamily,
                             fontWeight = FontWeight.Bold
@@ -282,6 +315,43 @@ fun SmartTransactionModal(
                         },
                         modifier = Modifier.testTag("calc_display_amount")
                     )
+                    if (mode == TransactionType.TRANSFER && activeAccount != null && destAccount != null) {
+                        val routePreview = AccountNameResolver.formatTransferRouteTitle(
+                            fromAccount = activeAccount,
+                            toAccount = destAccount,
+                            allAccounts = accounts,
+                            language = language
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = routePreview,
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 2,
+                            modifier = Modifier.testTag("transfer_route_preview")
+                        )
+                        if (isCrossCurrencyTransfer) {
+                            val srcLabel = AccountNameResolver.currencyShortLabel(activeAccount.currencyCode)
+                            val dstCur = AppCurrency.fromCode(destAccount.currencyCode)
+                            val converted = evaluatedAmount * effectiveTransferRate
+                            val rateFormatted = BdtFormatter.formatCurrency(effectiveTransferRate, dstCur.code, language)
+                            val oneDigit = if (language == AppLanguage.BN) "১" else "1"
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = if (evaluatedAmount > 0.0) {
+                                    "${BdtFormatter.formatCurrency(evaluatedAmount, activeAccount.currencyCode, language)} → ${BdtFormatter.formatCurrency(converted, dstCur.code, language)} • $oneDigit $srcLabel = $rateFormatted"
+                                } else {
+                                    "$oneDigit $srcLabel = $rateFormatted"
+                                },
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontFamily = JetBrainsMonoFamily,
+                                    fontWeight = FontWeight.SemiBold
+                                ),
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.testTag("transfer_conversion_preview")
+                            )
+                        }
+                    }
                 }
             }
 
@@ -316,10 +386,13 @@ fun SmartTransactionModal(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     accounts.forEach { acc ->
+                        val chipName = AccountNameResolver.formatTransferEndpoint(acc, accounts, language)
                         FilterChip(
                             selected = selectedAccountId == acc.id,
                             onClick = { selectedAccountId = acc.id },
-                            label = { Text("${acc.name} • ${BdtFormatter.format(acc.balance, language)}") }
+                            label = {
+                                Text("$chipName • ${BdtFormatter.formatCurrency(acc.balance, acc.currencyCode, language)}")
+                            }
                         )
                     }
                 }
@@ -332,12 +405,42 @@ fun SmartTransactionModal(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     accounts.forEach { acc ->
+                        val chipName = AccountNameResolver.formatTransferEndpoint(acc, accounts, language)
                         FilterChip(
                             selected = toAccountId == acc.id,
                             onClick = { toAccountId = acc.id },
-                            label = { Text("${acc.name} • ${BdtFormatter.format(acc.balance, language)}") }
+                            label = {
+                                Text("$chipName • ${BdtFormatter.formatCurrency(acc.balance, acc.currencyCode, language)}")
+                            }
                         )
                     }
+                }
+
+                if (isCrossCurrencyTransfer && activeAccount != null && destAccount != null) {
+                    val srcLabel = AccountNameResolver.currencyShortLabel(activeAccount.currencyCode)
+                    val dstLabel = AccountNameResolver.currencyShortLabel(destAccount.currencyCode)
+                    val rateHint = String.format(Locale.US, "%.2f", marketTransferRate)
+                    OutlinedTextField(
+                        value = customRateText,
+                        onValueChange = { input ->
+                            customRateText = input.filter { ch -> ch.isDigit() || ch == '.' }
+                        },
+                        label = {
+                            Text(
+                                if (language == AppLanguage.BN) {
+                                    "এক্সচেঞ্জ রেট (১ $srcLabel = ? $dstLabel)"
+                                } else {
+                                    "Exchange Rate (1 $srcLabel = ? $dstLabel)"
+                                }
+                            )
+                        },
+                        placeholder = { Text(rateHint) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("transfer_rate_input")
+                    )
                 }
             } else {
                 OutlinedTextField(
@@ -359,10 +462,13 @@ fun SmartTransactionModal(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     accounts.forEach { acc ->
+                        val chipName = AccountNameResolver.formatTransferEndpoint(acc, accounts, language)
                         FilterChip(
                             selected = selectedAccountId == acc.id,
                             onClick = { selectedAccountId = acc.id },
-                            label = { Text("${acc.name} (${BdtFormatter.format(acc.balance, language)})") }
+                            label = {
+                                Text("$chipName (${BdtFormatter.formatCurrency(acc.balance, acc.currencyCode, language)})")
+                            }
                         )
                     }
                 }
@@ -476,7 +582,19 @@ fun SmartTransactionModal(
                 onClick = {
                     triggerHaptic()
                     if (mode == TransactionType.TRANSFER) {
-                        onExecuteTransfer(selectedAccountId, toAccountId, evaluatedAmount, note, selectedTimestamp)
+                        val parsedCustomRate = customRateText.toDoubleOrNull()?.takeIf { it > 0.0 && it.isFinite() }
+                        if (onExecuteTransferWithRate != null) {
+                            onExecuteTransferWithRate(
+                                selectedAccountId,
+                                toAccountId,
+                                evaluatedAmount,
+                                note,
+                                selectedTimestamp,
+                                parsedCustomRate
+                            )
+                        } else {
+                            onExecuteTransfer(selectedAccountId, toAccountId, evaluatedAmount, note, selectedTimestamp)
+                        }
                     } else {
                         val finalTitle = title.ifBlank {
                             if (enableSubcategories && selectedSubcategory.isNotBlank()) selectedSubcategory

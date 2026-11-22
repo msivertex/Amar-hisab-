@@ -1,6 +1,8 @@
 package com.example.localization
 
+import com.example.data.model.AppCurrency
 import java.util.Calendar
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -12,17 +14,71 @@ enum class AppLanguage(val code: String, val label: String) {
 object BdtFormatter {
     private val banglaDigits = charArrayOf('০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯')
 
-    fun format(amount: Double, language: AppLanguage, includeSign: Boolean = false): String {
+    fun format(amount: Double, language: AppLanguage, includeSign: Boolean = false): String =
+        formatCurrency(amount, AppCurrency.BDT.code, language, includeSign)
+
+    fun formatCurrency(
+        amount: Double,
+        currencyCode: String,
+        language: AppLanguage,
+        includeSign: Boolean = false
+    ): String {
+        val currency = AppCurrency.fromCode(currencyCode)
+        val sign = when {
+            amount < 0 -> "-"
+            includeSign && amount > 0 -> "+"
+            else -> ""
+        }
+        val numeric = formatAmountOnly(abs(amount), currencyCode, language, includeSign = false)
+        return "${sign}${currency.symbol} $numeric"
+    }
+
+    fun formatAmountOnly(
+        amount: Double,
+        currencyCode: String,
+        language: AppLanguage,
+        includeSign: Boolean = false
+    ): String {
+        val currency = AppCurrency.fromCode(currencyCode)
         val isNegative = amount < 0
-        val rounded = abs(amount).roundToLong()
-        val raw = formatIndianGrouping(rounded)
+        val absVal = abs(amount)
+        val hasFractional = currency.decimalPlaces > 0 && abs(absVal - absVal.roundToLong()) >= 0.005
+        val raw = if (hasFractional) {
+            val decimals = if (currency == AppCurrency.KWD && abs(absVal * 100 - (absVal * 100).roundToLong()) >= 0.05) 3 else 2
+            val formattedUs = String.format(Locale.US, "%.${decimals}f", absVal)
+            val dotIdx = formattedUs.indexOf('.')
+            val wholeLong = formattedUs.substring(0, dotIdx).toLongOrNull() ?: absVal.toLong()
+            val wholeFormatted = if (currency.usesIndianGrouping) {
+                formatIndianGrouping(wholeLong)
+            } else {
+                formatInternationalGrouping(wholeLong)
+            }
+            val fracPart = formattedUs.substring(dotIdx + 1)
+            "$wholeFormatted.$fracPart"
+        } else {
+            val rounded = absVal.roundToLong()
+            if (currency.usesIndianGrouping) formatIndianGrouping(rounded) else formatInternationalGrouping(rounded)
+        }
         val localized = if (language == AppLanguage.BN) toBanglaDigits(raw) else raw
         val sign = when {
             isNegative -> "-"
             includeSign && amount > 0 -> "+"
             else -> ""
         }
-        return "${sign}৳ $localized"
+        return "$sign$localized"
+    }
+
+    private fun formatInternationalGrouping(number: Long): String {
+        val s = number.toString()
+        if (s.length <= 3) return s
+        val sb = StringBuilder()
+        var count = 0
+        for (i in s.lastIndex downTo 0) {
+            if (count > 0 && count % 3 == 0) sb.append(',')
+            sb.append(s[i])
+            count++
+        }
+        return sb.reverse().toString()
     }
 
     fun formatNumber(value: Int, language: AppLanguage): String {
@@ -394,7 +450,18 @@ data class MarketHubStrings(
     val mfsAmountLabel: String,
     val mfsChargeLabel: String,
     val mfsTotalDeductedLabel: String,
-    val mfsNetReceivedLabel: String
+    val mfsNetReceivedLabel: String,
+    val homeCardTitle: String,
+    val homeCardSubtitle: String,
+    val homeCardTapCta: String,
+    val hubSubtitle: String,
+    val backToOptionsLabel: String,
+    val optionCurrencyDesc: String,
+    val optionGoldDesc: String,
+    val optionEssentialsDesc: String,
+    val optionBankDesc: String,
+    val optionRemittanceWalletTitle: String,
+    val optionRemittanceWalletDesc: String
 )
 
 data class DateTimePermissionsStrings(
@@ -442,6 +509,34 @@ data class CustomerSupportStrings(
     val whatsappCopyBtn: String,
     val whatsappCopiedNotice: String,
     val assistantLabel: String
+)
+
+data class ReceiptVoiceStrings(
+    val receiptScanTitle: String,
+    val receiptScanSubtitle: String,
+    val scanWithCamera: String,
+    val pickReceiptPhoto: String,
+    val cameraUnavailableNotice: String,
+    val analyzingReceipt: String,
+    val detectedMerchant: String,
+    val detectedAmount: String,
+    val detectedCategory: String,
+    val itemsSummary: String,
+    val saveScannedExpense: String,
+    val voiceEntryTitle: String,
+    val voiceEntrySubtitle: String,
+    val tapMicToSpeak: String,
+    val voiceInputHint: String,
+    val parseEntryBtn: String
+)
+
+data class MultiCurrencyStrings(
+    val mainCurrencySubtitle: String,
+    val secondaryCurrencyLabel: String,
+    val secondaryCurrencySubtitle: String,
+    val secondaryCurrencyNotSet: String,
+    val accountCurrencyLabel: String,
+    val bankCountryRegionLabel: String
 )
 
 data class AppStrings(
@@ -613,24 +708,6 @@ data class AppStrings(
     val searchBtn: String,
     val sourcesLabel: String,
 
-    // Receipt Scan & Voice
-    val receiptScanTitle: String,
-    val receiptScanSubtitle: String,
-    val scanWithCamera: String,
-    val pickReceiptPhoto: String,
-    val cameraUnavailableNotice: String,
-    val analyzingReceipt: String,
-    val detectedMerchant: String,
-    val detectedAmount: String,
-    val detectedCategory: String,
-    val itemsSummary: String,
-    val saveScannedExpense: String,
-    val voiceEntryTitle: String,
-    val voiceEntrySubtitle: String,
-    val tapMicToSpeak: String,
-    val voiceInputHint: String,
-    val parseEntryBtn: String,
-
     // Settings & Security (Module G)
     val settingsTitle: String,
     val settingsProfileSection: String,
@@ -708,7 +785,9 @@ data class AppStrings(
     val biometricSecurity: BiometricSecurityStrings,
     val marketHub: MarketHubStrings,
     val dateTimePermissions: DateTimePermissionsStrings,
-    val customerSupport: CustomerSupportStrings
+    val customerSupport: CustomerSupportStrings,
+    val receiptVoice: ReceiptVoiceStrings,
+    val multiCurrency: MultiCurrencyStrings
 ) {
     val editNameDesc: String get() = profileAvatar.editNameDesc
     val saveNameDesc: String get() = profileAvatar.saveNameDesc
@@ -730,6 +809,30 @@ data class AppStrings(
     val restoreGooglePhoto: String get() = profileAvatar.restoreGooglePhoto
     val offlineGuestLabel: String get() = profileAvatar.offlineGuestLabel
     val googleAccountRowTitle: String get() = profileAvatar.googleAccountRowTitle
+
+    val receiptScanTitle: String get() = receiptVoice.receiptScanTitle
+    val receiptScanSubtitle: String get() = receiptVoice.receiptScanSubtitle
+    val scanWithCamera: String get() = receiptVoice.scanWithCamera
+    val pickReceiptPhoto: String get() = receiptVoice.pickReceiptPhoto
+    val cameraUnavailableNotice: String get() = receiptVoice.cameraUnavailableNotice
+    val analyzingReceipt: String get() = receiptVoice.analyzingReceipt
+    val detectedMerchant: String get() = receiptVoice.detectedMerchant
+    val detectedAmount: String get() = receiptVoice.detectedAmount
+    val detectedCategory: String get() = receiptVoice.detectedCategory
+    val itemsSummary: String get() = receiptVoice.itemsSummary
+    val saveScannedExpense: String get() = receiptVoice.saveScannedExpense
+    val voiceEntryTitle: String get() = receiptVoice.voiceEntryTitle
+    val voiceEntrySubtitle: String get() = receiptVoice.voiceEntrySubtitle
+    val tapMicToSpeak: String get() = receiptVoice.tapMicToSpeak
+    val voiceInputHint: String get() = receiptVoice.voiceInputHint
+    val parseEntryBtn: String get() = receiptVoice.parseEntryBtn
+
+    val mainCurrencySubtitle: String get() = multiCurrency.mainCurrencySubtitle
+    val secondaryCurrencyLabel: String get() = multiCurrency.secondaryCurrencyLabel
+    val secondaryCurrencySubtitle: String get() = multiCurrency.secondaryCurrencySubtitle
+    val secondaryCurrencyNotSet: String get() = multiCurrency.secondaryCurrencyNotSet
+    val accountCurrencyLabel: String get() = multiCurrency.accountCurrencyLabel
+    val bankCountryRegionLabel: String get() = multiCurrency.bankCountryRegionLabel
 
     fun greetingForHour(hourOfDay: Int): String = when (hourOfDay) {
         in 5..11 -> greetingMorning
@@ -904,24 +1007,6 @@ object StringsProvider {
         askMarketHint = "Ask e.g. USD to BDT rate or bKash cashout fee...",
         searchBtn = "Search",
         sourcesLabel = "Grounded Sources",
-
-        receiptScanTitle = "AI Receipt Scanner",
-        receiptScanSubtitle = "Scan with camera or pick a receipt photo to extract BDT total & category automatically",
-        scanWithCamera = "Scan with Camera",
-        pickReceiptPhoto = "Choose Receipt Photo",
-        cameraUnavailableNotice = "Camera app unavailable on this device — please choose a photo from gallery.",
-        analyzingReceipt = "Reading receipt with Gemini Vision...",
-        detectedMerchant = "Merchant",
-        detectedAmount = "Total Amount",
-        detectedCategory = "Category",
-        itemsSummary = "Detected Items",
-        saveScannedExpense = "Save as Expense",
-
-        voiceEntryTitle = "Voice & Smart Entry",
-        voiceEntrySubtitle = "Speak or type naturally in Bangla or English",
-        tapMicToSpeak = "Tap Mic to Speak",
-        voiceInputHint = "e.g. \"Spent 380 taka on groceries at Shwapno from bKash\"",
-        parseEntryBtn = "Smart Parse & Fill",
 
         settingsTitle = "Settings",
         settingsProfileSection = "Profile",
@@ -1304,7 +1389,18 @@ object StringsProvider {
             mfsAmountLabel = "Cash-Out Amount (৳)",
             mfsChargeLabel = "Cash-Out Charge",
             mfsTotalDeductedLabel = "Total Deducted",
-            mfsNetReceivedLabel = "Net If Fee Inside"
+            mfsNetReceivedLabel = "Net If Fee Inside",
+            homeCardTitle = "Live Market",
+            homeCardSubtitle = "Currency, Gold, Essentials, Bank FDR/DPS & Remittance",
+            homeCardTapCta = "5 Tools",
+            hubSubtitle = "Select an option to open its live rates & calculator",
+            backToOptionsLabel = "All 5 Options",
+            optionCurrencyDesc = "15 currencies (KWD, SAR, AED, USD, EUR, INR, BDT...) starting from 1",
+            optionGoldDesc = "22K, 21K, 18K & Traditional per vori/gram with currency switch",
+            optionEssentialsDesc = "Grouped daily grocery prices with search, filters & basket total",
+            optionBankDesc = "FDR & DPS tenure, rate & net maturity with e-TIN 10%/15% tax",
+            optionRemittanceWalletTitle = "Remittance & Wallet Fee",
+            optionRemittanceWalletDesc = "2.5% govt. cash incentive & bKash/Nagad cash-out charge"
         ),
         dateTimePermissions = DateTimePermissionsStrings(
             liveDeviceClockTitle = "Device Clock & Timezone",
@@ -1350,6 +1446,32 @@ object StringsProvider {
             whatsappCopyBtn = "Copy",
             whatsappCopiedNotice = "Number copied",
             assistantLabel = "Amar Hisab Support"
+        ),
+        receiptVoice = ReceiptVoiceStrings(
+            receiptScanTitle = "AI Receipt Scanner",
+            receiptScanSubtitle = "Scan with camera or pick a receipt photo to extract BDT total & category automatically",
+            scanWithCamera = "Scan with Camera",
+            pickReceiptPhoto = "Choose Receipt Photo",
+            cameraUnavailableNotice = "Camera app unavailable on this device — please choose a photo from gallery.",
+            analyzingReceipt = "Reading receipt with Gemini Vision...",
+            detectedMerchant = "Merchant",
+            detectedAmount = "Total Amount",
+            detectedCategory = "Category",
+            itemsSummary = "Detected Items",
+            saveScannedExpense = "Save as Expense",
+            voiceEntryTitle = "Voice & Smart Entry",
+            voiceEntrySubtitle = "Speak or type naturally in Bangla or English",
+            tapMicToSpeak = "Tap Mic to Speak",
+            voiceInputHint = "e.g. \"Spent 380 taka on groceries at Shwapno from bKash\"",
+            parseEntryBtn = "Smart Parse & Fill"
+        ),
+        multiCurrency = MultiCurrencyStrings(
+            mainCurrencySubtitle = "Home country reference, family & remittance tracking",
+            secondaryCurrencyLabel = "Current / Second Currency",
+            secondaryCurrencySubtitle = "Active work or living country currency",
+            secondaryCurrencyNotSet = "Tap to choose",
+            accountCurrencyLabel = "Account / Card Currency",
+            bankCountryRegionLabel = "Bank Country / Region"
         )
     )
 
@@ -1512,24 +1634,6 @@ object StringsProvider {
         askMarketHint = "যেমন: আজকের ডলার রেট বা বিকাশ ক্যাশ-আউট চার্জ...",
         searchBtn = "খুঁজুন",
         sourcesLabel = "তথ্যসূত্র",
-
-        receiptScanTitle = "এআই রসিদ স্ক্যানার",
-        receiptScanSubtitle = "ক্যামেরা দিয়ে স্ক্যান করুন বা রসিদের ছবি দিন—স্বয়ংক্রিয়ভাবে টাকা ও খাত বের হবে",
-        scanWithCamera = "ক্যামেরা দিয়ে স্ক্যান",
-        pickReceiptPhoto = "রসিদের ছবি বাছাই করুন",
-        cameraUnavailableNotice = "এই ডিভাইসে ক্যামেরা পাওয়া যায়নি—গ্যালারি থেকে ছবি বাছাই করুন।",
-        analyzingReceipt = "জেমিনি ভিশন রসিদ পড়ছে...",
-        detectedMerchant = "প্রতিষ্ঠান",
-        detectedAmount = "মোট টাকা",
-        detectedCategory = "খাত",
-        itemsSummary = "শনাক্তকৃত পণ্য",
-        saveScannedExpense = "ব্যয় হিসেবে সংরক্ষণ",
-
-        voiceEntryTitle = "ভয়েস ও স্মার্ট এন্ট্রি",
-        voiceEntrySubtitle = "বাংলা বা ইংরেজিতে বলুন বা লিখুন",
-        tapMicToSpeak = "মাইকে বলুন",
-        voiceInputHint = "যেমন: \"বিকাশ থেকে ৩৮০ টাকা স্বপ্ন বাজার\"",
-        parseEntryBtn = "স্মার্ট বিশ্লেষণ",
 
         settingsTitle = "সেটিংস",
         settingsProfileSection = "প্রোফাইল",
@@ -1912,7 +2016,18 @@ object StringsProvider {
             mfsAmountLabel = "ক্যাশ-আউট পরিমাণ (৳)",
             mfsChargeLabel = "ক্যাশ-আউট চার্জ",
             mfsTotalDeductedLabel = "মোট কাটা হবে",
-            mfsNetReceivedLabel = "চার্জ বাদে হাতে পাবেন"
+            mfsNetReceivedLabel = "চার্জ বাদে হাতে পাবেন",
+            homeCardTitle = "লাইভ বাজার ও রেট",
+            homeCardSubtitle = "কারেন্সি, স্বর্ণের দর, নিত্যপণ্য, ব্যাংক FDR/DPS ও রেমিট্যান্স",
+            homeCardTapCta = "৫টি টুল",
+            hubSubtitle = "যেকোনো একটি অপশনে ট্যাপ করে বিস্তারিত ও ক্যালকুলেটর দেখুন",
+            backToOptionsLabel = "সব ৫টি অপশন",
+            optionCurrencyDesc = "১৫টি মুদ্রা (KWD, SAR, AED, USD, EUR, INR, BDT...) — ১ থেকে শুরু",
+            optionGoldDesc = "২২K, ২১K, ১৮K ও সনাতন — ভরি/গ্রাম ও মুদ্রা পরিবর্তন",
+            optionEssentialsDesc = "চাল, ডাল, তেল, ডিম ও সবজির বাজারদর — সার্চ ও তালিকা",
+            optionBankDesc = "ব্যাংক FDR ও DPS মেয়াদ, সুদ ও ই-টিআইএন করসহ প্রাপ্য",
+            optionRemittanceWalletTitle = "রেমিট্যান্স ও ওয়ালেট চার্জ",
+            optionRemittanceWalletDesc = "২.৫% সরকারি প্রণোদনা ও বিকাশ/নগদ ক্যাশ-আউট চার্জ"
         ),
         dateTimePermissions = DateTimePermissionsStrings(
             liveDeviceClockTitle = "ডিভাইস সময় ও টাইমজোন",
@@ -1958,6 +2073,32 @@ object StringsProvider {
             whatsappCopyBtn = "কপি",
             whatsappCopiedNotice = "নম্বর কপি হয়েছে",
             assistantLabel = "আমার হিসাব সাপোর্ট"
+        ),
+        receiptVoice = ReceiptVoiceStrings(
+            receiptScanTitle = "এআই রসিদ স্ক্যানার",
+            receiptScanSubtitle = "ক্যামেরা দিয়ে স্ক্যান করুন বা রসিদের ছবি দিন—স্বয়ংক্রিয়ভাবে টাকা ও খাত বের হবে",
+            scanWithCamera = "ক্যামেরা দিয়ে স্ক্যান",
+            pickReceiptPhoto = "রসিদের ছবি বাছাই করুন",
+            cameraUnavailableNotice = "এই ডিভাইসে ক্যামেরা পাওয়া যায়নি—গ্যালারি থেকে ছবি বাছাই করুন।",
+            analyzingReceipt = "জেমিনি ভিশন রসিদ পড়ছে...",
+            detectedMerchant = "প্রতিষ্ঠান",
+            detectedAmount = "মোট টাকা",
+            detectedCategory = "খাত",
+            itemsSummary = "শনাক্তকৃত পণ্য",
+            saveScannedExpense = "ব্যয় হিসেবে সংরক্ষণ",
+            voiceEntryTitle = "ভয়েস ও স্মার্ট এন্ট্রি",
+            voiceEntrySubtitle = "বাংলা বা ইংরেজিতে বলুন বা লিখুন",
+            tapMicToSpeak = "মাইকে বলুন",
+            voiceInputHint = "যেমন: \"বিকাশ থেকে ৩৮০ টাকা স্বপ্ন বাজার\"",
+            parseEntryBtn = "স্মার্ট বিশ্লেষণ"
+        ),
+        multiCurrency = MultiCurrencyStrings(
+            mainCurrencySubtitle = "দেশের হিসাব, পরিবার ও রেমিট্যান্স ট্র্যাকিংয়ের মূল মুদ্রা",
+            secondaryCurrencyLabel = "বর্তমান / দ্বিতীয় মুদ্রা",
+            secondaryCurrencySubtitle = "বর্তমান বসবাস বা কর্মস্থলের দেশের মুদ্রা",
+            secondaryCurrencyNotSet = "নির্বাচন করুন",
+            accountCurrencyLabel = "কার্ড / অ্যাকাউন্টের মুদ্রা",
+            bankCountryRegionLabel = "ব্যাংকের দেশ / অঞ্চল"
         )
     )
 

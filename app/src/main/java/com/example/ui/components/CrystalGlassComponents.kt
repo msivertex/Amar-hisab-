@@ -110,6 +110,7 @@ import com.example.core.GoogleAccountProfile
 import com.example.core.GoogleAuthManager
 import com.example.data.local.AccountEntity
 import com.example.data.model.AccountType
+import com.example.data.model.AppCurrency
 import com.example.data.model.AppTab
 import com.example.data.model.AuthMode
 import com.example.data.model.ExpenseCategory
@@ -117,8 +118,14 @@ import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
 import com.example.ui.theme.HindSiliguriFamily
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import com.example.ui.theme.JetBrainsMonoFamily
 import com.example.ui.theme.LocalCrystalColors
+import com.example.ui.theme.NumericCardBalanceStyle
+import com.example.ui.theme.NumericDisplayFontFamily
+import com.example.ui.theme.NumericPeekingBadgeStyle
 import com.example.ui.theme.SkyCyanBright
 import com.example.ui.theme.SkyCyanPrimary
 
@@ -269,9 +276,24 @@ fun AccountVisualCard(
     elevation: Dp = 18.dp,
     onClick: (() -> Unit)? = null
 ) {
+    if (account.type == AccountType.CASH) {
+        CashWalletVisualCard(
+            account = account,
+            language = language,
+            strings = strings,
+            modifier = modifier,
+            compact = compact,
+            isPeekingBackground = isPeekingBackground,
+            elevation = elevation,
+            onClick = onClick
+        )
+        return
+    }
+
     val gradientColors = resolveAccountCardGradient(account)
     val shadowTint = gradientColors.first()
     val shape = RoundedCornerShape(24.dp)
+    val accountCurrency = AppCurrency.fromCode(account.currencyCode)
     val cardTypeLabel = when (account.type) {
         AccountType.DEBIT_BANK -> strings.dashboard.cardTypeDebit
         AccountType.CREDIT_CARD -> strings.dashboard.cardTypeCredit
@@ -371,9 +393,10 @@ fun AccountVisualCard(
                                 .size(if (isPeekingBackground) 16.dp else 18.dp)
                         )
                     }
+                    val resolvedCardName = com.example.data.model.AccountNameResolver.resolveAccountName(account, language)
                     Column {
                         Text(
-                            text = account.name.ifBlank { account.bankOrProvider },
+                            text = resolvedCardName,
                             style = (if (isPeekingBackground) {
                                 MaterialTheme.typography.titleSmall
                             } else {
@@ -385,7 +408,7 @@ fun AccountVisualCard(
                         )
                         val subLabel = if (isPeekingBackground) {
                             if (account.bankOrProvider.isNotBlank() &&
-                                !account.bankOrProvider.equals(account.name, ignoreCase = true)
+                                !account.bankOrProvider.equals(resolvedCardName, ignoreCase = true)
                             ) {
                                 "$cardTypeLabel • ${account.bankOrProvider}"
                             } else {
@@ -418,19 +441,37 @@ fun AccountVisualCard(
                         border = BorderStroke(0.7.dp, Color.White.copy(alpha = 0.28f))
                     ) {
                         Text(
-                            text = BdtFormatter.format(account.balance, language),
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontFamily = JetBrainsMonoFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 12.sp
-                            ),
-                            color = Color.White.copy(alpha = 0.92f),
+                            text = BdtFormatter.formatCurrency(account.balance, account.currencyCode, language),
+                            style = NumericPeekingBadgeStyle,
+                            color = Color.White.copy(alpha = 0.96f),
                             maxLines = 1,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     }
-                } else if (account.type != AccountType.CASH) {
-                    CardNetworkOrProviderBadge(account = account)
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.24f),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(0.7.dp, Color.White.copy(alpha = 0.34f))
+                        ) {
+                            Text(
+                                text = accountCurrency.shortBadge(),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.5.sp
+                                ),
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            )
+                        }
+                        if (account.type != AccountType.CASH) {
+                            CardNetworkOrProviderBadge(account = account)
+                        }
+                    }
                 }
             }
 
@@ -486,17 +527,19 @@ fun AccountVisualCard(
                             } else {
                                 strings.availableBalance
                             },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.82f)
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Medium
+                            ),
+                            color = Color.White.copy(alpha = 0.78f)
                         )
                         Text(
-                            text = BdtFormatter.format(account.balance, language),
-                            style = MaterialTheme.typography.headlineMedium.copy(
-                                fontFamily = JetBrainsMonoFamily,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = if (compact) 23.sp else 26.sp
+                            text = BdtFormatter.formatCurrency(account.balance, account.currencyCode, language),
+                            style = NumericCardBalanceStyle.copy(
+                                fontSize = if (compact) 23.5.sp else 26.5.sp
                             ),
-                            color = Color.White
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
 
@@ -528,9 +571,22 @@ fun AccountVisualCard(
 
                 if (account.type == AccountType.CREDIT_CARD && account.creditLimit > 0.0) {
                     Text(
-                        text = "${strings.creditLimitShort}: ${BdtFormatter.format(account.creditLimit, language)}",
+                        text = buildAnnotatedString {
+                            withStyle(SpanStyle(fontWeight = FontWeight.Normal)) {
+                                append("${strings.creditLimitShort}: ")
+                            }
+                            withStyle(
+                                SpanStyle(
+                                    fontFamily = NumericDisplayFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFeatureSettings = "tnum"
+                                )
+                            ) {
+                                append(BdtFormatter.formatCurrency(account.creditLimit, account.currencyCode, language))
+                            }
+                        },
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.84f)
+                        color = Color.White.copy(alpha = 0.86f)
                     )
                 }
             }
@@ -840,154 +896,68 @@ private fun NavTabItem(
 }
 
 /**
- * Modern minimalist financial emblem combining a geometric Wallet/Ledger with the
- * Bangladeshi Taka symbol (৳) inside a glossy Sky Cyan & Royal Blue squircle badge.
+ * Unified "আমার হিসাব" (Amar Hisab) brand logo badge.
+ * Uses the exact same Bangladeshi Taka note & coin artwork (`R.drawable.img_amar_hisab_logo`)
+ * configured in the adaptive launcher icon, framed with Crystal Liquid gloss and adaptive
+ * elevation so the installed app icon and every in-app/splash logo placement match 100%.
  */
 @Composable
 fun AmarHisabLogoBadge(
     modifier: Modifier = Modifier,
     size: Dp = 116.dp
 ) {
-    val cornerRadius = size * 0.28f
+    val crystal = LocalCrystalColors.current
+    val cornerRadius = size * 0.26f
     val shape = RoundedCornerShape(cornerRadius)
-    val takaFontSize = (size.value * 0.27f).sp
+    val glowPrimary = MaterialTheme.colorScheme.primary
+    val glowSecondary = MaterialTheme.colorScheme.secondary
 
     Box(
         modifier = modifier
             .size(size)
             .shadow(
-                elevation = 24.dp,
+                elevation = if (crystal.isDark) 20.dp else 24.dp,
                 shape = shape,
-                ambientColor = Color(0xFF0284C7).copy(alpha = 0.44f),
-                spotColor = Color(0xFF1D4ED8).copy(alpha = 0.48f)
+                ambientColor = glowPrimary.copy(alpha = if (crystal.isDark) 0.55f else 0.42f),
+                spotColor = glowSecondary.copy(alpha = if (crystal.isDark) 0.60f else 0.46f)
             )
             .clip(shape)
-            .background(
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        Color(0xFF38BDF8), // Sky Cyan Highlight
-                        Color(0xFF0284C7), // Sky Cyan Primary
-                        Color(0xFF1D4ED8), // Royal Blue
-                        Color(0xFF1E3A8A)  // Deep Royal Indigo
-                    ),
-                    start = Offset(0f, 0f),
-                    end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
-                )
-            )
+            .background(MaterialTheme.colorScheme.primary)
             .border(
-                width = 1.6.dp,
+                width = 1.8.dp,
                 brush = Brush.linearGradient(
                     colors = listOf(
-                        Color.White.copy(alpha = 0.85f),
-                        Color.White.copy(alpha = 0.20f)
+                        Color.White.copy(alpha = if (crystal.isDark) 0.72f else 0.92f),
+                        Color.White.copy(alpha = if (crystal.isDark) 0.18f else 0.28f)
                     )
                 ),
                 shape = shape
             ),
         contentAlignment = Alignment.Center
     ) {
-        // Glossy specular sheen & geometric Wallet/Ledger vector paths
+        Image(
+            painter = painterResource(id = R.drawable.img_amar_hisab_logo),
+            contentDescription = "Amar Hisab Logo",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("unified_brand_logo_image")
+        )
+
+        // Subtle Crystal Liquid specular top-left glass reflection without obscuring the motif
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = this.size.width
             val h = this.size.height
-
-            // Soft top-left crystal sheen
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(Color.White.copy(alpha = 0.34f), Color.Transparent),
-                    center = Offset(w * 0.24f, h * 0.16f),
-                    radius = w * 0.62f
+                    colors = listOf(Color.White.copy(alpha = 0.20f), Color.Transparent),
+                    center = Offset(w * 0.22f, h * 0.14f),
+                    radius = w * 0.54f
                 ),
-                center = Offset(w * 0.24f, h * 0.16f),
-                radius = w * 0.62f
-            )
-
-            // Subtle bottom-right glow
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color(0xFF67E8F9).copy(alpha = 0.22f), Color.Transparent),
-                    center = Offset(w * 0.88f, h * 0.88f),
-                    radius = w * 0.50f
-                ),
-                center = Offset(w * 0.88f, h * 0.88f),
-                radius = w * 0.50f
-            )
-
-            // Top ledger bookmark / page fold silhouette behind the main wallet body
-            val flapPath = Path().apply {
-                moveTo(w * 0.26f, h * 0.33f)
-                lineTo(w * 0.64f, h * 0.22f)
-                quadraticTo(w * 0.72f, h * 0.20f, w * 0.75f, h * 0.27f)
-                lineTo(w * 0.78f, h * 0.34f)
-                close()
-            }
-            drawPath(
-                path = flapPath,
-                color = Color.White.copy(alpha = 0.28f)
-            )
-
-            // Main frosted-white Wallet / Ledger body
-            val walletLeft = w * 0.20f
-            val walletTop = h * 0.31f
-            val walletW = w * 0.60f
-            val walletH = h * 0.45f
-            val walletRadius = w * 0.095f
-
-            drawRoundRect(
-                color = Color.White.copy(alpha = 0.18f),
-                topLeft = Offset(walletLeft, walletTop),
-                size = Size(walletW, walletH),
-                cornerRadius = CornerRadius(walletRadius, walletRadius)
-            )
-            drawRoundRect(
-                color = Color.White.copy(alpha = 0.96f),
-                topLeft = Offset(walletLeft, walletTop),
-                size = Size(walletW, walletH),
-                cornerRadius = CornerRadius(walletRadius, walletRadius),
-                style = Stroke(
-                    width = w * 0.044f,
-                    cap = StrokeCap.Round,
-                    join = StrokeJoin.Round
-                )
-            )
-
-            // Ledger spine / top fold rule
-            drawLine(
-                color = Color.White.copy(alpha = 0.55f),
-                start = Offset(walletLeft + w * 0.06f, walletTop + h * 0.09f),
-                end = Offset(walletLeft + walletW - w * 0.14f, walletTop + h * 0.09f),
-                strokeWidth = w * 0.022f,
-                cap = StrokeCap.Round
-            )
-
-            // Right-edge minimalist wallet clasp tab
-            val claspW = w * 0.14f
-            val claspH = h * 0.14f
-            drawRoundRect(
-                color = Color.White,
-                topLeft = Offset(walletLeft + walletW - claspW * 0.65f, walletTop + (walletH - claspH) * 0.5f),
-                size = Size(claspW, claspH),
-                cornerRadius = CornerRadius(claspH * 0.42f, claspH * 0.42f)
-            )
-            drawCircle(
-                color = Color(0xFF1D4ED8),
-                radius = w * 0.022f,
-                center = Offset(walletLeft + walletW - claspW * 0.08f, walletTop + walletH * 0.5f)
+                center = Offset(w * 0.22f, h * 0.14f),
+                radius = w * 0.54f
             )
         }
-
-        // Crisp Taka (৳) glyph centered inside the wallet/ledger emblem
-        Text(
-            text = "৳",
-            style = MaterialTheme.typography.headlineLarge.copy(
-                fontFamily = HindSiliguriFamily,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = takaFontSize
-            ),
-            color = Color.White,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = size * 0.08f, end = size * 0.05f)
-        )
     }
 }
 

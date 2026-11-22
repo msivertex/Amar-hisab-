@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -30,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -47,6 +50,7 @@ import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -102,27 +106,38 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.example.R
 import com.example.data.local.AccountEntity
 import com.example.data.local.TransactionEntity
+import com.example.data.market.MarketSnapshot
+import com.example.data.market.MarketSyncUiState
+import com.example.data.model.AccountNameResolver
 import com.example.data.model.AccountType
+import com.example.data.model.AppCurrency
 import com.example.data.model.AuthMode
 import com.example.data.model.HomeLayoutStyle
 import com.example.data.model.HomeSectionId
 import com.example.data.model.LoanType
 import com.example.data.model.TransactionType
+import com.example.data.model.TransferNoteCodec
 import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
 import com.example.ui.components.AccountVisualCard
 import com.example.ui.components.CardNetworkOrProviderBadge
+import com.example.ui.components.CashWalletCompactCard
 import com.example.ui.components.CategoryIconBadge
 import com.example.ui.components.CrystalCard
 import com.example.ui.components.GoogleGLogo
@@ -130,6 +145,12 @@ import com.example.ui.components.UserProfileAvatar
 import com.example.ui.components.resolveAccountCardGradient
 import com.example.ui.theme.JetBrainsMonoFamily
 import com.example.ui.theme.LocalCrystalColors
+import com.example.ui.theme.NumericCompactCardBalanceStyle
+import com.example.ui.theme.NumericDisplayFontFamily
+import com.example.ui.theme.NumericHeroBalanceStyle
+import com.example.ui.theme.NumericInlineMetricStyle
+import com.example.ui.theme.NumericSummaryPrimaryStyle
+import com.example.ui.theme.NumericSummarySecondaryStyle
 import com.example.ui.theme.SkyCyanBright
 import com.example.ui.theme.SkyCyanPrimary
 import com.example.ui.viewmodel.MainUiState
@@ -154,10 +175,16 @@ fun HomeDashboardScreen(
     onUpdateName: (String) -> Unit = {},
     onPickGuestAvatar: (Uri) -> Unit = {},
     onClearGuestAvatar: () -> Unit = {},
-    onOpenPlan: () -> Unit = {}
+    onOpenPlan: () -> Unit = {},
+    marketSyncState: MarketSyncUiState = MarketSyncUiState(),
+    onOpenLiveMarket: () -> Unit = {},
+    onOpenAddAccount: () -> Unit = onOpenAllAccounts
 ) {
     val crystal = LocalCrystalColors.current
     val lang = state.prefs.language
+    val mainCurCode = state.prefs.mainCurrencyCode
+    val secondaryCur = state.prefs.secondaryCurrency
+    val marketSnapshot = marketSyncState.snapshot
     val haptic = LocalHapticFeedback.current
     val hapticsEnabled = state.prefs.hapticFeedbackEnabled
 
@@ -169,6 +196,40 @@ fun HomeDashboardScreen(
 
     val visibleSections = remember(state.prefs.homeSectionOrder, state.prefs.hiddenHomeSections) {
         state.prefs.homeSectionOrder.filter { it !in state.prefs.hiddenHomeSections }
+    }
+    val homeCurrencyBalances = remember(
+        state.accounts,
+        state.liquidBalancesByCurrency,
+        state.totalLiquidBalance,
+        mainCurCode,
+        secondaryCur
+    ) {
+        resolveHomeCurrencyBalances(
+            accounts = state.accounts,
+            liquidBalancesByCurrency = state.liquidBalancesByCurrency,
+            fallbackTotalLiquidBalance = state.totalLiquidBalance,
+            mainCurrencyCode = mainCurCode,
+            secondaryCurrency = secondaryCur
+        )
+    }
+    val mainCurrencyBalance = homeCurrencyBalances.firstOrNull()?.amount ?: 0.0
+    val mainCurrencyLiabilities = remember(state.accounts, mainCurCode) {
+        val mainNormalized = AppCurrency.fromCode(mainCurCode).code
+        state.accounts
+            .filter {
+                it.type == AccountType.CREDIT_CARD &&
+                    AppCurrency.fromCode(it.currencyCode).code == mainNormalized
+            }
+            .sumOf { it.balance.coerceAtLeast(0.0) }
+    }
+    val hasMultiCurrencyAccounts = remember(state.accounts, mainCurCode) {
+        val mainNormalized = AppCurrency.fromCode(mainCurCode).code
+        state.accounts.any { AppCurrency.fromCode(it.currencyCode).code != mainNormalized }
+    }
+    val displayNetWorth = if (hasMultiCurrencyAccounts) {
+        mainCurrencyBalance - mainCurrencyLiabilities
+    } else {
+        state.netWorth.netWorth
     }
 
     Box(
@@ -230,14 +291,15 @@ fun HomeDashboardScreen(
                         key(state.prefs.homeLayoutStyle) {
                             if (state.prefs.homeLayoutStyle == HomeLayoutStyle.BALANCE_CARD) {
                                 HeroBalanceSummaryCard(
-                                    totalBalance = state.totalLiquidBalance,
+                                    currencyBalances = homeCurrencyBalances,
                                     incomeThisMonth = state.incomeThisMonth,
                                     spentThisMonth = state.spentThisMonth,
                                     monthlyBudget = state.prefs.monthlyBudget,
-                                    netWorth = state.netWorth.netWorth,
+                                    netWorth = displayNetWorth,
                                     dailyAverage = state.dailyAverageSpend,
                                     language = lang,
                                     strings = strings,
+                                    mainCurrencyCode = mainCurCode,
                                     onOpenAllAccounts = {
                                         triggerHaptic()
                                         onOpenAllAccounts()
@@ -282,32 +344,51 @@ fun HomeDashboardScreen(
                                         }
                                         Text(
                                             text = strings.totalBalance,
-                                            style = MaterialTheme.typography.labelMedium,
+                                            style = MaterialTheme.typography.labelMedium.copy(
+                                                fontWeight = FontWeight.Medium
+                                            ),
                                             color = crystal.mutedText,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                     Spacer(modifier = Modifier.height(10.dp))
+                                    val mainEntry = homeCurrencyBalances.first()
+                                    val secondaryEntries = homeCurrencyBalances.drop(1)
                                     Text(
-                                        text = BdtFormatter.format(state.totalLiquidBalance, lang),
-                                        style = MaterialTheme.typography.titleLarge.copy(
-                                            fontFamily = JetBrainsMonoFamily,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 19.sp
-                                        ),
-                                        color = MaterialTheme.colorScheme.onSurface,
+                                        text = BdtFormatter.formatCurrency(mainEntry.amount, mainEntry.currency.code, lang),
+                                        style = NumericSummaryPrimaryStyle,
+                                        color = crystal.numericInk,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.testTag("home_total_balance_primary_amount")
                                     )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = strings.liquidAssetsHint,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = crystal.assetGreen,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    if (secondaryEntries.isNotEmpty()) {
+                                        val firstExtra = secondaryEntries.first()
+                                        Text(
+                                            text = BdtFormatter.formatCurrency(
+                                                firstExtra.amount,
+                                                firstExtra.currency.code,
+                                                lang
+                                            ),
+                                            style = NumericSummarySecondaryStyle,
+                                            color = crystal.numericInk,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.testTag("dual_balance_currency_${firstExtra.currency.code}")
+                                        )
+                                    } else {
+                                        Text(
+                                            text = strings.liquidAssetsHint,
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontWeight = FontWeight.Medium
+                                            ),
+                                            color = crystal.assetGreen,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
 
                                 CrystalCard(
@@ -338,7 +419,9 @@ fun HomeDashboardScreen(
                                         }
                                         Text(
                                             text = strings.spentThisMonth,
-                                            style = MaterialTheme.typography.labelMedium,
+                                            style = MaterialTheme.typography.labelMedium.copy(
+                                                fontWeight = FontWeight.Medium
+                                            ),
                                             color = crystal.mutedText,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -346,23 +429,41 @@ fun HomeDashboardScreen(
                                     }
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Text(
-                                        text = BdtFormatter.format(state.spentThisMonth, lang),
-                                        style = MaterialTheme.typography.titleLarge.copy(
-                                            fontFamily = JetBrainsMonoFamily,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 19.sp
-                                        ),
-                                        color = MaterialTheme.colorScheme.onSurface,
+                                        text = BdtFormatter.formatCurrency(state.spentThisMonth, mainCurCode, lang),
+                                        style = NumericSummaryPrimaryStyle,
+                                        color = crystal.numericInk,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.testTag("home_spent_month_amount")
                                     )
-                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Spacer(modifier = Modifier.height(5.dp))
+                                    val dailyAvgFormatted = BdtFormatter.formatCurrency(state.dailyAverageSpend, mainCurCode, lang)
                                     Text(
-                                        text = "${strings.dailyAverageLabel}: ${BdtFormatter.format(state.dailyAverageSpend, lang)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = crystal.mutedText,
+                                        text = buildAnnotatedString {
+                                            withStyle(
+                                                SpanStyle(
+                                                    color = crystal.mutedText,
+                                                    fontWeight = FontWeight.Normal
+                                                )
+                                            ) {
+                                                append("${strings.dailyAverageLabel}: ")
+                                            }
+                                            withStyle(
+                                                SpanStyle(
+                                                    fontFamily = NumericDisplayFontFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontFeatureSettings = "tnum",
+                                                    letterSpacing = (-0.2).sp,
+                                                    color = crystal.numericInk
+                                                )
+                                            ) {
+                                                append(dailyAvgFormatted)
+                                            }
+                                        },
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.testTag("home_daily_avg_text")
                                     )
                                 }
                             }
@@ -468,6 +569,10 @@ fun HomeDashboardScreen(
                                         onOpenAllAccounts = {
                                             triggerHaptic()
                                             onOpenAllAccounts()
+                                        },
+                                        onOpenAddAccount = {
+                                            triggerHaptic()
+                                            onOpenAddAccount()
                                         }
                                     )
                                 }
@@ -480,6 +585,10 @@ fun HomeDashboardScreen(
                                     onOpenAllAccounts = {
                                         triggerHaptic()
                                         onOpenAllAccounts()
+                                    },
+                                    onOpenAddAccount = {
+                                        triggerHaptic()
+                                        onOpenAddAccount()
                                     }
                                 )
                             }
@@ -493,6 +602,7 @@ fun HomeDashboardScreen(
                             topCategories = state.topCategories,
                             language = lang,
                             strings = strings,
+                            currencyCode = mainCurCode,
                             onEditBudget = onOpenProfileEdit
                         )
                     }
@@ -503,7 +613,8 @@ fun HomeDashboardScreen(
                             todaySpend = state.todaySpend,
                             dailyAvg = state.dailyAverageSpend,
                             language = lang,
-                            strings = strings
+                            strings = strings,
+                            currencyCode = mainCurCode
                         )
                     }
 
@@ -538,11 +649,17 @@ fun HomeDashboardScreen(
                                     modifier = Modifier.padding(vertical = 12.dp)
                                 )
                             } else {
+                                val accountsById = remember(state.accounts) {
+                                    state.accounts.associateBy { it.id }
+                                }
                                 recent.forEachIndexed { index, tx ->
+                                    val acc = accountsById[tx.accountId]
                                     TransactionRowItem(
                                         tx = tx,
-                                        accountName = state.accounts.firstOrNull { it.id == tx.accountId }?.name ?: "",
-                                        language = lang
+                                        accountName = acc?.let { AccountNameResolver.resolveAccountName(it, lang) }.orEmpty(),
+                                        language = lang,
+                                        accountsById = accountsById,
+                                        marketSnapshot = marketSyncState.snapshot
                                     )
                                     if (index < recent.lastIndex) {
                                         Spacer(modifier = Modifier.height(10.dp))
@@ -629,7 +746,7 @@ fun HomeDashboardScreen(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = BdtFormatter.format(loan.remainingAmount, lang),
+                                            text = BdtFormatter.formatCurrency(loan.remainingAmount, loan.currencyCode, lang),
                                             style = MaterialTheme.typography.labelLarge.copy(
                                                 fontFamily = JetBrainsMonoFamily,
                                                 fontWeight = FontWeight.Bold
@@ -749,98 +866,128 @@ fun HomeDashboardScreen(
 
                     HomeSectionId.FINANCIAL_HEALTH -> {
                         val isHealthy = state.incomeThisMonth >= state.spentThisMonth || state.netWorth.netWorth >= 0.0
-                        CrystalCard(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("home_section_FINANCIAL_HEALTH")
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            CrystalCard(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("home_section_FINANCIAL_HEALTH")
                             ) {
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(34.dp)
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(if (isHealthy) crystal.assetGreenBg else crystal.warningAmberBg),
-                                        contentAlignment = Alignment.Center
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Favorite,
-                                            contentDescription = null,
-                                            tint = if (isHealthy) crystal.assetGreen else crystal.warningAmber,
-                                            modifier = Modifier.size(18.dp)
-                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .size(34.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(if (isHealthy) crystal.assetGreenBg else crystal.warningAmberBg),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Favorite,
+                                                contentDescription = null,
+                                                tint = if (isHealthy) crystal.assetGreen else crystal.warningAmber,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        Column {
+                                            Text(
+                                                text = HomeSectionId.FINANCIAL_HEALTH.label(lang),
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = strings.dashboard.savingsRateLabel,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = crystal.mutedText
+                                            )
+                                        }
                                     }
-                                    Column {
+                                    Surface(
+                                        color = if (isHealthy) crystal.assetGreenBg else crystal.warningAmberBg,
+                                        shape = CircleShape
+                                    ) {
                                         Text(
-                                            text = HomeSectionId.FINANCIAL_HEALTH.label(lang),
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = strings.dashboard.savingsRateLabel,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = crystal.mutedText
+                                            text = if (isHealthy) strings.dashboard.financialHealthHealthy else strings.dashboard.financialHealthWatch,
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = if (isHealthy) crystal.assetGreen else crystal.warningAmber,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                         )
                                     }
                                 }
-                                Surface(
-                                    color = if (isHealthy) crystal.assetGreenBg else crystal.warningAmberBg,
-                                    shape = CircleShape
+
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Text(
-                                        text = if (isHealthy) strings.dashboard.financialHealthHealthy else strings.dashboard.financialHealthWatch,
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = if (isHealthy) crystal.assetGreen else crystal.warningAmber,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                                    )
+                                    Column {
+                                        Text(
+                                            text = strings.netWorth,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = crystal.mutedText
+                                        )
+                                        Text(
+                                            text = BdtFormatter.formatCurrency(state.netWorth.netWorth, mainCurCode, lang),
+                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                fontFamily = JetBrainsMonoFamily,
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = strings.dashboard.incomePillLabel,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = crystal.mutedText
+                                        )
+                                        Text(
+                                            text = BdtFormatter.formatCurrency(state.incomeThisMonth, mainCurCode, lang),
+                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                fontFamily = JetBrainsMonoFamily,
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = crystal.assetGreen
+                                        )
+                                    }
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column {
-                                    Text(
-                                        text = strings.netWorth,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = crystal.mutedText
-                                    )
-                                    Text(
-                                        text = BdtFormatter.format(state.netWorth.netWorth, lang),
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontFamily = JetBrainsMonoFamily,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
+                            // Prominent Highlighted Live Market Entry Card directly below Financial Health
+                            HomeLiveMarketEntryCard(
+                                language = lang,
+                                marketSyncState = marketSyncState,
+                                strings = strings,
+                                onClick = {
+                                    triggerHaptic()
+                                    onOpenLiveMarket()
                                 }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text(
-                                        text = strings.dashboard.incomePillLabel,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = crystal.mutedText
-                                    )
-                                    Text(
-                                        text = BdtFormatter.format(state.incomeThisMonth, lang),
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontFamily = JetBrainsMonoFamily,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = crystal.assetGreen
-                                    )
-                                }
-                            }
+                            )
                         }
                     }
+                }
+            }
+
+            if (HomeSectionId.FINANCIAL_HEALTH !in visibleSections) {
+                item(key = "home_live_market_fallback") {
+                    HomeLiveMarketEntryCard(
+                        language = lang,
+                        marketSyncState = marketSyncState,
+                        strings = strings,
+                        onClick = {
+                            triggerHaptic()
+                            onOpenLiveMarket()
+                        }
+                    )
                 }
             }
         }
@@ -1271,9 +1418,109 @@ private fun QuickShortcutTile(
     }
 }
 
+private data class CurrencyBalanceEntry(
+    val currency: AppCurrency,
+    val amount: Double
+)
+
+private fun resolveHomeCurrencyBalances(
+    accounts: List<AccountEntity>,
+    liquidBalancesByCurrency: Map<String, Double>,
+    fallbackTotalLiquidBalance: Double,
+    mainCurrencyCode: String,
+    secondaryCurrency: AppCurrency?
+): List<CurrencyBalanceEntry> {
+    val mainCur = AppCurrency.fromCode(mainCurrencyCode)
+    val totalsMap: Map<String, Double> = when {
+        liquidBalancesByCurrency.isNotEmpty() -> liquidBalancesByCurrency
+        accounts.isNotEmpty() -> accounts
+            .filter { it.type != AccountType.CREDIT_CARD }
+            .groupBy { AppCurrency.fromCode(it.currencyCode).code }
+            .mapValues { (_, list) -> list.sumOf { it.balance.coerceAtLeast(0.0) } }
+        else -> emptyMap()
+    }
+
+    val hasAnyAccounts = accounts.isNotEmpty() || liquidBalancesByCurrency.isNotEmpty()
+    val mainAmount = if (hasAnyAccounts) {
+        totalsMap[mainCur.code] ?: 0.0
+    } else {
+        fallbackTotalLiquidBalance
+    }
+
+    val result = mutableListOf(CurrencyBalanceEntry(mainCur, mainAmount))
+    val seen = mutableSetOf(mainCur.code)
+
+    if (secondaryCurrency != null && seen.add(secondaryCurrency.code)) {
+        result += CurrencyBalanceEntry(
+            currency = secondaryCurrency,
+            amount = totalsMap[secondaryCurrency.code] ?: 0.0
+        )
+    }
+
+    totalsMap.entries
+        .filter { it.key !in seen }
+        .sortedBy { it.key }
+        .forEach { (code, sum) ->
+            val cur = AppCurrency.fromCode(code)
+            if (seen.add(cur.code)) {
+                result += CurrencyBalanceEntry(cur, sum)
+            }
+        }
+
+    return result
+}
+
+private fun formatBalanceForBadge(
+    amount: Double,
+    currency: AppCurrency,
+    language: AppLanguage
+): String {
+    val label = currency.cleanBadgeLabel()
+    return if (currency.symbol.equals(label, ignoreCase = true)) {
+        BdtFormatter.formatAmountOnly(amount, currency.code, language)
+    } else {
+        BdtFormatter.formatCurrency(amount, currency.code, language)
+    }
+}
+
+@Composable
+private fun CleanCurrencyBadge(
+    label: String,
+    primaryColor: Color,
+    compact: Boolean = false
+) {
+    val crystal = LocalCrystalColors.current
+    val badgeBg = primaryColor.copy(alpha = if (crystal.isDark) 0.24f else 0.13f)
+    val badgeBorder = primaryColor.copy(alpha = if (crystal.isDark) 0.50f else 0.34f)
+    val badgeTextColor = if (crystal.isDark) Color(0xFF7DD3FC) else primaryColor
+
+    Surface(
+        color = badgeBg,
+        shape = RoundedCornerShape(if (compact) 6.dp else 8.dp),
+        border = BorderStroke(0.9.dp, badgeBorder)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontFamily = NumericDisplayFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = if (compact) 10.sp else 11.sp,
+                letterSpacing = 0.5.sp
+            ),
+            color = badgeTextColor,
+            maxLines = 1,
+            modifier = Modifier.padding(
+                horizontal = if (compact) 6.dp else 8.dp,
+                vertical = if (compact) 2.dp else 4.dp
+            )
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HeroBalanceSummaryCard(
-    totalBalance: Double,
+    currencyBalances: List<CurrencyBalanceEntry>,
     incomeThisMonth: Double,
     spentThisMonth: Double,
     monthlyBudget: Double,
@@ -1281,6 +1528,7 @@ private fun HeroBalanceSummaryCard(
     dailyAverage: Double,
     language: AppLanguage,
     strings: AppStrings,
+    mainCurrencyCode: String = "BDT",
     onOpenAllAccounts: () -> Unit,
     onOpenActivity: () -> Unit
 ) {
@@ -1409,13 +1657,13 @@ private fun HeroBalanceSummaryCard(
                     Column {
                         Text(
                             text = strings.totalBalance,
-                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.onSurface
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
+                            color = crystal.mutedText
                         )
                         Text(
                             text = strings.liquidAssetsHint,
                             style = MaterialTheme.typography.bodySmall,
-                            color = crystal.mutedText
+                            color = crystal.mutedText.copy(alpha = 0.85f)
                         )
                     }
                 }
@@ -1426,11 +1674,22 @@ private fun HeroBalanceSummaryCard(
                     border = BorderStroke(0.9.dp, primaryColor.copy(alpha = 0.38f))
                 ) {
                     Text(
-                        text = "${strings.netWorth}: ${BdtFormatter.format(netWorth, language)}",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontFamily = JetBrainsMonoFamily,
-                            fontWeight = FontWeight.SemiBold
-                        ),
+                        text = buildAnnotatedString {
+                            withStyle(SpanStyle(fontWeight = FontWeight.Medium)) {
+                                append("${strings.netWorth}: ")
+                            }
+                            withStyle(
+                                SpanStyle(
+                                    fontFamily = NumericDisplayFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFeatureSettings = "tnum",
+                                    letterSpacing = (-0.15).sp
+                                )
+                            ) {
+                                append(BdtFormatter.formatCurrency(netWorth, mainCurrencyCode, language))
+                            }
+                        },
+                        style = MaterialTheme.typography.labelSmall,
                         color = primaryColor,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                     )
@@ -1439,17 +1698,101 @@ private fun HeroBalanceSummaryCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            Text(
-                text = BdtFormatter.format(totalBalance, language),
-                style = MaterialTheme.typography.headlineLarge.copy(
-                    fontFamily = JetBrainsMonoFamily,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 29.sp
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            val primaryEntry = currencyBalances.firstOrNull()
+                ?: CurrencyBalanceEntry(AppCurrency.fromCode(mainCurrencyCode), 0.0)
+            val extraEntries = currencyBalances.drop(1)
+
+            // Primary Currency Actual Balance Row
+            val primaryLabel = primaryEntry.currency.cleanBadgeLabel()
+            val primaryIsSymbolCode = primaryEntry.currency.symbol.equals(primaryLabel, ignoreCase = true)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = BdtFormatter.formatCurrency(
+                            primaryEntry.amount,
+                            primaryEntry.currency.code,
+                            language
+                        )
+                    }
+                    .testTag("hero_balance_currency_${primaryEntry.currency.code}"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(if (primaryIsSymbolCode) 6.dp else 10.dp)
+            ) {
+                if (primaryIsSymbolCode) {
+                    Text(
+                        text = primaryLabel,
+                        style = NumericHeroBalanceStyle,
+                        color = crystal.numericInk,
+                        maxLines = 1
+                    )
+                } else {
+                    CleanCurrencyBadge(
+                        label = primaryLabel,
+                        primaryColor = primaryColor
+                    )
+                }
+                Text(
+                    text = formatBalanceForBadge(primaryEntry.amount, primaryEntry.currency, language),
+                    style = NumericHeroBalanceStyle,
+                    color = crystal.numericInk,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            // Secondary / Additional Active Currencies (Clean borderless bold symbol + tabular digits, e.g. KD 5,500)
+            if (extraEntries.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                FlowRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("hero_secondary_currency_balances"),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    extraEntries.forEach { entry ->
+                        val entryLabel = entry.currency.cleanBadgeLabel()
+                        val entryIsSymbolCode = entry.currency.symbol.equals(entryLabel, ignoreCase = true)
+                        Row(
+                            modifier = Modifier
+                                .semantics(mergeDescendants = true) {
+                                    contentDescription = BdtFormatter.formatCurrency(
+                                        entry.amount,
+                                        entry.currency.code,
+                                        language
+                                    )
+                                }
+                                .testTag("hero_balance_currency_${entry.currency.code}"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            if (entryIsSymbolCode) {
+                                Text(
+                                    text = entryLabel,
+                                    style = NumericSummarySecondaryStyle.copy(fontSize = 17.sp),
+                                    color = crystal.numericInk,
+                                    maxLines = 1
+                                )
+                            } else {
+                                CleanCurrencyBadge(
+                                    label = entryLabel,
+                                    primaryColor = primaryColor,
+                                    compact = true
+                                )
+                            }
+                            Text(
+                                text = formatBalanceForBadge(entry.amount, entry.currency, language),
+                                style = NumericSummarySecondaryStyle.copy(fontSize = 17.sp),
+                                color = crystal.numericInk,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(10.dp))
 
@@ -1488,16 +1831,13 @@ private fun HeroBalanceSummaryCard(
                         Column {
                             Text(
                                 text = strings.dashboard.incomePillLabel,
-                                style = MaterialTheme.typography.labelSmall,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                                 color = crystal.mutedText,
                                 maxLines = 1
                             )
                             Text(
-                                text = BdtFormatter.format(incomeThisMonth, language),
-                                style = MaterialTheme.typography.labelLarge.copy(
-                                    fontFamily = JetBrainsMonoFamily,
-                                    fontWeight = FontWeight.Bold
-                                ),
+                                text = BdtFormatter.formatCurrency(incomeThisMonth, mainCurrencyCode, language),
+                                style = NumericInlineMetricStyle.copy(fontSize = 14.5.sp),
                                 color = crystal.assetGreen,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -1537,16 +1877,13 @@ private fun HeroBalanceSummaryCard(
                         Column {
                             Text(
                                 text = strings.spentThisMonth,
-                                style = MaterialTheme.typography.labelSmall,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                                 color = crystal.mutedText,
                                 maxLines = 1
                             )
                             Text(
-                                text = BdtFormatter.format(spentThisMonth, language),
-                                style = MaterialTheme.typography.labelLarge.copy(
-                                    fontFamily = JetBrainsMonoFamily,
-                                    fontWeight = FontWeight.Bold
-                                ),
+                                text = BdtFormatter.formatCurrency(spentThisMonth, mainCurrencyCode, language),
+                                style = NumericInlineMetricStyle.copy(fontSize = 14.5.sp),
                                 color = crystal.liabilityRed,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -1570,8 +1907,8 @@ private fun HeroBalanceSummaryCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "${strings.monthlyBudget}: ${BdtFormatter.format(monthlyBudget, language)}",
-                            style = MaterialTheme.typography.labelSmall,
+                            text = "${strings.monthlyBudget}: ${BdtFormatter.formatCurrency(monthlyBudget, mainCurrencyCode, language)}",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                             color = crystal.mutedText,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -1579,10 +1916,7 @@ private fun HeroBalanceSummaryCard(
                         )
                         Text(
                             text = "${BdtFormatter.formatNumber(budgetPercent, language)}%",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontFamily = JetBrainsMonoFamily,
-                                fontWeight = FontWeight.Bold
-                            ),
+                            style = NumericInlineMetricStyle.copy(fontSize = 11.5.sp),
                             color = if (isOverBudget) crystal.liabilityRed else primaryColor
                         )
                     }
@@ -1615,10 +1949,173 @@ private fun HeroBalanceSummaryCard(
 
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "${strings.dailyAverageLabel}: ${BdtFormatter.format(dailyAverage, language)}",
+                text = buildAnnotatedString {
+                    withStyle(
+                        SpanStyle(
+                            color = crystal.mutedText,
+                            fontWeight = FontWeight.Normal
+                        )
+                    ) {
+                        append("${strings.dailyAverageLabel}: ")
+                    }
+                    withStyle(
+                        SpanStyle(
+                            fontFamily = NumericDisplayFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontFeatureSettings = "tnum",
+                            letterSpacing = (-0.2).sp,
+                            color = crystal.numericInk
+                        )
+                    ) {
+                        append(BdtFormatter.formatCurrency(dailyAverage, mainCurrencyCode, language))
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyWalletPlaceholderCard(
+    language: AppLanguage,
+    strings: AppStrings,
+    onAddAccount: () -> Unit
+) {
+    val crystal = LocalCrystalColors.current
+    val primary = MaterialTheme.colorScheme.primary
+    val title = if (language == AppLanguage.BN) {
+        "কোনো ওয়ালেট বা ব্যাংক কার্ড নেই"
+    } else {
+        "No Wallets or Bank Cards Yet"
+    }
+    val subtitle = if (language == AppLanguage.BN) {
+        "নগদ, ব্যাংক অ্যাকাউন্ট, কার্ড বা বিকাশ/নগদ যোগ করে আপনার হিসাব শুরু করুন"
+    } else {
+        "Add Cash, Bank, Card, or bKash/Nagad to start tracking your real balances"
+    }
+    val blankHint = if (language == AppLanguage.BN) "ব্যালেন্স" else "Balance"
+    val cardShape = RoundedCornerShape(24.dp)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(cardShape)
+            .background(
+                if (crystal.isDark) {
+                    Brush.linearGradient(
+                        listOf(
+                            Color(0xFF102033).copy(alpha = 0.88f),
+                            Color(0xFF142A40).copy(alpha = 0.84f)
+                        )
+                    )
+                } else {
+                    Brush.linearGradient(
+                        listOf(
+                            Color(0xFFF3F8FF).copy(alpha = 0.94f),
+                            Color(0xFFFFFFFF).copy(alpha = 0.90f)
+                        )
+                    )
+                }
+            )
+            .border(
+                width = 1.2.dp,
+                brush = Brush.linearGradient(
+                    listOf(
+                        primary.copy(alpha = if (crystal.isDark) 0.45f else 0.36f),
+                        crystal.glassBorder
+                    )
+                ),
+                shape = cardShape
+            )
+            .clickable(onClick = onAddAccount)
+            .testTag("empty_wallet_placeholder_card")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(primary.copy(alpha = if (crystal.isDark) 0.22f else 0.12f))
+                            .border(1.dp, primary.copy(alpha = 0.34f), RoundedCornerShape(14.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AccountBalanceWallet,
+                            contentDescription = null,
+                            tint = primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "$blankHint: ${BdtFormatter.format(0.0, language)}",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFamily = JetBrainsMonoFamily,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = crystal.mutedText
+                        )
+                    }
+                }
+            }
+
+            Text(
+                text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
                 color = crystal.mutedText
             )
+
+            Surface(
+                onClick = onAddAccount,
+                shape = CircleShape,
+                color = primary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .testTag("empty_wallet_add_button")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = strings.addAccount,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = Color.White
+                    )
+                }
+            }
         }
     }
 }
@@ -1628,19 +2125,15 @@ private fun CompactWalletStrip(
     accounts: List<AccountEntity>,
     language: AppLanguage,
     strings: AppStrings,
-    onOpenAllAccounts: () -> Unit
+    onOpenAllAccounts: () -> Unit,
+    onOpenAddAccount: () -> Unit = onOpenAllAccounts
 ) {
     if (accounts.isEmpty()) {
-        CrystalCard(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = onOpenAllAccounts
-        ) {
-            Text(
-                text = strings.addAccount,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
+        EmptyWalletPlaceholderCard(
+            language = language,
+            strings = strings,
+            onAddAccount = onOpenAddAccount
+        )
         return
     }
 
@@ -1660,6 +2153,16 @@ private fun CompactWalletStrip(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(accounts, key = { it.id }) { account ->
+                if (account.type == AccountType.CASH) {
+                    CashWalletCompactCard(
+                        account = account,
+                        cardWidth = cardWidth,
+                        language = language,
+                        strings = strings,
+                        onClick = onOpenAllAccounts
+                    )
+                    return@items
+                }
                 val gradientColors = resolveAccountCardGradient(account)
                 val shadowTint = gradientColors.first()
                 val cardShape = RoundedCornerShape(22.dp)
@@ -1783,9 +2286,29 @@ private fun CompactWalletStrip(
                                     )
                                 }
                             }
-                            if (account.type != AccountType.CASH) {
-                                Spacer(modifier = Modifier.width(8.dp))
-                                CardNetworkOrProviderBadge(account = account)
+                            val accCur = AppCurrency.fromCode(account.currencyCode)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Surface(
+                                    color = Color.Black.copy(alpha = 0.24f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(0.7.dp, Color.White.copy(alpha = 0.34f))
+                                ) {
+                                    Text(
+                                        text = accCur.shortBadge(),
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 10.sp
+                                        ),
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                    )
+                                }
+                                if (account.type != AccountType.CASH) {
+                                    CardNetworkOrProviderBadge(account = account)
+                                }
                             }
                         }
 
@@ -1801,18 +2324,16 @@ private fun CompactWalletStrip(
                                     } else {
                                         strings.availableBalance
                                     },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White.copy(alpha = 0.82f),
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Medium
+                                    ),
+                                    color = Color.White.copy(alpha = 0.78f),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = BdtFormatter.format(account.balance, language),
-                                    style = MaterialTheme.typography.headlineSmall.copy(
-                                        fontFamily = JetBrainsMonoFamily,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 24.sp
-                                    ),
+                                    text = BdtFormatter.formatCurrency(account.balance, account.currencyCode, language),
+                                    style = NumericCompactCardBalanceStyle,
                                     color = Color.White,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -1853,20 +2374,16 @@ private fun StackedWalletCarousel(
     language: AppLanguage,
     strings: AppStrings,
     onCardSwitched: () -> Unit = {},
-    onOpenAllAccounts: () -> Unit
+    onOpenAllAccounts: () -> Unit,
+    onOpenAddAccount: () -> Unit = onOpenAllAccounts
 ) {
     val crystal = LocalCrystalColors.current
     if (accounts.isEmpty()) {
-        CrystalCard(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = onOpenAllAccounts
-        ) {
-            Text(
-                text = strings.addAccount,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
+        EmptyWalletPlaceholderCard(
+            language = language,
+            strings = strings,
+            onAddAccount = onOpenAddAccount
+        )
         return
     }
 
@@ -2068,6 +2585,7 @@ private fun MonthlyBudgetCard(
     topCategories: List<com.example.data.model.CategorySpend>,
     language: AppLanguage,
     strings: AppStrings,
+    currencyCode: String = "BDT",
     onEditBudget: () -> Unit
 ) {
     val crystal = LocalCrystalColors.current
@@ -2115,12 +2633,12 @@ private fun MonthlyBudgetCard(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "${strings.spentLabel}: ${BdtFormatter.format(spent, language)}",
+                text = "${strings.spentLabel}: ${BdtFormatter.formatCurrency(spent, currencyCode, language)}",
                 style = MaterialTheme.typography.bodyMedium.copy(fontFamily = JetBrainsMonoFamily),
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = "${strings.budgetLabel}: ${BdtFormatter.format(safeBudget, language)}",
+                text = "${strings.budgetLabel}: ${BdtFormatter.formatCurrency(safeBudget, currencyCode, language)}",
                 style = MaterialTheme.typography.bodyMedium.copy(fontFamily = JetBrainsMonoFamily),
                 color = crystal.mutedText
             )
@@ -2152,9 +2670,9 @@ private fun MonthlyBudgetCard(
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = if (remaining >= 0) {
-                "${strings.remainingLabel}: ${BdtFormatter.format(remaining, language)}"
+                "${strings.remainingLabel}: ${BdtFormatter.formatCurrency(remaining, currencyCode, language)}"
             } else {
-                "${strings.overBudgetLabel}: ${BdtFormatter.format(-remaining, language)}"
+                "${strings.overBudgetLabel}: ${BdtFormatter.formatCurrency(-remaining, currencyCode, language)}"
             },
             style = MaterialTheme.typography.bodySmall,
             color = if (remaining >= 0) crystal.assetGreen else crystal.liabilityRed
@@ -2187,7 +2705,7 @@ private fun MonthlyBudgetCard(
                             )
                         }
                         Text(
-                            text = BdtFormatter.format(item.amount, language),
+                            text = BdtFormatter.formatCurrency(item.amount, currencyCode, language),
                             style = MaterialTheme.typography.labelLarge.copy(fontFamily = JetBrainsMonoFamily),
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -2204,7 +2722,8 @@ private fun SpendingStreakCard(
     todaySpend: Double,
     dailyAvg: Double,
     language: AppLanguage,
-    strings: AppStrings
+    strings: AppStrings,
+    currencyCode: String = "BDT"
 ) {
     val crystal = LocalCrystalColors.current
     val dayNumber = BdtFormatter.formatNumber(streakDays, language)
@@ -2292,7 +2811,7 @@ private fun SpendingStreakCard(
                 color = crystal.mutedText
             )
             Text(
-                text = "${BdtFormatter.format(todaySpend, language)} / ${BdtFormatter.format(dailyAvg, language)}",
+                text = "${BdtFormatter.formatCurrency(todaySpend, currencyCode, language)} / ${BdtFormatter.formatCurrency(dailyAvg, currencyCode, language)}",
                 style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFamily),
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -2322,7 +2841,9 @@ fun TransactionRowItem(
     accountName: String,
     language: AppLanguage,
     modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null
+    onClick: (() -> Unit)? = null,
+    accountsById: Map<Long, AccountEntity> = emptyMap(),
+    marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
 ) {
     val crystal = LocalCrystalColors.current
     val activeTzId = java.util.TimeZone.getDefault().id
@@ -2333,15 +2854,49 @@ fun TransactionRowItem(
     }
     val dateLabel = remember(tx.timestamp, activeTzId) { dateFmt.format(Date(tx.timestamp)) }
 
+    val formattedAmt = BdtFormatter.formatCurrency(tx.amount, tx.currencyCode, language)
     val amountText = when (tx.type) {
-        TransactionType.EXPENSE -> "-${BdtFormatter.format(tx.amount, language)}"
-        TransactionType.INCOME -> "+${BdtFormatter.format(tx.amount, language)}"
-        TransactionType.TRANSFER -> "⇄ ${BdtFormatter.format(tx.amount, language)}"
+        TransactionType.EXPENSE -> "-$formattedAmt"
+        TransactionType.INCOME -> "+$formattedAmt"
+        TransactionType.TRANSFER -> "⇄ $formattedAmt"
     }
     val amountColor = when (tx.type) {
         TransactionType.EXPENSE -> crystal.liabilityRed
         TransactionType.INCOME -> crystal.assetGreen
         TransactionType.TRANSFER -> MaterialTheme.colorScheme.primary
+    }
+
+    val isTransfer = tx.type == TransactionType.TRANSFER
+    val displayTitle = remember(tx, accountsById, language) {
+        if (isTransfer) {
+            val (fromLabel, toLabel) = AccountNameResolver.resolveTransferEndpoints(tx, accountsById, language)
+            "$fromLabel → $toLabel"
+        } else {
+            tx.title.ifBlank { tx.category.label(language) }
+        }
+    }
+    val resolvedWalletLabel = remember(tx, accountName, accountsById, language) {
+        when {
+            isTransfer -> ""
+            accountsById.containsKey(tx.accountId) ->
+                AccountNameResolver.resolveAccountName(accountsById.getValue(tx.accountId), language)
+            accountName.isNotBlank() -> accountName.trim()
+            else -> AccountNameResolver.defaultWalletFallback(tx.currencyCode, language)
+        }
+    }
+    val parsedTransfer = remember(tx, accountsById, marketSnapshot) {
+        if (isTransfer) {
+            TransferNoteCodec.parse(tx, tx.toAccountId?.let { accountsById[it] }, marketSnapshot)
+        } else {
+            null
+        }
+    }
+    val conversionBadge = remember(parsedTransfer, language) {
+        if (parsedTransfer != null && parsedTransfer.isCrossCurrency) {
+            TransferNoteCodec.formatConversionSummary(parsedTransfer, language)
+        } else {
+            ""
+        }
     }
 
     Row(
@@ -2361,17 +2916,33 @@ fun TransactionRowItem(
             CategoryIconBadge(category = tx.category)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = tx.title,
+                    text = displayTitle,
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (conversionBadge.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = conversionBadge,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontFamily = JetBrainsMonoFamily,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        color = crystal.assetGreen,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 val subPrefix = buildString {
-                    if (accountName.isNotBlank()) append(accountName)
-                    if (tx.subcategory.isNotBlank()) {
+                    if (resolvedWalletLabel.isNotBlank()) append(resolvedWalletLabel)
+                    if (!isTransfer && tx.subcategory.isNotBlank()) {
                         if (isNotEmpty()) append(" • ")
                         append(tx.subcategory)
+                    } else if (isTransfer) {
+                        val transferTag = if (language == AppLanguage.BN) "ওয়ালেট ট্রান্সফার" else "Wallet Transfer"
+                        append(transferTag)
                     }
                     if (isNotEmpty()) append(" • ")
                     append(dateLabel)

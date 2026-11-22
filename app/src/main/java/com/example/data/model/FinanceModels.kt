@@ -705,7 +705,10 @@ data class SmartAlert(
     val id: String,
     val title: String,
     val subtitle: String,
-    val isWarning: Boolean
+    val isWarning: Boolean,
+    val actionRoute: com.example.notifications.NotificationActionRoute = com.example.notifications.NotificationActionRoute.OPEN_HOME,
+    val category: com.example.notifications.NotificationCategory = com.example.notifications.NotificationCategory.BUDGET_THRESHOLD,
+    val timestampMillis: Long? = null
 )
 
 data class ReceiptScanResult(
@@ -713,7 +716,16 @@ data class ReceiptScanResult(
     val amountBdt: Double,
     val category: ExpenseCategory,
     val dateLabel: String,
-    val itemsSummary: String
+    val itemsSummary: String,
+    val transactionType: TransactionType = TransactionType.EXPENSE,
+    val feeAmount: Double = 0.0,
+    val currencyCode: String = "BDT",
+    val providerHint: String = "",
+    val accountLast4Hint: String = "",
+    val referenceId: String = "",
+    val timestampMillis: Long? = null,
+    val detectedDirectionKeyword: String = "",
+    val isLocalFallback: Boolean = false
 )
 
 data class GroundingSource(
@@ -732,7 +744,11 @@ data class VoiceParsedTransaction(
     val amountBdt: Double,
     val type: TransactionType,
     val category: ExpenseCategory,
-    val accountHint: String
+    val accountHint: String,
+    val currencyCode: String = "BDT",
+    val toAccountHint: String = "",
+    val note: String = "",
+    val isLocalFallback: Boolean = false
 )
 
 fun defaultColorForCash(): Color = BrandCash

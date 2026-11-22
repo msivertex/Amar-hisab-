@@ -15,7 +15,18 @@ private const val DEBUG_TOKEN_EXTRA = "FIREBASE_APPCHECK_DEBUG_TOKEN"
 private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store."
 private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
 private const val RECAPTCHA_SITE_KEY_RES = "recaptcha_site_key"
+private const val META_PREFS_NAME = "amar_hisab_appcheck_meta"
+private const val KEY_VERIFIED_INTENT_TOKEN = "verified_intent_debug_token"
 
+/**
+ * Configures Firebase App Check without blocking sideloaded / real-device debug installs.
+ *
+ * - When the harness supplies `FIREBASE_APPCHECK_DEBUG_TOKEN` via launch Intent extras,
+ *   it persists the secret synchronously via `.commit()` and installs [DebugAppCheckProviderFactory].
+ * - When a debug APK runs directly on a user's phone WITHOUT a registered debug token in
+ *   Intent extras, we intentionally skip installing [DebugAppCheckProviderFactory] so the SDK
+ *   does not fabricate an unregistered random UUID that triggers "Firebase App Check token is invalid."
+ */
 fun configureAppCheck(context: Context, intent: Intent?) {
     try {
         if (FirebaseApp.getApps(context).isEmpty()) {
@@ -23,27 +34,45 @@ fun configureAppCheck(context: Context, intent: Intent?) {
         }
 
         if (BuildConfig.DEBUG) {
-            val debugToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)
-
-            if (!debugToken.isNullOrEmpty()) {
-                val persistenceKey = FirebaseApp.getInstance().persistenceKey
-                val prefs = context.getSharedPreferences(
-                    "$DEBUG_STORE_PREFIX$persistenceKey",
-                    Context.MODE_PRIVATE
-                )
-                // Synchronous commit() ensures the debug secret is persisted before DebugAppCheckProviderFactory reads it.
-                prefs.edit()
-                    .putString(DEBUG_SECRET_KEY, debugToken)
-                    .commit()
-                Log.d(TAG, "App Check debug secret configured successfully.")
-            } else {
-                Log.w(TAG, "No debug token found in Intent extra.")
-            }
-
-            FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
-                DebugAppCheckProviderFactory.getInstance()
+            val persistenceKey = FirebaseApp.getInstance().persistenceKey
+            val debugStorePrefs = context.getSharedPreferences(
+                "$DEBUG_STORE_PREFIX$persistenceKey",
+                Context.MODE_PRIVATE
             )
-            Log.d(TAG, "DebugAppCheckProviderFactory installed.")
+            val metaPrefs = context.getSharedPreferences(META_PREFS_NAME, Context.MODE_PRIVATE)
+            val intentDebugToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)?.trim().orEmpty()
+
+            if (intentDebugToken.isNotEmpty()) {
+                // Synchronous commit() ensures the debug secret is persisted before DebugAppCheckProviderFactory reads it.
+                debugStorePrefs.edit()
+                    .putString(DEBUG_SECRET_KEY, intentDebugToken)
+                    .commit()
+                metaPrefs.edit()
+                    .putString(KEY_VERIFIED_INTENT_TOKEN, intentDebugToken)
+                    .commit()
+                FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+                    DebugAppCheckProviderFactory.getInstance()
+                )
+                Log.d(TAG, "App Check debug secret configured from launch Intent.")
+            } else {
+                val savedVerifiedToken = metaPrefs.getString(KEY_VERIFIED_INTENT_TOKEN, "").orEmpty()
+                val storedSecret = debugStorePrefs.getString(DEBUG_SECRET_KEY, "").orEmpty()
+                if (savedVerifiedToken.isNotEmpty() && savedVerifiedToken == storedSecret) {
+                    FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+                        DebugAppCheckProviderFactory.getInstance()
+                    )
+                    Log.d(TAG, "DebugAppCheckProviderFactory installed using previously verified token.")
+                } else {
+                    // Clear any stale auto-generated unregistered UUID so Firebase AI calls aren't rejected
+                    if (storedSecret.isNotEmpty()) {
+                        debugStorePrefs.edit().remove(DEBUG_SECRET_KEY).commit()
+                    }
+                    Log.i(
+                        TAG,
+                        "Skipping DebugAppCheckProviderFactory on standalone device (no registered debug token provided)."
+                    )
+                }
+            }
         } else {
             val resId = context.resources.getIdentifier(
                 RECAPTCHA_SITE_KEY_RES,
@@ -58,10 +87,10 @@ fun configureAppCheck(context: Context, intent: Intent?) {
                     )
                     Log.d(TAG, "RecaptchaAppCheckProviderFactory installed.")
                 } else {
-                    Log.e(TAG, "recaptcha_site_key resource string is blank.")
+                    Log.w(TAG, "recaptcha_site_key resource string is blank; skipping App Check provider.")
                 }
             } else {
-                Log.e(TAG, "recaptcha_site_key string resource not found in package.")
+                Log.i(TAG, "recaptcha_site_key not configured; skipping App Check provider.")
             }
         }
     } catch (e: Exception) {

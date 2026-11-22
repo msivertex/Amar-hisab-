@@ -1,6 +1,8 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.app.PendingIntent
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.net.Uri
@@ -16,9 +18,20 @@ import com.example.core.NetworkConnectivityMonitor
 import com.example.core.SystemClockMonitor
 import com.example.data.ai.GeminiAiService
 import com.example.data.ai.InsightsSummaryHelper
+import com.example.data.ai.LocalReceiptTextParser
+import com.example.data.ai.LocalVoiceTransactionParser
 import com.example.data.ai.MarketErrorCategory
+import com.example.data.ai.ReceiptScanErrorCategory
 import com.example.data.ai.TtsAudioPlayer
 import com.example.data.backup.BackupManager
+import com.example.data.backup.DriveAuthOutcome
+import com.example.data.backup.DriveAutoRestoreOutcome
+import com.example.data.backup.DriveSyncCoordinator
+import com.example.data.backup.DriveSyncStatus
+import com.example.data.backup.DriveSyncUiState
+import com.example.data.backup.DriveUploadOutcome
+import com.example.data.backup.GoogleDriveAuthHelper
+import com.example.data.backup.GoogleDriveBackupService
 import com.example.data.local.AccountEntity
 import com.example.data.local.AppDatabase
 import com.example.data.local.CategoryBudgetEntity
@@ -28,9 +41,11 @@ import com.example.data.local.TransactionEntity
 import com.example.data.local.UserPreferencesRepository
 import com.example.data.local.UserPrefs
 import com.example.data.market.MarketDataRepository
+import com.example.data.market.MarketSnapshot
 import com.example.data.market.MarketSyncUiState
 import com.example.data.model.AccountType
 import com.example.data.model.AppColourTheme
+import com.example.data.model.AppCurrency
 import com.example.data.model.AppTab
 import com.example.data.model.AppThemeMode
 import com.example.data.model.AuthMode
@@ -63,14 +78,23 @@ import com.example.data.support.SupportSender
 import com.example.data.support.SupportUiState
 import com.example.localization.AppLanguage
 import com.example.localization.BdtFormatter
+import com.example.notifications.AmarHisabNotificationManager
+import com.example.notifications.NotificationActionRoute
+import com.example.notifications.NotificationCategory
+import com.example.notifications.NotificationLogItem
+import com.example.notifications.NotificationTimeCalculator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -108,18 +132,20 @@ data class MainUiState(
     val loans: List<LoanEntity> = emptyList(),
     val categoryBudgets: List<CategoryBudgetEntity> = emptyList(),
     val totalLiquidBalance: Double = 0.0,
+    val liquidBalancesByCurrency: Map<String, Double> = emptyMap(),
     val netWorth: NetWorthSummary = NetWorthSummary(),
     val spentThisMonth: Double = 0.0,
     val incomeThisMonth: Double = 0.0,
     val dailyAverageSpend: Double = 0.0,
     val todaySpend: Double = 0.0,
-    val streakDays: Int = 1,
+    val streakDays: Int = 0,
     val topCategories: List<CategorySpend> = emptyList(),
     val categorySpentMap: Map<ExpenseCategory, Double> = emptyMap(),
     val smartAlerts: List<SmartAlert> = emptyList(),
     val selectedTab: AppTab = AppTab.HOME,
     val showAccountsScreen: Boolean = false,
     val showSettingsScreen: Boolean = false,
+    val showLiveMarketScreen: Boolean = false,
     val insightFilter: InsightTimeFilter = InsightTimeFilter.THIS_MONTH,
     val insightMonthOffset: Int = 0,
     val analytics: AnalyticsSnapshot = AnalyticsSnapshot(),
@@ -130,7 +156,11 @@ sealed interface ReceiptScanUiState {
     data object Idle : ReceiptScanUiState
     data object Loading : ReceiptScanUiState
     data class Success(val result: ReceiptScanResult) : ReceiptScanUiState
-    data class Error(val message: String) : ReceiptScanUiState
+    data class Error(
+        val message: String,
+        val guidance: String = "",
+        val category: ReceiptScanErrorCategory = ReceiptScanErrorCategory.GENERAL
+    ) : ReceiptScanUiState
 }
 
 sealed interface SearchAiUiState {
@@ -173,10 +203,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val connectivityMonitor = NetworkConnectivityMonitor(application)
     private val systemClockMonitor = SystemClockMonitor(application)
     private val marketRepository = MarketDataRepository(application)
+    private val driveSyncCoordinator = DriveSyncCoordinator()
 
     private val _selectedTab = MutableStateFlow(AppTab.HOME)
     private val _showAccountsScreen = MutableStateFlow(false)
     private val _showSettingsScreen = MutableStateFlow(false)
+    private val _showLiveMarketScreen = MutableStateFlow(false)
     private val _insightFilter = MutableStateFlow(InsightTimeFilter.THIS_MONTH)
     private val _insightMonthOffset = MutableStateFlow(0)
 
@@ -187,6 +219,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _backupStatus = MutableStateFlow<BackupMessage?>(null)
     val backupStatus: StateFlow<BackupMessage?> = _backupStatus.asStateFlow()
+
+    private enum class DrivePendingAction {
+        AUTO_RESTORE_OR_SYNC,
+        FORCE_RESTORE,
+        SYNC_NOW
+    }
+
+    private val _driveSyncState = MutableStateFlow(DriveSyncUiState())
+    val driveSyncState: StateFlow<DriveSyncUiState> = _driveSyncState.asStateFlow()
+
+    private val _pendingDriveConsent = MutableStateFlow<PendingIntent?>(null)
+    val pendingDriveConsent: StateFlow<PendingIntent?> = _pendingDriveConsent.asStateFlow()
+
+    private var cachedDriveAccessToken: String? = null
+    private var pendingDriveConsentAction: DrivePendingAction = DrivePendingAction.AUTO_RESTORE_OR_SYNC
+    @Volatile
+    private var isDriveRestoreInProgress: Boolean = false
+    @Volatile
+    private var isDriveSyncRunning: Boolean = false
+    @Volatile
+    private var driveSyncRequestedWhileRunning: Boolean = false
+    private var driveAutoSyncDebounceJob: Job? = null
+    private var lastObservedDbSignature: Int? = null
+    private var lastObservedPrefSignature: Int? = null
+    private var hasCheckedStartupDriveSync: Boolean = false
 
     private val _receiptState = MutableStateFlow<ReceiptScanUiState>(ReceiptScanUiState.Idle)
     val receiptState: StateFlow<ReceiptScanUiState> = _receiptState.asStateFlow()
@@ -201,15 +258,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val ttsState: StateFlow<TtsUiState> = _ttsState.asStateFlow()
 
     private val _isMarketSyncing = MutableStateFlow(false)
+    private val _lastMarketSyncFailed = MutableStateFlow(false)
+    private val _lastMarketSyncAttemptedMillis = MutableStateFlow(0L)
     val marketSyncState: StateFlow<MarketSyncUiState> = combine(
         marketRepository.snapshotFlow,
         connectivityMonitor.isOnline,
-        _isMarketSyncing
-    ) { snapshot, isOnline, isSyncing ->
+        _isMarketSyncing,
+        _lastMarketSyncFailed,
+        _lastMarketSyncAttemptedMillis
+    ) { snapshot, isOnline, isSyncing, lastSyncFailed, lastAttemptedMillis ->
         MarketSyncUiState(
             snapshot = snapshot,
             isOnline = isOnline,
-            isSyncing = isSyncing
+            isSyncing = isSyncing,
+            lastSyncFailed = lastSyncFailed && isOnline,
+            lastAttemptedMillis = lastAttemptedMillis
         )
     }.stateIn(
         scope = viewModelScope,
@@ -235,17 +298,126 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         connectivityMonitor.start()
         systemClockMonitor.start()
-        // Automatically sync live exchange rates & gold benchmarks at least once per day
-        // and whenever internet connectivity is restored.
+        AmarHisabNotificationManager.ensureChannels(application)
+        // Automatically sync live exchange rates & XAU gold spot on launch
+        // and whenever internet connectivity is restored (15-min freshness window),
+        // and flush any pending encrypted Google Drive backup changes once online.
         viewModelScope.launch {
             connectivityMonitor.isOnline.collect { online ->
                 if (online) {
                     val cached = marketRepository.getCachedSnapshot()
-                    if (cached.isStale()) {
+                    if (cached.isFreshSyncNeeded()) {
                         refreshMarketRates(force = false)
+                    }
+                    flushPendingDriveSyncIfSignedIn(allowConsentPrompt = false)
+                } else if (uiState.value.prefs.authMode == AuthMode.GOOGLE) {
+                    val cur = _driveSyncState.value
+                    if (cur.hasPendingChanges || cur.status == DriveSyncStatus.SYNCING) {
+                        _driveSyncState.value = cur.copy(
+                            status = DriveSyncStatus.PENDING_OFFLINE,
+                            isError = false
+                        )
                     }
                 }
             }
+        }
+        // Observe encrypted Google Drive backup status & sync whenever database or core prefs mutate.
+        viewModelScope.launch {
+            prefsRepo.userPrefs.collect { prefs ->
+                if (prefs.authMode != AuthMode.GOOGLE || prefs.userEmail.isBlank()) {
+                    if (_driveSyncState.value.status != DriveSyncStatus.SIGNED_OUT) {
+                        _driveSyncState.value = DriveSyncUiState(status = DriveSyncStatus.SIGNED_OUT)
+                    }
+                } else {
+                    val cur = _driveSyncState.value
+                    if (cur.status == DriveSyncStatus.SIGNED_OUT || cur.status == DriveSyncStatus.IDLE) {
+                        val nextStatus = when {
+                            prefs.drivePendingSync && !connectivityMonitor.isOnline.value ->
+                                DriveSyncStatus.PENDING_OFFLINE
+                            prefs.driveLastSyncedAtMillis > 0L ->
+                                DriveSyncStatus.SYNCED
+                            else -> DriveSyncStatus.IDLE
+                        }
+                        _driveSyncState.value = cur.copy(
+                            status = nextStatus,
+                            lastSyncedAtMillis = prefs.driveLastSyncedAtMillis,
+                            hasPendingChanges = prefs.drivePendingSync,
+                            folderName = GoogleDriveBackupService.BACKUP_FOLDER_NAME
+                        )
+                    } else {
+                        _driveSyncState.value = cur.copy(
+                            lastSyncedAtMillis = maxOf(cur.lastSyncedAtMillis, prefs.driveLastSyncedAtMillis),
+                            hasPendingChanges = prefs.drivePendingSync
+                        )
+                    }
+                    if (!hasCheckedStartupDriveSync && connectivityMonitor.isOnline.value) {
+                        hasCheckedStartupDriveSync = true
+                        if (prefs.drivePendingSync || !prefs.driveFolderLinked) {
+                            scheduleImmediateDriveAutoSync(debounceMillis = 1200L)
+                        }
+                    }
+                }
+
+                // Track backup-relevant preference mutations for auto-sync
+                val prefSig = listOf(
+                    prefs.userName,
+                    prefs.monthlyBudget,
+                    prefs.language.code,
+                    prefs.isDarkTheme,
+                    prefs.enableSubcategories,
+                    prefs.startOfWeek.name,
+                    prefs.hapticFeedbackEnabled,
+                    prefs.mainCurrencyCode,
+                    prefs.secondaryCurrencyCode
+                ).hashCode()
+                val prevPrefSig = lastObservedPrefSignature
+                lastObservedPrefSignature = prefSig
+                if (prevPrefSig != null && prevPrefSig != prefSig && !isDriveRestoreInProgress) {
+                    if (prefs.authMode == AuthMode.GOOGLE && prefs.userEmail.isNotBlank()) {
+                        onLocalFinancialDataMutated()
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            dbFlow.collect { snapshot ->
+                val sig = snapshot.hashCode()
+                val prev = lastObservedDbSignature
+                lastObservedDbSignature = sig
+                if (prev != null && prev != sig && !isDriveRestoreInProgress) {
+                    onLocalFinancialDataMutated()
+                }
+            }
+        }
+        // Automatically schedule/reschedule local-timezone reminders whenever notification settings,
+        // loans, or the device's timezone change.
+        viewModelScope.launch {
+            combine(
+                prefsRepo.userPrefs,
+                repository.loans,
+                systemClockMonitor.timeContext
+            ) { prefs, loans, timeCtx ->
+                Triple(prefs, loans, timeCtx.timeZoneId)
+            }
+                .distinctUntilChanged { old, new ->
+                    old.third == new.third &&
+                        old.second == new.second &&
+                        old.first.language == new.first.language &&
+                        old.first.notifDailyReminderEnabled == new.first.notifDailyReminderEnabled &&
+                        old.first.notifDailyReminderHour == new.first.notifDailyReminderHour &&
+                        old.first.notifDailyReminderMinute == new.first.notifDailyReminderMinute &&
+                        old.first.notifLoanReminders == new.first.notifLoanReminders &&
+                        old.first.notifLoanDayBeforeEnabled == new.first.notifLoanDayBeforeEnabled
+                }
+                .collect { (prefs, loans, tzId) ->
+                    AmarHisabNotificationManager.scheduleAllReminders(
+                        context = getApplication(),
+                        prefs = prefs,
+                        loans = loans,
+                        nowMillis = System.currentTimeMillis(),
+                        timeZone = TimeZone.getTimeZone(tzId)
+                    )
+                }
         }
     }
 
@@ -256,6 +428,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         systemClockMonitor.refreshNow(nowMillis, timeZone)
     }
 
+    fun onAppResumed() {
+        refreshSystemTime()
+        refreshMarketRates(force = false)
+        flushPendingDriveSyncIfSignedIn(allowConsentPrompt = false)
+    }
+
     fun refreshMarketRates(force: Boolean = true) {
         if (_isMarketSyncing.value) return
         val online = connectivityMonitor.refreshNow()
@@ -263,14 +441,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (!force) {
                 val cached = marketRepository.getCachedSnapshot()
-                if (!cached.isStale()) return@launch
+                if (!cached.isFreshSyncNeeded()) return@launch
             }
             _isMarketSyncing.value = true
+            _lastMarketSyncAttemptedMillis.value = System.currentTimeMillis()
             try {
-                marketRepository.syncLiveMarketRates()
+                val updated = marketRepository.syncLiveMarketRates()
+                _lastMarketSyncFailed.value = (updated == null)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                _lastMarketSyncFailed.value = true
                 Log.w(TAG, "Market rate auto-sync fell back to cache", e)
             } finally {
                 _isMarketSyncing.value = false
@@ -286,14 +467,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _pendingDashboardLayout = MutableStateFlow<PendingDashboardLayout?>(null)
 
-    private val navAndFilterFlow = combine(
+    private val screenNavFlow = combine(
         _selectedTab,
         _showAccountsScreen,
         _showSettingsScreen,
+        _showLiveMarketScreen
+    ) { tab, showAccounts, showSettings, showLiveMarket ->
+        ScreenNavState(tab, showAccounts, showSettings, showLiveMarket)
+    }
+
+    private val navAndFilterFlow = combine(
+        screenNavFlow,
         _insightFilter,
         _insightMonthOffset
-    ) { tab, showAccounts, showSettings, filter, monthOffset ->
-        NavFilterState(tab, showAccounts, showSettings, filter, monthOffset)
+    ) { screenNav, filter, monthOffset ->
+        NavFilterState(
+            tab = screenNav.tab,
+            showAccounts = screenNav.showAccounts,
+            showSettings = screenNav.showSettings,
+            showLiveMarket = screenNav.showLiveMarket,
+            filter = filter,
+            monthOffset = monthOffset
+        )
     }
 
     private val dbFlow = combine(
@@ -306,13 +501,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         DbSnapshot(accounts, transactions, goals, loans, categoryBudgets)
     }
 
+    private val timeAndMarketFlow = combine(
+        systemClockMonitor.timeContext,
+        marketRepository.snapshotFlow
+    ) { timeCtx, snapshot -> timeCtx to snapshot }
+
     val uiState: StateFlow<MainUiState> = combine(
         prefsRepo.userPrefs,
         _pendingDashboardLayout,
         dbFlow,
         navAndFilterFlow,
-        systemClockMonitor.timeContext
-    ) { prefs, pendingLayout, dbData, nav, timeCtx ->
+        timeAndMarketFlow
+    ) { prefs, pendingLayout, dbData, nav, (timeCtx, marketSnapshot) ->
         val effectivePrefs = if (pendingLayout != null) {
             prefs.copy(
                 homeLayoutStyle = pendingLayout.layoutStyle,
@@ -322,7 +522,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             prefs
         }
-        buildMainUiState(effectivePrefs, dbData, nav, timeCtx)
+        buildMainUiState(effectivePrefs, dbData, nav, timeCtx, marketSnapshot)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -332,11 +532,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectTab(tab: AppTab) {
         _showAccountsScreen.value = false
         _showSettingsScreen.value = false
+        _showLiveMarketScreen.value = false
         _selectedTab.value = tab
     }
 
     fun openAccountsScreen() {
         _showSettingsScreen.value = false
+        _showLiveMarketScreen.value = false
         _showAccountsScreen.value = true
     }
 
@@ -346,11 +548,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openSettingsScreen() {
         _showAccountsScreen.value = false
+        _showLiveMarketScreen.value = false
         _showSettingsScreen.value = true
     }
 
     fun closeSettingsScreen() {
         _showSettingsScreen.value = false
+    }
+
+    fun openLiveMarketScreen() {
+        _showAccountsScreen.value = false
+        _showSettingsScreen.value = false
+        _showLiveMarketScreen.value = true
+        refreshMarketRates(force = false)
+    }
+
+    fun closeLiveMarketScreen() {
+        _showLiveMarketScreen.value = false
     }
 
     fun setInsightFilter(filter: InsightTimeFilter) {
@@ -366,6 +580,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun unlockApp() {
         _isAppUnlocked.value = true
+    }
+
+    fun markLaunchPermissionsRequested() = viewModelScope.launch {
+        prefsRepo.setLaunchPermissionsRequested(true)
     }
 
     fun lockAppNow() {
@@ -465,16 +683,421 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun linkGoogleProfile(profile: GoogleAccountProfile) = viewModelScope.launch {
+        cachedDriveAccessToken = null
         prefsRepo.linkGoogleAccount(
             displayName = profile.displayName,
             email = profile.email,
             avatarUrl = profile.avatarUrl
         )
+        // Automatically check/restore encrypted Google Drive backup or create initial encrypted folder
+        initiateDriveAutoRestoreOrSync(
+            forceRestore = false,
+            allowConsentPrompt = true
+        )
     }
 
     fun unlinkGoogleAccount() = viewModelScope.launch {
+        driveAutoSyncDebounceJob?.cancel()
+        driveAutoSyncDebounceJob = null
+        cachedDriveAccessToken = null
+        _pendingDriveConsent.value = null
+        hasCheckedStartupDriveSync = false
         GoogleAuthManager.signOut(getApplication())
         prefsRepo.unlinkGoogleAccount()
+        _driveSyncState.value = DriveSyncUiState(status = DriveSyncStatus.SIGNED_OUT)
+    }
+
+    // --- Encrypted Google Drive Backup, Immediate Auto-Sync & Login Auto-Restore ---
+
+    fun consumePendingDriveConsent() {
+        _pendingDriveConsent.value = null
+    }
+
+    fun onDriveConsentResult(resultOk: Boolean, data: Intent?) {
+        _pendingDriveConsent.value = null
+        if (!resultOk) {
+            val isBn = uiState.value.prefs.language == AppLanguage.BN
+            _driveSyncState.value = _driveSyncState.value.copy(
+                status = DriveSyncStatus.NEEDS_PERMISSION,
+                message = if (isBn) {
+                    "এনক্রিপ্টেড অটো-ব্যাকআপ চালু করতে Google Drive অনুমতি দিন।"
+                } else {
+                    "Grant Google Drive access to enable automatic encrypted backups."
+                },
+                isError = false
+            )
+            return
+        }
+        val token = GoogleDriveAuthHelper.extractAccessTokenFromResult(getApplication(), data)
+        if (token.isNullOrBlank()) {
+            val isBn = uiState.value.prefs.language == AppLanguage.BN
+            _driveSyncState.value = _driveSyncState.value.copy(
+                status = DriveSyncStatus.NEEDS_PERMISSION,
+                message = if (isBn) {
+                    "Google Drive টোকেন পাওয়া যায়নি—আবার চেষ্টা করুন।"
+                } else {
+                    "Could not verify Google Drive permission. Please try again."
+                },
+                isError = true
+            )
+            return
+        }
+        cachedDriveAccessToken = token
+        when (pendingDriveConsentAction) {
+            DrivePendingAction.AUTO_RESTORE_OR_SYNC ->
+                initiateDriveAutoRestoreOrSync(forceRestore = false, allowConsentPrompt = false)
+            DrivePendingAction.FORCE_RESTORE ->
+                initiateDriveAutoRestoreOrSync(forceRestore = true, allowConsentPrompt = false)
+            DrivePendingAction.SYNC_NOW ->
+                syncToGoogleDriveNow(allowConsentPrompt = false)
+        }
+    }
+
+    fun syncToGoogleDriveNow(allowConsentPrompt: Boolean = true) {
+        viewModelScope.launch {
+            executeEncryptedDriveUpload(allowConsentPrompt = allowConsentPrompt)
+        }
+    }
+
+    fun restoreFromGoogleDriveNow() {
+        initiateDriveAutoRestoreOrSync(forceRestore = true, allowConsentPrompt = true)
+    }
+
+    fun requestDrivePermissionAndSync() {
+        initiateDriveAutoRestoreOrSync(forceRestore = false, allowConsentPrompt = true)
+    }
+
+    private fun onLocalFinancialDataMutated() {
+        viewModelScope.launch {
+            val prefs = prefsRepo.userPrefs.first()
+            prefsRepo.markDriveSyncPending(System.currentTimeMillis())
+            if (prefs.authMode == AuthMode.GOOGLE && prefs.userEmail.isNotBlank()) {
+                if (connectivityMonitor.refreshNow()) {
+                    scheduleImmediateDriveAutoSync(debounceMillis = 1500L)
+                } else {
+                    val isBn = prefs.language == AppLanguage.BN
+                    _driveSyncState.value = _driveSyncState.value.copy(
+                        status = DriveSyncStatus.PENDING_OFFLINE,
+                        hasPendingChanges = true,
+                        message = if (isBn) {
+                            "অফলাইন — ইন্টারনেট এলেই Google Drive-এ এনক্রিপ্টেড সিঙ্ক হবে।"
+                        } else {
+                            "Offline — encrypted Google Drive sync queued until online."
+                        },
+                        isError = false
+                    )
+                }
+            }
+        }
+    }
+
+    private fun scheduleImmediateDriveAutoSync(debounceMillis: Long = 1500L) {
+        if (isDriveSyncRunning) {
+            driveSyncRequestedWhileRunning = true
+            return
+        }
+        driveAutoSyncDebounceJob?.cancel()
+        driveAutoSyncDebounceJob = viewModelScope.launch {
+            delay(debounceMillis)
+            executeEncryptedDriveUpload(allowConsentPrompt = false)
+        }
+    }
+
+    private fun flushPendingDriveSyncIfSignedIn(allowConsentPrompt: Boolean) {
+        viewModelScope.launch {
+            val prefs = prefsRepo.userPrefs.first()
+            if (prefs.authMode == AuthMode.GOOGLE &&
+                prefs.userEmail.isNotBlank() &&
+                (prefs.drivePendingSync || !prefs.driveFolderLinked)
+            ) {
+                executeEncryptedDriveUpload(allowConsentPrompt = allowConsentPrompt)
+            }
+        }
+    }
+
+    private fun initiateDriveAutoRestoreOrSync(
+        forceRestore: Boolean,
+        allowConsentPrompt: Boolean
+    ) {
+        viewModelScope.launch {
+            val prefs = prefsRepo.userPrefs.first()
+            val isBn = prefs.language == AppLanguage.BN
+            if (prefs.authMode != AuthMode.GOOGLE || prefs.userEmail.isBlank()) {
+                _driveSyncState.value = DriveSyncUiState(status = DriveSyncStatus.SIGNED_OUT)
+                return@launch
+            }
+            if (!connectivityMonitor.refreshNow()) {
+                _driveSyncState.value = _driveSyncState.value.copy(
+                    status = DriveSyncStatus.PENDING_OFFLINE,
+                    message = if (isBn) {
+                        "ইন্টারনেট সংযোগ নেই — অনলাইন হলে অটো-রিস্টোর/সিঙ্ক হবে।"
+                    } else {
+                        "Offline — Drive restore & encrypted sync will run once online."
+                    },
+                    isError = false
+                )
+                return@launch
+            }
+
+            val token = obtainDriveAccessToken(
+                actionOnConsent = if (forceRestore) {
+                    DrivePendingAction.FORCE_RESTORE
+                } else {
+                    DrivePendingAction.AUTO_RESTORE_OR_SYNC
+                },
+                allowConsentPrompt = allowConsentPrompt
+            ) ?: return@launch
+
+            _driveSyncState.value = _driveSyncState.value.copy(
+                status = DriveSyncStatus.RESTORING,
+                message = if (isBn) {
+                    "Google Drive-এ এনক্রিপ্টেড ব্যাকআপ যাচাই করা হচ্ছে..."
+                } else {
+                    "Checking encrypted Google Drive vault..."
+                },
+                isError = false
+            )
+
+            isDriveRestoreInProgress = true
+            try {
+                when (
+                    val outcome = driveSyncCoordinator.autoRestoreOrInitialSync(
+                        accessToken = token,
+                        userEmail = prefs.userEmail,
+                        db = db,
+                        prefsRepo = prefsRepo,
+                        forceRestore = forceRestore
+                    )
+                ) {
+                    is DriveAutoRestoreOutcome.Restored -> {
+                        _pendingDashboardLayout.value = null
+                        val msg = if (isBn) {
+                            "Google Drive থেকে এনক্রিপ্টেড ব্যাকআপ স্বয়ংক্রিয়ভাবে রিস্টোর হয়েছে।"
+                        } else {
+                            "Encrypted backup restored automatically from Google Drive."
+                        }
+                        _driveSyncState.value = DriveSyncUiState(
+                            status = DriveSyncStatus.SYNCED,
+                            lastSyncedAtMillis = outcome.updatedAtMillis,
+                            hasPendingChanges = false,
+                            message = msg,
+                            isError = false
+                        )
+                        _backupStatus.value = BackupMessage(msg, isError = false)
+                    }
+
+                    is DriveAutoRestoreOutcome.UploadedLocal -> {
+                        val msg = if (isBn) {
+                            "Google Drive-এ এনক্রিপ্টেড ব্যাকআপ ফোল্ডার সিঙ্ক হয়েছে।"
+                        } else {
+                            "Encrypted backup synced to Google Drive."
+                        }
+                        _driveSyncState.value = DriveSyncUiState(
+                            status = DriveSyncStatus.SYNCED,
+                            lastSyncedAtMillis = outcome.updatedAtMillis,
+                            hasPendingChanges = false,
+                            message = msg,
+                            isError = false
+                        )
+                    }
+
+                    is DriveAutoRestoreOutcome.Unauthorized -> {
+                        cachedDriveAccessToken = null
+                        if (allowConsentPrompt) {
+                            obtainDriveAccessToken(
+                                actionOnConsent = if (forceRestore) {
+                                    DrivePendingAction.FORCE_RESTORE
+                                } else {
+                                    DrivePendingAction.AUTO_RESTORE_OR_SYNC
+                                },
+                                allowConsentPrompt = true
+                            )
+                        } else {
+                            _driveSyncState.value = _driveSyncState.value.copy(
+                                status = DriveSyncStatus.NEEDS_PERMISSION,
+                                isError = false
+                            )
+                        }
+                    }
+
+                    is DriveAutoRestoreOutcome.Error -> {
+                        val errMsg = if (isBn) {
+                            "Google Drive ব্যাকআপ যাচাই করা যায়নি: ${outcome.message}"
+                        } else {
+                            outcome.message
+                        }
+                        _driveSyncState.value = _driveSyncState.value.copy(
+                            status = DriveSyncStatus.ERROR,
+                            message = errMsg,
+                            isError = true
+                        )
+                        if (forceRestore) {
+                            _backupStatus.value = BackupMessage(errMsg, isError = true)
+                        }
+                    }
+                }
+            } finally {
+                isDriveRestoreInProgress = false
+            }
+        }
+    }
+
+    private suspend fun executeEncryptedDriveUpload(allowConsentPrompt: Boolean) {
+        if (isDriveRestoreInProgress) return
+        if (isDriveSyncRunning) {
+            driveSyncRequestedWhileRunning = true
+            return
+        }
+
+        val prefs = prefsRepo.userPrefs.first()
+        val isBn = prefs.language == AppLanguage.BN
+        if (prefs.authMode != AuthMode.GOOGLE || prefs.userEmail.isBlank()) {
+            _driveSyncState.value = DriveSyncUiState(status = DriveSyncStatus.SIGNED_OUT)
+            return
+        }
+        if (!connectivityMonitor.refreshNow()) {
+            _driveSyncState.value = _driveSyncState.value.copy(
+                status = DriveSyncStatus.PENDING_OFFLINE,
+                hasPendingChanges = true,
+                message = if (isBn) {
+                    "অফলাইন — ইন্টারনেট এলেই এনক্রিপ্টেড ব্যাকআপ আপলোড হবে।"
+                } else {
+                    "Offline — encrypted Drive backup will upload automatically when online."
+                },
+                isError = false
+            )
+            return
+        }
+
+        val token = obtainDriveAccessToken(
+            actionOnConsent = DrivePendingAction.SYNC_NOW,
+            allowConsentPrompt = allowConsentPrompt
+        ) ?: return
+
+        isDriveSyncRunning = true
+        driveSyncRequestedWhileRunning = false
+        _driveSyncState.value = _driveSyncState.value.copy(
+            status = DriveSyncStatus.SYNCING,
+            message = if (isBn) {
+                "এনক্রিপ্টেড ব্যাকআপ Google Drive-এ সিঙ্ক হচ্ছে..."
+            } else {
+                "Syncing encrypted vault to Google Drive..."
+            },
+            isError = false
+        )
+
+        var shouldFollowUpSync = false
+        try {
+            when (
+                val outcome = driveSyncCoordinator.uploadLocalSnapshot(
+                    accessToken = token,
+                    userEmail = prefs.userEmail,
+                    db = db,
+                    prefsRepo = prefsRepo
+                )
+            ) {
+                is DriveUploadOutcome.Success -> {
+                    val syncedMsg = if (isBn) {
+                        "Google Drive-এ এনক্রিপ্টেড সিঙ্ক সম্পন্ন হয়েছে।"
+                    } else {
+                        "Encrypted backup synced to Google Drive."
+                    }
+                    _driveSyncState.value = DriveSyncUiState(
+                        status = DriveSyncStatus.SYNCED,
+                        lastSyncedAtMillis = outcome.updatedAtMillis,
+                        hasPendingChanges = driveSyncRequestedWhileRunning,
+                        message = syncedMsg,
+                        isError = false
+                    )
+                    if (allowConsentPrompt) {
+                        _backupStatus.value = BackupMessage(syncedMsg, isError = false)
+                    }
+                }
+
+                is DriveUploadOutcome.Unauthorized -> {
+                    cachedDriveAccessToken = null
+                    _driveSyncState.value = _driveSyncState.value.copy(
+                        status = DriveSyncStatus.NEEDS_PERMISSION,
+                        hasPendingChanges = true,
+                        message = if (isBn) {
+                            "Google Drive অনুমতি পুনরায় নিশ্চিত করুন।"
+                        } else {
+                            "Please re-confirm Google Drive access to resume encrypted sync."
+                        },
+                        isError = false
+                    )
+                    if (allowConsentPrompt) {
+                        obtainDriveAccessToken(DrivePendingAction.SYNC_NOW, allowConsentPrompt = true)
+                    }
+                }
+
+                is DriveUploadOutcome.Error -> {
+                    _driveSyncState.value = _driveSyncState.value.copy(
+                        status = DriveSyncStatus.ERROR,
+                        hasPendingChanges = true,
+                        message = if (isBn) {
+                            "সিঙ্ক ব্যর্থ হয়েছে — পরে স্বয়ংক্রিয়ভাবে আবার চেষ্টা করা হবে।"
+                        } else {
+                            "Sync paused — will retry automatically."
+                        },
+                        isError = true
+                    )
+                }
+            }
+        } finally {
+            shouldFollowUpSync = driveSyncRequestedWhileRunning
+            driveSyncRequestedWhileRunning = false
+            isDriveSyncRunning = false
+        }
+
+        if (shouldFollowUpSync && !isDriveRestoreInProgress) {
+            scheduleImmediateDriveAutoSync(debounceMillis = 1200L)
+        }
+    }
+
+    private suspend fun obtainDriveAccessToken(
+        actionOnConsent: DrivePendingAction,
+        allowConsentPrompt: Boolean
+    ): String? {
+        cachedDriveAccessToken?.takeIf { it.isNotBlank() }?.let { return it }
+
+        val isBn = uiState.value.prefs.language == AppLanguage.BN
+        return when (val auth = GoogleDriveAuthHelper.requestDriveAccessToken(getApplication())) {
+            is DriveAuthOutcome.Authorized -> {
+                cachedDriveAccessToken = auth.accessToken
+                auth.accessToken
+            }
+
+            is DriveAuthOutcome.NeedsUserConsent -> {
+                pendingDriveConsentAction = actionOnConsent
+                _driveSyncState.value = _driveSyncState.value.copy(
+                    status = DriveSyncStatus.NEEDS_PERMISSION,
+                    message = if (isBn) {
+                        "Google Drive এনক্রিপ্টেড ব্যাকআপের জন্য অনুমতি প্রয়োজন।"
+                    } else {
+                        "Google Drive permission required for automatic encrypted sync."
+                    },
+                    isError = false
+                )
+                if (allowConsentPrompt) {
+                    _pendingDriveConsent.value = auth.pendingIntent
+                }
+                null
+            }
+
+            is DriveAuthOutcome.Error -> {
+                _driveSyncState.value = _driveSyncState.value.copy(
+                    status = DriveSyncStatus.NEEDS_PERMISSION,
+                    message = if (isBn) {
+                        "Google Drive সংযোগ পাওয়া যায়নি—অনুমতি দিয়ে আবার চেষ্টা করুন।"
+                    } else {
+                        "Unable to authorize Google Drive right now."
+                    },
+                    isError = false
+                )
+                null
+            }
+        }
     }
 
     fun setEnableSubcategories(enabled: Boolean) = viewModelScope.launch {
@@ -493,12 +1116,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefsRepo.setStartOfWeek(startOfWeek)
     }
 
+    fun setMainCurrency(currencyCode: String) = viewModelScope.launch {
+        prefsRepo.setMainCurrency(currencyCode)
+    }
+
+    fun setSecondaryCurrency(currencyCode: String) = viewModelScope.launch {
+        prefsRepo.setSecondaryCurrency(currencyCode)
+    }
+
     fun setHapticFeedback(enabled: Boolean) = viewModelScope.launch {
         prefsRepo.setHapticFeedback(enabled)
     }
 
     fun setNotificationPreferences(budget: Boolean, credit: Boolean, loan: Boolean) = viewModelScope.launch {
         prefsRepo.setNotificationPreferences(budget, credit, loan)
+    }
+
+    fun setDailyReminderConfig(enabled: Boolean, hour: Int, minute: Int) = viewModelScope.launch {
+        prefsRepo.setDailyReminderConfig(enabled, hour, minute)
+    }
+
+    fun setLoanDayBeforeEnabled(enabled: Boolean) = viewModelScope.launch {
+        prefsRepo.setLoanDayBeforeEnabled(enabled)
+    }
+
+    fun setHighSpendAlertEnabled(enabled: Boolean) = viewModelScope.launch {
+        prefsRepo.setHighSpendAlertConfig(enabled)
+    }
+
+    fun clearNotificationHistory() = viewModelScope.launch {
+        prefsRepo.clearNotificationLog()
     }
 
     fun setAppLock(enabled: Boolean, pin: String) = viewModelScope.launch {
@@ -600,6 +1247,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         timestamp: Long = System.currentTimeMillis()
     ) = viewModelScope.launch {
         repository.addTransaction(title, amount, type, category, subcategory, accountId, note, timestamp)
+        if (type == TransactionType.EXPENSE) {
+            evaluateImmediateThresholdAlerts()
+        }
+    }
+
+    private suspend fun evaluateImmediateThresholdAlerts() {
+        runCatching {
+            val prefs = prefsRepo.userPrefs.first()
+            val accounts = db.accountDao().getAllAccountsOnce()
+            val transactions = db.transactionDao().getAllTransactionsOnce()
+            if (transactions.isEmpty()) return
+
+            val timeCtx = systemClockMonitor.timeContext.value
+            val activeTz = timeCtx.timeZone
+            val snapshot = marketSyncState.value.snapshot
+            val mainCur = prefs.mainCurrencyCode
+
+            val cal = Calendar.getInstance(activeTz).apply { timeInMillis = System.currentTimeMillis() }
+            val currentMonth = cal.get(Calendar.MONTH)
+            val currentYear = cal.get(Calendar.YEAR)
+
+            val spentThisMonth = transactions
+                .filter { tx ->
+                    if (tx.type != TransactionType.EXPENSE) return@filter false
+                    val txCal = Calendar.getInstance(activeTz).apply { timeInMillis = tx.timestamp }
+                    txCal.get(Calendar.MONTH) == currentMonth && txCal.get(Calendar.YEAR) == currentYear
+                }
+                .sumOf { snapshot.convertCurrencyCode(it.amount, it.currencyCode, mainCur) }
+
+            val todayStartCal = Calendar.getInstance(activeTz).apply {
+                timeInMillis = System.currentTimeMillis()
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            val todayStart = todayStartCal.timeInMillis
+            todayStartCal.add(Calendar.DAY_OF_MONTH, 1)
+            val tomorrowStart = todayStartCal.timeInMillis
+
+            val todaySpend = transactions
+                .filter { it.type == TransactionType.EXPENSE && it.timestamp in todayStart until tomorrowStart }
+                .sumOf { snapshot.convertCurrencyCode(it.amount, it.currencyCode, mainCur) }
+
+            val triggered = AmarHisabNotificationManager.evaluateAndTriggerImmediateThresholdAlerts(
+                context = getApplication(),
+                prefs = prefs,
+                accounts = accounts,
+                transactions = transactions,
+                spentThisMonth = spentThisMonth,
+                todaySpend = todaySpend,
+                nowMillis = System.currentTimeMillis(),
+                timeZone = activeTz
+            )
+            triggered.forEach { item ->
+                prefsRepo.appendNotificationLogEntry(item)
+            }
+        }.onFailure { e ->
+            Log.w(TAG, "Threshold alert evaluation skipped", e)
+        }
     }
 
     fun transferFunds(
@@ -607,9 +1314,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         toAccountId: Long,
         amount: Double,
         note: String,
-        timestamp: Long = System.currentTimeMillis()
+        timestamp: Long = System.currentTimeMillis(),
+        customConversionRate: Double? = null
     ) = viewModelScope.launch {
-        repository.transferFunds(fromAccountId, toAccountId, amount, note, timestamp)
+        val currentAccounts = uiState.value.accounts
+        val fromCode = currentAccounts.firstOrNull { it.id == fromAccountId }?.currencyCode ?: "BDT"
+        val toCode = currentAccounts.firstOrNull { it.id == toAccountId }?.currencyCode ?: fromCode
+        val conversionRate = if (fromCode.equals(toCode, ignoreCase = true)) {
+            1.0
+        } else {
+            customConversionRate?.takeIf { it > 0.0 && it.isFinite() }
+                ?: marketSyncState.value.snapshot.convertCurrencyCode(1.0, fromCode, toCode)
+        }
+        repository.transferFunds(
+            fromAccountId = fromAccountId,
+            toAccountId = toAccountId,
+            amount = amount,
+            note = note,
+            timestamp = timestamp,
+            conversionRate = conversionRate
+        )
     }
 
     fun deleteTransaction(id: Long) = viewModelScope.launch {
@@ -635,13 +1359,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loanType: LoanType,
         totalAmount: Double,
         note: String,
-        dueDateMillis: Long?
+        dueDateMillis: Long?,
+        currencyCode: String = uiState.value.prefs.secondaryCurrencyCode.ifBlank {
+            uiState.value.prefs.mainCurrencyCode
+        }
     ) = viewModelScope.launch {
-        repository.addLoan(personName, loanType, totalAmount, note, dueDateMillis)
+        repository.addLoan(personName, loanType, totalAmount, note, dueDateMillis, currencyCode)
     }
 
-    fun settleLoan(loan: LoanEntity, amount: Double, walletId: Long) = viewModelScope.launch {
-        repository.settleLoan(loan, amount, walletId)
+    fun updateLoan(loan: LoanEntity) = viewModelScope.launch {
+        repository.updateLoan(loan)
+    }
+
+    fun settleLoan(loan: LoanEntity, amount: Double, walletId: Long?) = viewModelScope.launch {
+        val targetAcc = walletId?.let { id -> uiState.value.accounts.firstOrNull { it.id == id } }
+        val rate = if (targetAcc != null && !targetAcc.currencyCode.equals(loan.currencyCode, ignoreCase = true)) {
+            val fromCur = AppCurrency.fromCode(loan.currencyCode).toMarketCurrency()
+            val toCur = AppCurrency.fromCode(targetAcc.currencyCode).toMarketCurrency()
+            marketSyncState.value.snapshot.convert(1.0, fromCur, toCur)
+        } else {
+            1.0
+        }
+        repository.settleLoan(loan, amount, walletId, conversionRate = rate)
     }
 
     fun deleteLoan(loanId: Long) = viewModelScope.launch {
@@ -758,27 +1497,89 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _backupStatus.value = null
     }
 
-    // --- Gemini Vision: Receipt Scan (gemini-4-argon) ---
+    // --- AI Receipt Scan (Gemini Vision with automatic on-device ML Kit OCR fallback) ---
     fun analyzeReceiptUri(uri: Uri) {
+        val snapshot = uiState.value
+        val lang = snapshot.prefs.language
+        val defaultCurrency = snapshot.prefs.secondaryCurrencyCode.ifBlank {
+            snapshot.prefs.mainCurrencyCode
+        }
         viewModelScope.launch {
             _receiptState.value = ReceiptScanUiState.Loading
-            try {
-                val bitmap = withContext(Dispatchers.IO) { loadBitmapFromUri(uri) }
-                val result = aiService.analyzeReceiptImage(bitmap, uiState.value.prefs.language)
-                _receiptState.value = ReceiptScanUiState.Success(result)
-            } catch (e: TimeoutCancellationException) {
-                _receiptState.value = ReceiptScanUiState.Error("Receipt scan timed out.")
+            val bitmap = try {
+                withContext(Dispatchers.IO) { loadBitmapFromUri(uri) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Receipt analysis failed", e)
-                _receiptState.value = ReceiptScanUiState.Error(e.localizedMessage ?: "Receipt scan failed.")
+                Log.w(TAG, "Unable to decode receipt bitmap", e)
+                val sanitized = InsightsSummaryHelper.sanitizeReceiptScanError(
+                    rawMessage = e.localizedMessage,
+                    throwable = e,
+                    language = lang
+                )
+                _receiptState.value = ReceiptScanUiState.Error(
+                    message = sanitized.message,
+                    guidance = sanitized.guidance,
+                    category = sanitized.category
+                )
+                return@launch
             }
+
+            // 1. Try cloud Gemini Vision AI first (when online)
+            val aiResult = if (connectivityMonitor.refreshNow()) {
+                try {
+                    aiService.analyzeReceiptImage(bitmap, lang)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Cloud receipt AI unavailable; switching seamlessly to on-device OCR", e)
+                    null
+                }
+            } else {
+                null
+            }
+
+            if (aiResult != null && aiResult.amountBdt > 0.0) {
+                _receiptState.value = ReceiptScanUiState.Success(aiResult)
+                return@launch
+            }
+
+            // 2. Seamless on-device ML Kit OCR fallback focusing on Total Amount & Currency
+            val localResult = try {
+                LocalReceiptTextParser.scanBitmapLocally(bitmap, defaultCurrency)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "On-device receipt OCR fallback failed", e)
+                null
+            }
+
+            if (localResult != null && localResult.amountBdt > 0.0) {
+                _receiptState.value = ReceiptScanUiState.Success(localResult)
+                return@launch
+            }
+
+            // 3. Calm, non-blocking manual fallback prompt (never expose raw App Check errors)
+            val isBn = lang == AppLanguage.BN
+            _receiptState.value = ReceiptScanUiState.Error(
+                message = if (isBn) {
+                    "রসিদের মোট টাকা স্পষ্টভাবে পড়া যায়নি।"
+                } else {
+                    "Could not clearly detect the total amount on this receipt."
+                },
+                guidance = if (isBn) {
+                    "রসিদের ছবিটি দেখে নিচে ম্যানুয়ালি টাকা ও মুদ্রা লিখে সেভ করুন, অথবা স্পষ্ট ছবি তুলে আবার স্ক্যান করুন।"
+                } else {
+                    "Tap below to enter the total amount and currency manually while viewing the receipt, or retake a clearer photo."
+                },
+                category = ReceiptScanErrorCategory.GENERAL
+            )
         }
     }
 
     fun resetReceiptScan() {
         _receiptState.value = ReceiptScanUiState.Idle
+        com.example.data.ai.TempReceiptImageCleaner.cleanupAllTempReceipts(getApplication())
     }
 
     // --- Gemini Search Grounding (gemini-3.8-flash + googleSearch) ---
@@ -823,22 +1624,68 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // --- Gemini Voice / Text Entry Parser ---
+    // --- AI Voice / Text Entry Parser (Gemini AI with automatic local Bangla/English fallback) ---
     fun parseVoiceEntry(text: String) {
-        if (text.isBlank()) return
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) return
+        val snapshot = uiState.value
+        val lang = snapshot.prefs.language
+        val accounts = snapshot.accounts
+        val defaultCurrency = snapshot.prefs.secondaryCurrencyCode.ifBlank {
+            snapshot.prefs.mainCurrencyCode
+        }
+        val accountLabels = accounts.map { acc ->
+            "${acc.name} (${acc.bankOrProvider.ifBlank { acc.type.name }}, ${acc.currencyCode})"
+        }
+
         viewModelScope.launch {
             _voiceState.value = VoiceParseUiState.Loading
-            try {
-                val parsed = aiService.parseVoiceOrTextEntry(text.trim(), uiState.value.prefs.language)
-                _voiceState.value = VoiceParseUiState.Success(parsed)
-            } catch (e: TimeoutCancellationException) {
-                _voiceState.value = VoiceParseUiState.Error("Voice entry timed out.")
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Voice parse failed", e)
-                _voiceState.value = VoiceParseUiState.Error(e.localizedMessage ?: "Voice parse failed.")
+
+            // 1. Try cloud Gemini AI first when online
+            val aiParsed = if (connectivityMonitor.refreshNow()) {
+                try {
+                    aiService.parseVoiceOrTextEntry(
+                        utterance = trimmed,
+                        language = lang,
+                        availableAccountNames = accountLabels,
+                        defaultCurrencyCode = defaultCurrency
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Cloud voice AI unavailable; switching seamlessly to local parser", e)
+                    null
+                }
+            } else {
+                null
             }
+
+            if (aiParsed != null && aiParsed.amountBdt > 0.0) {
+                _voiceState.value = VoiceParseUiState.Success(aiParsed)
+                return@launch
+            }
+
+            // 2. Seamless local Bangla/English/Banglish parser fallback (supports transfers, bKash, multi-currency)
+            val localParsed = LocalVoiceTransactionParser.parse(
+                utterance = trimmed,
+                accounts = accounts,
+                language = lang,
+                defaultCurrencyCode = defaultCurrency
+            )
+            if (localParsed != null && localParsed.amountBdt > 0.0) {
+                _voiceState.value = VoiceParseUiState.Success(localParsed)
+                return@launch
+            }
+
+            // 3. Friendly prompt if no amount was spoken/typed
+            val isBn = lang == AppLanguage.BN
+            _voiceState.value = VoiceParseUiState.Error(
+                if (isBn) {
+                    "টাকার পরিমাণ স্পষ্টভাবে বলুন বা লিখুন — যেমন: \"বিকাশ থেকে বাজার খরচ ১৫০০ টাকা\" বা \"Trust থেকে Dutch-Bangla তে ৫০০০ টাকা পাঠিয়েছি\""
+                } else {
+                    "Please include an amount — e.g. \"bKash groceries 1500 BDT\" or \"Transfer 5000 from Trust to Dutch-Bangla\"."
+                }
+            )
         }
     }
 
@@ -1219,10 +2066,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val categoryBudgets: List<CategoryBudgetEntity>
     )
 
+    private data class ScreenNavState(
+        val tab: AppTab,
+        val showAccounts: Boolean,
+        val showSettings: Boolean,
+        val showLiveMarket: Boolean
+    )
+
     private data class NavFilterState(
         val tab: AppTab,
         val showAccounts: Boolean,
         val showSettings: Boolean,
+        val showLiveMarket: Boolean,
         val filter: InsightTimeFilter,
         val monthOffset: Int
     )
@@ -1231,18 +2086,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs: UserPrefs,
         dbData: DbSnapshot,
         nav: NavFilterState,
-        timeContext: DeviceTimeContext
+        timeContext: DeviceTimeContext,
+        marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
     ): MainUiState {
         val accounts = dbData.accounts
         val transactions = dbData.transactions
         val activeTz = timeContext.timeZone
+        val mainCurCode = prefs.mainCurrencyCode
+
+        fun toMainCurrency(amount: Double, currencyCode: String): Double =
+            marketSnapshot.convertCurrencyCode(amount, currencyCode, mainCurCode)
+
+        val liquidBalancesByCurrency: Map<String, Double> = accounts
+            .filter { it.type != AccountType.CREDIT_CARD }
+            .groupBy { AppCurrency.fromCode(it.currencyCode).code }
+            .mapValues { (_, list) -> list.sumOf { it.balance.coerceAtLeast(0.0) } }
 
         val assets = accounts
             .filter { it.type != AccountType.CREDIT_CARD }
-            .sumOf { it.balance.coerceAtLeast(0.0) }
+            .sumOf { toMainCurrency(it.balance.coerceAtLeast(0.0), it.currencyCode) }
         val liabilities = accounts
             .filter { it.type == AccountType.CREDIT_CARD }
-            .sumOf { it.balance.coerceAtLeast(0.0) }
+            .sumOf { toMainCurrency(it.balance.coerceAtLeast(0.0), it.currencyCode) }
 
         val cal = Calendar.getInstance(activeTz).apply { timeInMillis = timeContext.epochMillis }
         val currentMonth = cal.get(Calendar.MONTH)
@@ -1253,9 +2118,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val txCal = Calendar.getInstance(activeTz).apply { timeInMillis = tx.timestamp }
             txCal.get(Calendar.MONTH) == currentMonth && txCal.get(Calendar.YEAR) == currentYear
         }
-        val spentThisMonth = monthTx.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
-        val incomeThisMonth = monthTx.filter { it.type == TransactionType.INCOME }.sumOf { it.amount }
-        val dailyAverage = if (spentThisMonth > 0) spentThisMonth / currentDay else 1200.0
+        val spentThisMonth = monthTx
+            .filter { it.type == TransactionType.EXPENSE }
+            .sumOf { toMainCurrency(it.amount, it.currencyCode) }
+        val incomeThisMonth = monthTx
+            .filter { it.type == TransactionType.INCOME }
+            .sumOf { toMainCurrency(it.amount, it.currencyCode) }
+        val dailyAverage = if (spentThisMonth > 0) spentThisMonth / currentDay else 0.0
 
         val todayStartCal = Calendar.getInstance(activeTz).apply {
             timeInMillis = timeContext.epochMillis
@@ -1269,31 +2138,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val todaySpend = transactions
             .filter { it.type == TransactionType.EXPENSE && it.timestamp in todayStart until tomorrowStart }
-            .sumOf { it.amount }
+            .sumOf { toMainCurrency(it.amount, it.currencyCode) }
 
         var streak = 0
-        val dayCap = maxOf(dailyAverage * 1.15, prefs.monthlyBudget / 30.0)
-        for (offset in 0..29) {
-            val dayStartCal = Calendar.getInstance(activeTz).apply {
-                timeInMillis = timeContext.epochMillis
-                add(Calendar.DAY_OF_MONTH, -offset)
-                set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        if (transactions.isNotEmpty()) {
+            val dayCap = maxOf(dailyAverage * 1.15, prefs.monthlyBudget / 30.0)
+            for (offset in 0..29) {
+                val dayStartCal = Calendar.getInstance(activeTz).apply {
+                    timeInMillis = timeContext.epochMillis
+                    add(Calendar.DAY_OF_MONTH, -offset)
+                    set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                }
+                val dayStart = dayStartCal.timeInMillis
+                val nextDayStart = (dayStartCal.clone() as Calendar).apply {
+                    add(Calendar.DAY_OF_MONTH, 1)
+                }.timeInMillis
+                val daySpent = transactions
+                    .filter { it.type == TransactionType.EXPENSE && it.timestamp in dayStart until nextDayStart }
+                    .sumOf { toMainCurrency(it.amount, it.currencyCode) }
+                if (daySpent <= dayCap) streak++ else break
             }
-            val dayStart = dayStartCal.timeInMillis
-            val nextDayStart = (dayStartCal.clone() as Calendar).apply {
-                add(Calendar.DAY_OF_MONTH, 1)
-            }.timeInMillis
-            val daySpent = transactions
-                .filter { it.type == TransactionType.EXPENSE && it.timestamp in dayStart until nextDayStart }
-                .sumOf { it.amount }
-            if (daySpent <= dayCap) streak++ else break
         }
 
         val catSpentMap = monthTx
             .filter { it.type == TransactionType.EXPENSE }
             .groupBy { it.category }
-            .mapValues { (_, list) -> list.sumOf { it.amount } }
+            .mapValues { (_, list) -> list.sumOf { toMainCurrency(it.amount, it.currencyCode) } }
 
         val topCategories = catSpentMap.entries
             .map { (cat, sum) ->
@@ -1307,10 +2178,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             filter = nav.filter,
             monthOffset = nav.monthOffset,
             startOfWeek = prefs.startOfWeek,
-            timeContext = timeContext
+            timeContext = timeContext,
+            mainCurrencyCode = mainCurCode,
+            marketSnapshot = marketSnapshot
         )
 
-        val alerts = buildSmartAlerts(prefs, accounts, dbData.loans, spentThisMonth, streak)
+        val alerts = buildSmartAlerts(
+            prefs = prefs,
+            accounts = accounts,
+            transactions = transactions,
+            loans = dbData.loans,
+            spentThisMonth = spentThisMonth,
+            todaySpend = todaySpend,
+            timeContext = timeContext
+        )
 
         return MainUiState(
             isPrefsLoaded = true,
@@ -1321,18 +2202,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             loans = dbData.loans,
             categoryBudgets = dbData.categoryBudgets,
             totalLiquidBalance = assets,
+            liquidBalancesByCurrency = liquidBalancesByCurrency,
             netWorth = NetWorthSummary(assets, liabilities),
             spentThisMonth = spentThisMonth,
             incomeThisMonth = incomeThisMonth,
             dailyAverageSpend = dailyAverage,
             todaySpend = todaySpend,
-            streakDays = streak.coerceAtLeast(1),
+            streakDays = if (transactions.isEmpty()) 0 else streak.coerceAtLeast(1),
             topCategories = topCategories,
             categorySpentMap = catSpentMap,
             smartAlerts = alerts,
             selectedTab = nav.tab,
             showAccountsScreen = nav.showAccounts,
             showSettingsScreen = nav.showSettings,
+            showLiveMarketScreen = nav.showLiveMarket,
             insightFilter = nav.filter,
             insightMonthOffset = nav.monthOffset,
             analytics = analytics,
@@ -1345,7 +2228,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         filter: InsightTimeFilter,
         monthOffset: Int,
         startOfWeek: StartOfWeek,
-        timeContext: DeviceTimeContext
+        timeContext: DeviceTimeContext,
+        mainCurrencyCode: String = "BDT",
+        marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
     ): AnalyticsSnapshot {
         val activeTz = timeContext.timeZone
         val startCal = Calendar.getInstance(activeTz).apply {
@@ -1409,10 +2294,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val prevPeriodTx = transactions.filter {
             it.timestamp >= prevStartMillis && it.timestamp < prevEndMillis
         }
-        val totalIncome = periodTx.filter { it.type == TransactionType.INCOME }.sumOf { it.amount }
-        val totalExpense = periodTx.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
-        val prevIncome = prevPeriodTx.filter { it.type == TransactionType.INCOME }.sumOf { it.amount }
-        val prevExpense = prevPeriodTx.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+        fun toMain(tx: TransactionEntity): Double =
+            marketSnapshot.convertCurrencyCode(tx.amount, tx.currencyCode, mainCurrencyCode)
+
+        val totalIncome = periodTx.filter { it.type == TransactionType.INCOME }.sumOf { toMain(it) }
+        val totalExpense = periodTx.filter { it.type == TransactionType.EXPENSE }.sumOf { toMain(it) }
+        val prevIncome = prevPeriodTx.filter { it.type == TransactionType.INCOME }.sumOf { toMain(it) }
+        val prevExpense = prevPeriodTx.filter { it.type == TransactionType.EXPENSE }.sumOf { toMain(it) }
         val expenseChangePercent = if (prevExpense > 0.0) {
             (((totalExpense - prevExpense) / prevExpense) * 100.0).toInt()
         } else {
@@ -1428,7 +2316,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .filter { it.type == TransactionType.EXPENSE }
             .groupBy { it.category }
             .map { (cat, list) ->
-                val sum = list.sumOf { it.amount }
+                val sum = list.sumOf { toMain(it) }
                 CategorySpend(cat, sum, if (totalExpense > 0) (sum / totalExpense).toFloat() else 0f)
             }
             .sortedByDescending { it.amount }
@@ -1438,7 +2326,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val expenseByDayKey = periodTx
             .filter { it.type == TransactionType.EXPENSE }
             .groupBy { dayFormat.format(it.timestamp) }
-            .mapValues { (_, list) -> list.sumOf { it.amount } }
+            .mapValues { (_, list) -> list.sumOf { toMain(it) } }
 
         val rawPoints = mutableListOf<DailyTrendPoint>()
         if (filter == InsightTimeFilter.DAILY) {
@@ -1449,7 +2337,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (tx.type != TransactionType.EXPENSE) return@filter false
                     val c = Calendar.getInstance(activeTz).apply { timeInMillis = tx.timestamp }
                     c.get(Calendar.HOUR_OF_DAY) in range
-                }.sumOf { it.amount }
+                }.sumOf { toMain(it) }
                 rawPoints += DailyTrendPoint(labels[i], amt)
             }
         } else {
@@ -1500,64 +2388,164 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun buildSmartAlerts(
         prefs: UserPrefs,
         accounts: List<AccountEntity>,
+        transactions: List<TransactionEntity>,
         loans: List<LoanEntity>,
         spentThisMonth: Double,
-        streakDays: Int
+        todaySpend: Double,
+        timeContext: DeviceTimeContext
     ): List<SmartAlert> {
         val isBn = prefs.language == AppLanguage.BN
+        val activeTz = timeContext.timeZone
+        val nowMillis = timeContext.epochMillis
+        val mainCur = prefs.mainCurrencyCode
         val alerts = mutableListOf<SmartAlert>()
-        val budgetPct = if (prefs.monthlyBudget > 0) ((spentThisMonth / prefs.monthlyBudget) * 100).toInt() else 0
+        val seenIds = mutableSetOf<String>()
 
-        if (prefs.notifBudgetAlerts) {
+        fun addUnique(alert: SmartAlert) {
+            if (seenIds.add(alert.id)) {
+                alerts += alert
+            }
+        }
+
+        // Strict zero-state discipline: emit only real, earned alerts based on actual user data.
+        // 1. Immediate Monthly Budget Limit Alert (80% / 100%)
+        if (prefs.notifBudgetAlerts && prefs.monthlyBudget > 0.0 && spentThisMonth > 0.0) {
+            val budgetPct = ((spentThisMonth / prefs.monthlyBudget) * 100.0).toInt()
             if (budgetPct >= 80) {
-                alerts += SmartAlert(
-                    id = "budget_high",
-                    title = if (isBn) "মাসিক বাজেট সতর্কতা ($budgetPct%)" else "Monthly Budget Alert ($budgetPct%)",
-                    subtitle = if (isBn) "আপনি নির্ধারিত বাজেটের কাছাকাছি পৌঁছেছেন।" else "You have utilized $budgetPct% of your monthly budget.",
-                    isWarning = true
-                )
-            } else {
-                alerts += SmartAlert(
-                    id = "budget_ok",
-                    title = if (isBn) "বাজেট নিয়ন্ত্রণে আছে ($budgetPct%)" else "Budget On Track ($budgetPct%)",
-                    subtitle = if (isBn) "চলতি মাসে আপনার খরচ স্বাভাবিক সীমায় রয়েছে।" else "Your monthly spending pace looks healthy.",
-                    isWarning = false
+                val pctStr = if (isBn) BdtFormatter.toBanglaDigits("$budgetPct%") else "$budgetPct%"
+                val spentStr = BdtFormatter.formatCurrency(spentThisMonth, mainCur, prefs.language)
+                val limitStr = BdtFormatter.formatCurrency(prefs.monthlyBudget, mainCur, prefs.language)
+                addUnique(
+                    SmartAlert(
+                        id = "budget_high",
+                        title = if (budgetPct >= 100) {
+                            if (isBn) "মাসিক বাজেট সীমা ছাড়িয়েছে ($pctStr)" else "Monthly Budget Exceeded ($pctStr)"
+                        } else {
+                            if (isBn) "মাসিক বাজেট সতর্কতা ($pctStr)" else "Monthly Budget Alert ($pctStr)"
+                        },
+                        subtitle = if (isBn) {
+                            "খরচ $spentStr / বাজেট $limitStr — বিস্তারিত দেখতে ট্যাপ করুন।"
+                        } else {
+                            "Spent $spentStr of $limitStr monthly budget. Tap to inspect Insights."
+                        },
+                        isWarning = true,
+                        actionRoute = NotificationActionRoute.OPEN_INSIGHTS_BUDGET,
+                        category = NotificationCategory.BUDGET_THRESHOLD,
+                        timestampMillis = nowMillis
+                    )
                 )
             }
         }
 
+        // 2. Credit Card Utilization Alert (> 30%)
         if (prefs.notifCreditAlerts) {
-            accounts.filter { it.type == AccountType.CREDIT_CARD }.forEach { cc ->
+            accounts.filter { it.type == AccountType.CREDIT_CARD && it.creditLimit > 0.0 }.forEach { cc ->
                 val util = cc.utilizationPercent
                 if (util > 30) {
-                    alerts += SmartAlert(
-                        id = "cc_${cc.id}",
-                        title = if (isBn) "${cc.name} ক্রেডিট ব্যবহার $util%" else "${cc.name} Utilization at $util%",
-                        subtitle = if (isBn) "সুস্থ ক্রেডিট স্কোরের জন্য ৩০%-এর নিচে রাখুন।" else "Keep utilization under 30% for optimal credit health.",
-                        isWarning = true
+                    val utilStr = if (isBn) BdtFormatter.toBanglaDigits("$util%") else "$util%"
+                    addUnique(
+                        SmartAlert(
+                            id = "cc_${cc.id}",
+                            title = if (isBn) "${cc.name} ক্রেডিট ব্যবহার $utilStr" else "${cc.name} Utilization at $utilStr",
+                            subtitle = if (isBn) {
+                                "সুস্থ ক্রেডিট স্কোরের জন্য ৩০%-এর নিচে রাখুন। কার্ড দেখতে ট্যাপ করুন।"
+                            } else {
+                                "Keep utilization under 30% for optimal credit health. Tap to view Accounts."
+                            },
+                            isWarning = true,
+                            actionRoute = NotificationActionRoute.OPEN_ACCOUNTS,
+                            category = NotificationCategory.HIGH_SPEND_CARD,
+                            timestampMillis = nowMillis
+                        )
                     )
                 }
             }
         }
 
-        if (prefs.notifLoanReminders) {
-            val pendingLoans = loans.count { !it.isSettled }
-            if (pendingLoans > 0) {
-                alerts += SmartAlert(
-                    id = "loans_pending",
-                    title = if (isBn) "$pendingLoans টি দেনা-পাওনা বাকি আছে" else "$pendingLoans Pending Loans / Debts",
-                    subtitle = if (isBn) "পরিকল্পনা ট্যাবে যেয়ে আংশিক বা সম্পূর্ণ পরিশোধ করুন।" else "Track or settle partially from the Plan tab.",
-                    isWarning = false
+        // 3. High Daily Spend Alert (when real daily spending exceeds user's daily pace or custom limit)
+        if (prefs.notifHighSpendAlertEnabled && todaySpend > 0.0) {
+            val daysInMonth = Calendar.getInstance(activeTz).apply { timeInMillis = nowMillis }
+                .getActualMaximum(Calendar.DAY_OF_MONTH)
+                .coerceAtLeast(28)
+            val dailyLimit = when {
+                prefs.notifDailySpendLimit > 0.0 -> prefs.notifDailySpendLimit
+                prefs.monthlyBudget > 0.0 -> (prefs.monthlyBudget / daysInMonth) * 1.5
+                else -> 0.0
+            }
+            if (dailyLimit > 0.0 && todaySpend >= dailyLimit) {
+                val spentStr = BdtFormatter.formatCurrency(todaySpend, mainCur, prefs.language)
+                val limitStr = BdtFormatter.formatCurrency(dailyLimit, mainCur, prefs.language)
+                addUnique(
+                    SmartAlert(
+                        id = "high_daily_spend",
+                        title = if (isBn) "আজকের খরচ দৈনিক সীমার উপরে" else "High Daily Spend Today",
+                        subtitle = if (isBn) {
+                            "আজ $spentStr খরচ হয়েছে (লক্ষ্য $limitStr)। ইনসাইটস দেখতে ট্যাপ করুন।"
+                        } else {
+                            "Spent $spentStr today vs $limitStr daily pace. Tap to review."
+                        },
+                        isWarning = true,
+                        actionRoute = NotificationActionRoute.OPEN_INSIGHTS_BUDGET,
+                        category = NotificationCategory.HIGH_SPEND_CARD,
+                        timestampMillis = nowMillis
+                    )
                 )
             }
         }
 
-        alerts += SmartAlert(
-            id = "streak_info",
-            title = if (isBn) "$streakDays দিনের খরচ নিয়ন্ত্রণ ধারা!" else "$streakDays-Day Spending Streak!",
-            subtitle = if (isBn) "সব হিসাব ১০০% অফলাইনে নিরাপদে সংরক্ষিত আছে।" else "All vault records remain 100% offline on this device.",
-            isWarning = false
-        )
+        // 4. Dues, Loans & Planned Bills (Overdue, Due Today, or Due Tomorrow in exact loan currency)
+        if (prefs.notifLoanReminders) {
+            loans.filter { !it.isSettled && it.remainingAmount > 0.0 }.forEach { loan ->
+                val dueMillis = loan.dueDateMillis ?: return@forEach
+                val daysUntil = NotificationTimeCalculator.localCalendarDaysUntil(dueMillis, nowMillis, activeTz)
+                val shouldShow = daysUntil <= 0 || (daysUntil == 1 && prefs.notifLoanDayBeforeEnabled)
+                if (shouldShow) {
+                    val amtStr = BdtFormatter.formatCurrency(loan.remainingAmount, loan.currencyCode, prefs.language)
+                    val kindLabel = when (loan.loanType) {
+                        LoanType.I_OWE -> if (isBn) "দেনা" else "Payable"
+                        LoanType.OWED_TO_ME -> if (isBn) "পাওনা" else "Receivable"
+                    }
+                    val title = when {
+                        daysUntil < 0 -> if (isBn) "মেয়াদোত্তীর্ণ $kindLabel: ${loan.personName}" else "Overdue $kindLabel: ${loan.personName}"
+                        daysUntil == 0 -> if (isBn) "আজ নির্ধারিত $kindLabel: ${loan.personName}" else "Due Today ($kindLabel): ${loan.personName}"
+                        else -> if (isBn) "আগামীকাল নির্ধারিত $kindLabel: ${loan.personName}" else "Due Tomorrow ($kindLabel): ${loan.personName}"
+                    }
+                    val subtitle = if (isBn) {
+                        "বাকি $amtStr • সকাল ১০:০০টা রিমাইন্ডার। পরিশোধ করতে ট্যাপ করুন।"
+                    } else {
+                        "Remaining $amtStr • 10:00 AM reminder. Tap to open Dues & Loans."
+                    }
+                    addUnique(
+                        SmartAlert(
+                            id = "loan_due_${loan.id}",
+                            title = title,
+                            subtitle = subtitle,
+                            isWarning = daysUntil <= 0,
+                            actionRoute = NotificationActionRoute.OPEN_PLAN_LOANS,
+                            category = NotificationCategory.DUE_LOAN,
+                            timestampMillis = dueMillis
+                        )
+                    )
+                }
+            }
+        }
+
+        // 5. Persisted System-Delivered Notification History (keeps system bar & in-app center in sync)
+        val loggedItems = NotificationLogItem.decodeListFromJson(prefs.notificationLogJson)
+        loggedItems.forEach { item ->
+            addUnique(
+                SmartAlert(
+                    id = item.id,
+                    title = item.title,
+                    subtitle = item.body,
+                    isWarning = item.isWarning,
+                    actionRoute = item.route,
+                    category = item.category,
+                    timestampMillis = item.timestampMillis.takeIf { it > 0L }
+                )
+            )
+        }
+
         return alerts
     }
 }
