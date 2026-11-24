@@ -100,16 +100,20 @@ import com.example.data.ai.LocalVoiceTransactionParser
 import com.example.data.ai.MatchedAccountResult
 import com.example.data.ai.ReceiptVoucherMatcher
 import com.example.data.ai.TempReceiptImageCleaner
+import com.example.data.ai.UnifiedCategoryDetector
 import com.example.data.local.AccountEntity
 import com.example.data.model.AccountNameResolver
 import com.example.data.local.TransactionEntity
 import com.example.data.model.AppCurrency
+import com.example.data.model.BuiltInCategoriesCatalog
 import com.example.data.model.ExpenseCategory
+import com.example.data.model.ManagedCategoryItem
 import com.example.data.model.SmartAlert
 import com.example.data.model.TransactionType
 import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
+import com.example.ui.components.UnifiedCategoryPickerSection
 import com.example.ui.theme.JetBrainsMonoFamily
 import com.example.ui.theme.LocalCrystalColors
 import com.example.ui.viewmodel.ReceiptScanUiState
@@ -136,17 +140,32 @@ fun ReceiptScanSheet(
     defaultCurrencyCode: String = "BDT",
     onSaveExpenseWithDate: ((title: String, amount: Double, category: ExpenseCategory, accountId: Long, note: String, timestamp: Long) -> Unit)? = null,
     onAddAccount: (() -> Unit)? = null,
-    onSaveVoucherTransaction: ((title: String, amount: Double, type: TransactionType, category: ExpenseCategory, accountId: Long, note: String, timestamp: Long) -> Unit)? = null
+    onSaveVoucherTransaction: ((title: String, amount: Double, type: TransactionType, category: ExpenseCategory, accountId: Long, note: String, timestamp: Long) -> Unit)? = null,
+    managedCategoryOverrides: List<ManagedCategoryItem> = emptyList(),
+    deletedCategoryIds: Set<String> = emptySet(),
+    onAddCustomCategory: ((ManagedCategoryItem) -> Unit)? = null,
+    onSaveVoucherWithSubcategory: ((title: String, amount: Double, type: TransactionType, category: ExpenseCategory, subcategory: String, accountId: Long, note: String, timestamp: Long) -> Unit)? = null,
+    onExecuteTransfer: ((fromAccountId: Long, toAccountId: Long, amount: Double, note: String, timestamp: Long) -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val crystal = LocalCrystalColors.current
     val context = LocalContext.current
-    val isBn = language == AppLanguage.BN
+    val isBn = language.isBangla
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
     var pendingCameraUriString by rememberSaveable { mutableStateOf<String?>(null) }
     var activeTempCaptureFile by remember { mutableStateOf<File?>(null) }
     var cameraNotice by remember { mutableStateOf<String?>(null) }
     var isManualFallbackOpen by remember { mutableStateOf(false) }
+
+    val mergedExpenseCategories = remember(managedCategoryOverrides, deletedCategoryIds) {
+        BuiltInCategoriesCatalog.mergedFor(TransactionType.EXPENSE, managedCategoryOverrides, deletedCategoryIds)
+    }
+    val mergedIncomeCategories = remember(managedCategoryOverrides, deletedCategoryIds) {
+        BuiltInCategoriesCatalog.mergedFor(TransactionType.INCOME, managedCategoryOverrides, deletedCategoryIds)
+    }
+    val mergedAllCategories = remember(managedCategoryOverrides, deletedCategoryIds) {
+        BuiltInCategoriesCatalog.mergedAll(managedCategoryOverrides, deletedCategoryIds)
+    }
 
     var editableMerchant by remember { mutableStateOf("") }
     var editableAmount by remember { mutableStateOf("") }
@@ -154,8 +173,14 @@ fun ReceiptScanSheet(
     var includeFeeInTotal by remember { mutableStateOf(true) }
     var editableTransactionType by remember { mutableStateOf(TransactionType.EXPENSE) }
     var editableCategory by remember { mutableStateOf(ExpenseCategory.OTHER) }
+    var selectedManagedCategoryId by remember { mutableStateOf("exp_other") }
+    var hasManualCategoryOverride by remember { mutableStateOf(false) }
+    var isCategoryAutoDetected by remember { mutableStateOf(false) }
     var editableSummary by remember { mutableStateOf("") }
     var selectedAccountId by remember(accounts) { mutableStateOf(accounts.firstOrNull()?.id ?: 0L) }
+    var selectedToAccountId by remember(accounts) {
+        mutableStateOf(accounts.getOrNull(1)?.id ?: accounts.firstOrNull()?.id ?: 0L)
+    }
     var matchedAccountResult by remember { mutableStateOf<MatchedAccountResult?>(null) }
     var detectedCurrencyCode by remember { mutableStateOf<String?>(null) }
     var detectedProviderHint by remember { mutableStateOf("") }
@@ -165,7 +190,20 @@ fun ReceiptScanSheet(
     var selectedTimestamp by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
 
+    val activeManagedCategories = remember(editableTransactionType, mergedExpenseCategories, mergedIncomeCategories) {
+        when (editableTransactionType) {
+            TransactionType.INCOME -> mergedIncomeCategories
+            TransactionType.EXPENSE -> mergedExpenseCategories
+            TransactionType.TRANSFER -> BuiltInCategoriesCatalog.defaultsFor(TransactionType.TRANSFER)
+        }
+    }
+    val selectedManagedCategory = remember(selectedManagedCategoryId, activeManagedCategories) {
+        activeManagedCategories.firstOrNull { it.id == selectedManagedCategoryId }
+            ?: activeManagedCategories.firstOrNull()
+    }
+
     val selectedAccount = accounts.firstOrNull { it.id == selectedAccountId }
+    val selectedToAccount = accounts.firstOrNull { it.id == selectedToAccountId }
     val activeCurrency = AppCurrency.fromCode(
         detectedCurrencyCode?.takeIf { it.isNotBlank() }
             ?: selectedAccount?.currencyCode
@@ -206,16 +244,35 @@ fun ReceiptScanSheet(
         }
     }
 
-    LaunchedEffect(receiptState, accounts) {
+    LaunchedEffect(receiptState, accounts, mergedAllCategories) {
         if (receiptState is ReceiptScanUiState.Success) {
             val res = receiptState.result
             isManualFallbackOpen = false
+            hasManualCategoryOverride = false
             editableMerchant = res.merchantName
             editableAmount = formatEditableDecimal(res.amountBdt)
             editableFee = if (res.feeAmount > 0.0) formatEditableDecimal(res.feeAmount) else ""
             includeFeeInTotal = res.feeAmount > 0.0 && res.transactionType == TransactionType.EXPENSE
             editableTransactionType = res.transactionType
-            editableCategory = res.category
+            val unifiedCat = UnifiedCategoryDetector.detectCategory(
+                text = "${res.merchantName} ${res.itemsSummary} ${res.detectedDirectionKeyword}",
+                type = res.transactionType,
+                managedCategories = mergedAllCategories,
+                language = language
+            )
+            val resolvedManaged = mergedAllCategories.firstOrNull {
+                it.id == res.managedCategoryId && it.type == res.transactionType
+            } ?: if (unifiedCat.isExactCustomMatch ||
+                (unifiedCat.managedCategory.id != "exp_other" && unifiedCat.managedCategory.id != "inc_other")
+            ) {
+                unifiedCat.managedCategory
+            } else {
+                BuiltInCategoriesCatalog.resolveForLegacy(res.transactionType, res.category, mergedAllCategories)
+                    ?: unifiedCat.managedCategory
+            }
+            selectedManagedCategoryId = resolvedManaged.id
+            editableCategory = resolvedManaged.legacyCategory ?: res.category
+            isCategoryAutoDetected = true
             detectedCurrencyCode = ReceiptVoucherMatcher.normalizeCurrencyCode(res.currencyCode, defaultCurrencyCode)
             detectedProviderHint = res.providerHint
             detectedDirectionKeyword = res.detectedDirectionKeyword
@@ -258,6 +315,26 @@ fun ReceiptScanSheet(
                     else -> 2
                 }
             }
+        }
+    }
+
+    // Live unified category auto-detection when merchant/details are edited manually
+    LaunchedEffect(editableMerchant, editableSummary, editableTransactionType, mergedAllCategories) {
+        if (hasManualCategoryOverride || editableTransactionType == TransactionType.TRANSFER) return@LaunchedEffect
+        val combined = "$editableMerchant $editableSummary".trim()
+        if (combined.length < 2) return@LaunchedEffect
+        val detected = UnifiedCategoryDetector.detectCategory(
+            text = combined,
+            type = editableTransactionType,
+            managedCategories = mergedAllCategories,
+            language = language
+        )
+        val isSpecific = detected.isExactCustomMatch ||
+            (detected.managedCategory.id != "exp_other" && detected.managedCategory.id != "inc_other")
+        if (isSpecific) {
+            selectedManagedCategoryId = detected.managedCategory.id
+            editableCategory = detected.legacyCategory
+            isCategoryAutoDetected = true
         }
     }
 
@@ -693,15 +770,29 @@ fun ReceiptScanSheet(
                     }
                 }
 
-                // Smart Confirmation Preview Card: Money In (+) vs Money Out (-), Auto-Matched Card, Balance Impact
+                // Smart Confirmation Preview Card: Money In (+), Money Out (-), or Transfer, Auto-Matched Card, Balance Impact
                 ReceiptVoucherPreviewCard(
                     transactionType = editableTransactionType,
                     onSelectTransactionType = { newType ->
                         editableTransactionType = newType
-                        if (newType == TransactionType.INCOME && editableCategory == ExpenseCategory.OTHER) {
-                            editableCategory = ExpenseCategory.SALARY_INCOME
-                        } else if (newType == TransactionType.EXPENSE && editableCategory == ExpenseCategory.SALARY_INCOME) {
-                            editableCategory = ExpenseCategory.OTHER
+                        hasManualCategoryOverride = false
+                        if (newType == TransactionType.TRANSFER) {
+                            editableCategory = ExpenseCategory.TRANSFER
+                            selectedManagedCategoryId = "trf_wallet"
+                            if (selectedToAccountId == selectedAccountId) {
+                                accounts.firstOrNull { it.id != selectedAccountId }?.let {
+                                    selectedToAccountId = it.id
+                                }
+                            }
+                        } else {
+                            val detected = UnifiedCategoryDetector.detectCategory(
+                                text = "$editableMerchant $editableSummary",
+                                type = newType,
+                                managedCategories = mergedAllCategories,
+                                language = language
+                            )
+                            selectedManagedCategoryId = detected.managedCategory.id
+                            editableCategory = detected.legacyCategory
                         }
                     },
                     primaryAmount = primaryAmountVal,
@@ -715,7 +806,8 @@ fun ReceiptScanSheet(
                     detectedProviderHint = detectedProviderHint,
                     referenceId = detectedReferenceId,
                     isAiDetected = receiptState is ReceiptScanUiState.Success,
-                    language = language
+                    language = language,
+                    showTransferOption = onExecuteTransfer != null
                 )
 
                 // Wallet / Bank Card Selector
@@ -959,44 +1051,84 @@ fun ReceiptScanSheet(
                     )
                 }
 
-                Text(text = strings.detectedCategory, style = MaterialTheme.typography.labelLarge)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val availableCategories = if (editableTransactionType == TransactionType.INCOME) {
-                        listOf(ExpenseCategory.SALARY_INCOME, ExpenseCategory.OTHER) +
-                            ExpenseCategory.entries.filter {
-                                it != ExpenseCategory.SALARY_INCOME &&
-                                    it != ExpenseCategory.OTHER &&
-                                    it != ExpenseCategory.TRANSFER
-                            }
+                if (editableTransactionType == TransactionType.TRANSFER) {
+                    Text(
+                        text = if (isBn) "কোন অ্যাকাউন্টে (To)" else "To Account / Card",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    val destOptions = accounts.filter { it.id != selectedAccountId }
+                    if (destOptions.isEmpty()) {
+                        Text(
+                            text = if (isBn) {
+                                "ট্রান্সফার করতে অন্তত ২টি অ্যাকাউন্ট প্রয়োজন।"
+                            } else {
+                                "At least 2 accounts are needed for a transfer."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = crystal.warningAmber
+                        )
                     } else {
-                        ExpenseCategory.entries.filter {
-                            it != ExpenseCategory.SALARY_INCOME && it != ExpenseCategory.TRANSFER
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            destOptions.forEach { acc ->
+                                val accCur = AppCurrency.fromCode(acc.currencyCode)
+                                FilterChip(
+                                    selected = selectedToAccountId == acc.id,
+                                    onClick = { selectedToAccountId = acc.id },
+                                    label = { Text("${acc.name} • ${accCur.cleanBadgeLabel()}") },
+                                    modifier = Modifier.testTag("receipt_to_account_${acc.id}")
+                                )
+                            }
                         }
                     }
-                    availableCategories.forEach { cat ->
-                        FilterChip(
-                            selected = editableCategory == cat,
-                            onClick = { editableCategory = cat },
-                            label = { Text(cat.label(language)) },
-                            modifier = Modifier.testTag("receipt_category_${cat.name}")
-                        )
-                    }
+                } else {
+                    UnifiedCategoryPickerSection(
+                        transactionType = editableTransactionType,
+                        categories = activeManagedCategories,
+                        selectedCategoryId = selectedManagedCategory?.id.orEmpty(),
+                        language = language,
+                        label = strings.detectedCategory,
+                        testTagPrefix = "receipt",
+                        autoDetectedBadge = isCategoryAutoDetected,
+                        onSelectCategory = { picked ->
+                            hasManualCategoryOverride = true
+                            isCategoryAutoDetected = false
+                            selectedManagedCategoryId = picked.id
+                            editableCategory = picked.legacyCategory ?: if (editableTransactionType == TransactionType.INCOME) {
+                                ExpenseCategory.SALARY_INCOME
+                            } else {
+                                ExpenseCategory.OTHER
+                            }
+                        },
+                        onAddCustomCategory = onAddCustomCategory
+                    )
                 }
 
-                val saveButtonText = if (editableTransactionType == TransactionType.INCOME) {
-                    if (isBn) "নিশ্চিত করুন ও কার্ডে যোগ করুন (+)" else "Confirm & Add to Card (+)"
-                } else {
-                    if (isBn) "নিশ্চিত করুন ও ব্যালেন্স আপডেট করুন" else strings.saveScannedExpense
+                val isTransferReceipt = editableTransactionType == TransactionType.TRANSFER
+                val canSaveReceiptTransfer = isTransferReceipt &&
+                    effectiveTotalVal > 0.0 &&
+                    selectedAccount != null &&
+                    selectedToAccount != null &&
+                    selectedAccount.id != selectedToAccount.id &&
+                    onExecuteTransfer != null
+                val canSaveReceiptStandard = !isTransferReceipt && effectiveTotalVal > 0.0 && selectedAccountId > 0L
+
+                val saveButtonText = when (editableTransactionType) {
+                    TransactionType.INCOME -> if (isBn) "নিশ্চিত করুন ও কার্ডে যোগ করুন (+)" else "Confirm & Add to Card (+)"
+                    TransactionType.TRANSFER -> if (isBn) "ট্রান্সফার নিশ্চিত করুন" else "Confirm Transfer"
+                    TransactionType.EXPENSE -> if (isBn) "নিশ্চিত করুন ও ব্যালেন্স আপডেট করুন" else strings.saveScannedExpense
                 }
 
                 Button(
                     onClick = {
-                        val finalTitle = editableMerchant.ifBlank { editableCategory.label(language) }
+                        val managedLabel = selectedManagedCategory?.label(language).orEmpty()
+                        val finalTitle = editableMerchant.ifBlank {
+                            managedLabel.ifBlank { editableCategory.label(language) }
+                        }
                         val finalNote = buildString {
                             append(editableSummary.trim())
                             if (feeVal > 0.0) {
@@ -1012,6 +1144,27 @@ fun ReceiptScanSheet(
                             }
                         }
                         when {
+                            canSaveReceiptTransfer && selectedAccount != null && selectedToAccount != null -> {
+                                onExecuteTransfer?.invoke(
+                                    selectedAccount.id,
+                                    selectedToAccount.id,
+                                    effectiveTotalVal,
+                                    finalNote.ifBlank { finalTitle },
+                                    selectedTimestamp
+                                )
+                            }
+                            onSaveVoucherWithSubcategory != null -> {
+                                onSaveVoucherWithSubcategory(
+                                    finalTitle,
+                                    effectiveTotalVal,
+                                    editableTransactionType,
+                                    editableCategory,
+                                    managedLabel,
+                                    selectedAccountId,
+                                    finalNote,
+                                    selectedTimestamp
+                                )
+                            }
                             onSaveVoucherTransaction != null -> {
                                 onSaveVoucherTransaction(
                                     finalTitle,
@@ -1045,7 +1198,7 @@ fun ReceiptScanSheet(
                         }
                         handleDismiss()
                     },
-                    enabled = effectiveTotalVal > 0.0 && selectedAccountId > 0L,
+                    enabled = canSaveReceiptTransfer || canSaveReceiptStandard,
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1172,20 +1325,38 @@ fun VoiceEntrySheet(
     onSaveParsedTransaction: (title: String, amount: Double, type: TransactionType, category: ExpenseCategory, accountId: Long) -> Unit,
     onDismiss: () -> Unit,
     defaultCurrencyCode: String = "BDT",
-    onExecuteTransfer: ((fromAccountId: Long, toAccountId: Long, amount: Double, note: String) -> Unit)? = null
+    onExecuteTransfer: ((fromAccountId: Long, toAccountId: Long, amount: Double, note: String) -> Unit)? = null,
+    managedCategoryOverrides: List<ManagedCategoryItem> = emptyList(),
+    deletedCategoryIds: Set<String> = emptySet(),
+    onAddCustomCategory: ((ManagedCategoryItem) -> Unit)? = null,
+    onSaveParsedTransactionWithSubcategory: ((title: String, amount: Double, type: TransactionType, category: ExpenseCategory, subcategory: String, accountId: Long, note: String) -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val crystal = LocalCrystalColors.current
     val context = LocalContext.current
-    val isBn = language == AppLanguage.BN
+    val isBn = language.isBangla
     var utterance by remember { mutableStateOf("") }
     var micNotice by remember { mutableStateOf<String?>(null) }
+    var isManualEntryOpen by remember { mutableStateOf(false) }
+
+    val mergedExpenseCategories = remember(managedCategoryOverrides, deletedCategoryIds) {
+        BuiltInCategoriesCatalog.mergedFor(TransactionType.EXPENSE, managedCategoryOverrides, deletedCategoryIds)
+    }
+    val mergedIncomeCategories = remember(managedCategoryOverrides, deletedCategoryIds) {
+        BuiltInCategoriesCatalog.mergedFor(TransactionType.INCOME, managedCategoryOverrides, deletedCategoryIds)
+    }
+    val mergedAllCategories = remember(managedCategoryOverrides, deletedCategoryIds) {
+        BuiltInCategoriesCatalog.mergedAll(managedCategoryOverrides, deletedCategoryIds)
+    }
 
     // Editable parsed transaction state (supports Expense, Income & Account-to-Account Transfer)
     var editableTitle by remember { mutableStateOf("") }
     var editableAmount by remember { mutableStateOf("") }
     var editableType by remember { mutableStateOf(TransactionType.EXPENSE) }
     var editableCategory by remember { mutableStateOf(ExpenseCategory.OTHER) }
+    var selectedManagedCategoryId by remember { mutableStateOf("exp_food_dining") }
+    var hasManualCategoryOverride by remember { mutableStateOf(false) }
+    var isCategoryAutoDetected by remember { mutableStateOf(false) }
     var editableCurrencyCode by remember { mutableStateOf(defaultCurrencyCode) }
     var editableNote by remember { mutableStateOf("") }
     var selectedFromAccountId by remember(accounts) { mutableStateOf(accounts.firstOrNull()?.id ?: 0L) }
@@ -1193,39 +1364,111 @@ fun VoiceEntrySheet(
         mutableStateOf(accounts.getOrNull(1)?.id ?: accounts.firstOrNull()?.id ?: 0L)
     }
 
-    LaunchedEffect(voiceState, accounts) {
+    val activeManagedCategories = remember(editableType, mergedExpenseCategories, mergedIncomeCategories) {
+        when (editableType) {
+            TransactionType.INCOME -> mergedIncomeCategories
+            TransactionType.EXPENSE -> mergedExpenseCategories
+            TransactionType.TRANSFER -> BuiltInCategoriesCatalog.defaultsFor(TransactionType.TRANSFER)
+        }
+    }
+    val selectedManagedCategory = remember(selectedManagedCategoryId, activeManagedCategories) {
+        activeManagedCategories.firstOrNull { it.id == selectedManagedCategoryId }
+            ?: activeManagedCategories.firstOrNull()
+    }
+
+    LaunchedEffect(voiceState, accounts, mergedAllCategories) {
         if (voiceState is VoiceParseUiState.Success) {
             val parsed = voiceState.result
+            isManualEntryOpen = false
+            hasManualCategoryOverride = false
             editableTitle = parsed.title
             editableAmount = formatEditableDecimal(parsed.amountBdt)
             editableType = parsed.type
-            editableCategory = parsed.category
+            val unifiedCat = UnifiedCategoryDetector.detectCategory(
+                text = "$utterance ${parsed.title} ${parsed.note}",
+                type = parsed.type,
+                managedCategories = mergedAllCategories,
+                language = language
+            )
+            val resolvedManaged = mergedAllCategories.firstOrNull {
+                it.id == parsed.managedCategoryId && it.type == parsed.type
+            } ?: if (unifiedCat.isExactCustomMatch ||
+                (unifiedCat.managedCategory.id != "exp_other" && unifiedCat.managedCategory.id != "inc_other")
+            ) {
+                unifiedCat.managedCategory
+            } else {
+                BuiltInCategoriesCatalog.resolveForLegacy(parsed.type, parsed.category, mergedAllCategories)
+                    ?: unifiedCat.managedCategory
+            }
+            selectedManagedCategoryId = resolvedManaged.id
+            editableCategory = resolvedManaged.legacyCategory ?: parsed.category
+            isCategoryAutoDetected = true
             editableCurrencyCode = parsed.currencyCode.ifBlank { defaultCurrencyCode }
             editableNote = parsed.note
 
-            val matchedFrom = LocalVoiceTransactionParser.matchAccountByHint(
-                accounts = accounts,
-                hint = parsed.accountHint,
-                preferredCurrency = editableCurrencyCode
-            ) ?: accounts.firstOrNull {
-                it.currencyCode.equals(editableCurrencyCode, ignoreCase = true)
-            } ?: accounts.firstOrNull()
-
-            if (matchedFrom != null) {
-                selectedFromAccountId = matchedFrom.id
-            }
-
             if (parsed.type == TransactionType.TRANSFER) {
-                val matchedTo = LocalVoiceTransactionParser.matchAccountByHint(
+                val initialTo = LocalVoiceTransactionParser.matchAccountByHint(
                     accounts = accounts,
                     hint = parsed.toAccountHint,
-                    preferredCurrency = null,
-                    excludeAccountId = matchedFrom?.id
-                ) ?: accounts.firstOrNull { it.id != matchedFrom?.id }
+                    preferredCurrency = null
+                )
+                val matchedFrom = LocalVoiceTransactionParser.matchAccountByHint(
+                    accounts = accounts,
+                    hint = parsed.accountHint,
+                    preferredCurrency = editableCurrencyCode,
+                    excludeAccountId = initialTo?.id
+                ) ?: accounts.firstOrNull {
+                    it.id != initialTo?.id && it.currencyCode.equals(editableCurrencyCode, ignoreCase = true)
+                } ?: accounts.firstOrNull { it.id != initialTo?.id }
+                    ?: accounts.firstOrNull()
+
+                val matchedTo = initialTo?.takeIf { it.id != matchedFrom?.id }
+                    ?: LocalVoiceTransactionParser.matchAccountByHint(
+                        accounts = accounts,
+                        hint = parsed.toAccountHint,
+                        preferredCurrency = null,
+                        excludeAccountId = matchedFrom?.id
+                    ) ?: accounts.firstOrNull { it.id != matchedFrom?.id }
+
+                if (matchedFrom != null) {
+                    selectedFromAccountId = matchedFrom.id
+                }
                 if (matchedTo != null) {
                     selectedToAccountId = matchedTo.id
                 }
+            } else {
+                val matchedFrom = LocalVoiceTransactionParser.matchAccountByHint(
+                    accounts = accounts,
+                    hint = parsed.accountHint,
+                    preferredCurrency = editableCurrencyCode
+                ) ?: accounts.firstOrNull {
+                    it.currencyCode.equals(editableCurrencyCode, ignoreCase = true)
+                } ?: accounts.firstOrNull()
+
+                if (matchedFrom != null) {
+                    selectedFromAccountId = matchedFrom.id
+                }
             }
+        }
+    }
+
+    // Live unified category detection when title is edited manually inside Voice Entry
+    LaunchedEffect(editableTitle, editableType, mergedAllCategories, isManualEntryOpen) {
+        if (!isManualEntryOpen || hasManualCategoryOverride || editableType == TransactionType.TRANSFER) return@LaunchedEffect
+        val text = editableTitle.trim()
+        if (text.length < 2) return@LaunchedEffect
+        val detected = UnifiedCategoryDetector.detectCategory(
+            text = text,
+            type = editableType,
+            managedCategories = mergedAllCategories,
+            language = language
+        )
+        val isSpecific = detected.isExactCustomMatch ||
+            (detected.managedCategory.id != "exp_other" && detected.managedCategory.id != "inc_other")
+        if (isSpecific) {
+            selectedManagedCategoryId = detected.managedCategory.id
+            editableCategory = detected.legacyCategory
+            isCategoryAutoDetected = true
         }
     }
 
@@ -1248,7 +1491,7 @@ fun VoiceEntrySheet(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(
                 RecognizerIntent.EXTRA_LANGUAGE,
-                if (isBn) "bn-BD" else "en-US"
+                language.localeTag
             )
         }
         try {
@@ -1277,7 +1520,7 @@ fun VoiceEntrySheet(
     val fromAccount = accounts.firstOrNull { it.id == selectedFromAccountId }
     val toAccount = accounts.firstOrNull { it.id == selectedToAccountId }
     val activeCurrency = AppCurrency.fromCode(
-        fromAccount?.currencyCode ?: editableCurrencyCode.ifBlank { defaultCurrencyCode }
+        editableCurrencyCode.ifBlank { fromAccount?.currencyCode ?: defaultCurrencyCode }
     )
 
     ModalBottomSheet(
@@ -1434,106 +1677,152 @@ fun VoiceEntrySheet(
                 }
             }
 
-            when (voiceState) {
-                is VoiceParseUiState.Success -> {
-                    val parsed = voiceState.result
-                    val parsedAmount = editableAmount.toDoubleOrNull() ?: 0.0
-                    val isTransfer = editableType == TransactionType.TRANSFER
-                    val canSaveTransfer = isTransfer &&
-                        parsedAmount > 0.0 &&
-                        fromAccount != null &&
-                        toAccount != null &&
-                        fromAccount.id != toAccount.id &&
-                        onExecuteTransfer != null
-                    val canSaveStandard = !isTransfer && parsedAmount > 0.0 && fromAccount != null
+            if (voiceState !is VoiceParseUiState.Success && !isManualEntryOpen) {
+                OutlinedButton(
+                    onClick = { isManualEntryOpen = true },
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.40f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .testTag("voice_manual_entry_button")
+                ) {
+                    Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isBn) "ম্যানুয়ালি হিসাব যোগ করুন" else "Add Entry Manually",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+                    )
+                }
+            }
 
-                    Surface(
-                        color = crystal.glassSurfaceElevated,
-                        shape = RoundedCornerShape(18.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.30f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("voice_parsed_card")
+            if (voiceState is VoiceParseUiState.Error) {
+                Surface(
+                    color = crystal.warningAmberBg,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("voice_error_card")
+                ) {
+                    Text(
+                        text = voiceState.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+
+            if (voiceState is VoiceParseUiState.Success || isManualEntryOpen) {
+                val parsed = (voiceState as? VoiceParseUiState.Success)?.result
+                val parsedAmount = editableAmount.toDoubleOrNull() ?: 0.0
+                val isTransfer = editableType == TransactionType.TRANSFER
+                val canSaveTransfer = isTransfer &&
+                    parsedAmount > 0.0 &&
+                    fromAccount != null &&
+                    toAccount != null &&
+                    fromAccount.id != toAccount.id &&
+                    onExecuteTransfer != null
+                val canSaveStandard = !isTransfer && parsedAmount > 0.0 && fromAccount != null
+
+                Surface(
+                    color = crystal.glassSurfaceElevated,
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.30f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("voice_parsed_card")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        // AI vs On-Device Parser vs Manual Entry Badge + Currency Pill
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // AI vs On-Device Parser Badge + Currency Pill
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.AutoAwesome,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        text = when {
-                                            parsed.isLocalFallback && isBn -> "স্মার্ট লোকাল বিশ্লেষণ"
-                                            parsed.isLocalFallback -> "Smart Local Parse"
-                                            isBn -> "AI স্মার্ট বিশ্লেষণ"
-                                            else -> "AI Smart Parse"
-                                        },
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                                Surface(
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(
-                                        text = activeCurrency.cleanBadgeLabel(),
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontFamily = JetBrainsMonoFamily,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                    )
-                                }
+                                Icon(
+                                    imageVector = if (parsed != null) Icons.Filled.AutoAwesome else Icons.Filled.Edit,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = when {
+                                        parsed == null && isBn -> "ম্যানুয়াল ভয়েস / দ্রুত এন্ট্রি"
+                                        parsed == null -> "Manual Quick Entry"
+                                        parsed.isLocalFallback && isBn -> "স্মার্ট লোকাল বিশ্লেষণ"
+                                        parsed.isLocalFallback -> "Smart Local Parse"
+                                        isBn -> "AI স্মার্ট বিশ্লেষণ"
+                                        else -> "AI Smart Parse"
+                                    },
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                             }
+                            Surface(
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = activeCurrency.cleanBadgeLabel(),
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = JetBrainsMonoFamily,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
 
-                            // Transaction Type Switcher (Expense / Income / Transfer)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                listOf(
-                                    TransactionType.EXPENSE to (if (isBn) "খরচ" else "Expense"),
-                                    TransactionType.INCOME to (if (isBn) "আয়" else "Income"),
-                                    TransactionType.TRANSFER to (if (isBn) "ট্রান্সফার" else "Transfer")
-                                ).forEach { (txType, label) ->
-                                    FilterChip(
-                                        selected = editableType == txType,
-                                        onClick = {
-                                            editableType = txType
-                                            if (txType == TransactionType.TRANSFER) {
-                                                editableCategory = ExpenseCategory.TRANSFER
-                                                if (selectedToAccountId == selectedFromAccountId) {
-                                                    accounts.firstOrNull { it.id != selectedFromAccountId }?.let {
-                                                        selectedToAccountId = it.id
-                                                    }
+                        // Transaction Type Switcher (Expense / Income / Transfer)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                TransactionType.EXPENSE to (if (isBn) "খরচ" else "Expense"),
+                                TransactionType.INCOME to (if (isBn) "আয়" else "Income"),
+                                TransactionType.TRANSFER to (if (isBn) "ট্রান্সফার" else "Transfer")
+                            ).forEach { (txType, label) ->
+                                FilterChip(
+                                    selected = editableType == txType,
+                                    onClick = {
+                                        editableType = txType
+                                        hasManualCategoryOverride = false
+                                        if (txType == TransactionType.TRANSFER) {
+                                            editableCategory = ExpenseCategory.TRANSFER
+                                            selectedManagedCategoryId = "trf_wallet"
+                                            if (selectedToAccountId == selectedFromAccountId) {
+                                                accounts.firstOrNull { it.id != selectedFromAccountId }?.let {
+                                                    selectedToAccountId = it.id
                                                 }
-                                            } else if (txType == TransactionType.INCOME && editableCategory == ExpenseCategory.OTHER) {
-                                                editableCategory = ExpenseCategory.SALARY_INCOME
                                             }
-                                        },
-                                        label = { Text(label) },
-                                        modifier = Modifier.testTag("voice_type_${txType.name}")
-                                    )
-                                }
+                                        } else {
+                                            val detected = UnifiedCategoryDetector.detectCategory(
+                                                text = "$utterance $editableTitle",
+                                                type = txType,
+                                                managedCategories = mergedAllCategories,
+                                                language = language
+                                            )
+                                            selectedManagedCategoryId = detected.managedCategory.id
+                                            editableCategory = detected.legacyCategory
+                                        }
+                                    },
+                                    label = { Text(label) },
+                                    modifier = Modifier.testTag("voice_type_${txType.name}")
+                                )
                             }
+                        }
 
                             // Editable Amount & Title
                             OutlinedTextField(
@@ -1695,34 +1984,27 @@ fun VoiceEntrySheet(
                                     }
                                 }
                             } else {
-                                // Category selector for Expense / Income
-                                Text(text = strings.detectedCategory, style = MaterialTheme.typography.labelLarge)
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    val categories = if (editableType == TransactionType.INCOME) {
-                                        listOf(ExpenseCategory.SALARY_INCOME, ExpenseCategory.OTHER) +
-                                            ExpenseCategory.entries.filter {
-                                                it != ExpenseCategory.SALARY_INCOME &&
-                                                    it != ExpenseCategory.OTHER &&
-                                                    it != ExpenseCategory.TRANSFER
-                                            }
-                                    } else {
-                                        ExpenseCategory.entries.filter {
-                                            it != ExpenseCategory.SALARY_INCOME && it != ExpenseCategory.TRANSFER
+                                // Unified synchronized Category Picker (12 Expense / 5 Income + Custom Add)
+                                UnifiedCategoryPickerSection(
+                                    transactionType = editableType,
+                                    categories = activeManagedCategories,
+                                    selectedCategoryId = selectedManagedCategory?.id.orEmpty(),
+                                    language = language,
+                                    label = strings.detectedCategory,
+                                    testTagPrefix = "voice",
+                                    autoDetectedBadge = isCategoryAutoDetected,
+                                    onSelectCategory = { picked ->
+                                        hasManualCategoryOverride = true
+                                        isCategoryAutoDetected = false
+                                        selectedManagedCategoryId = picked.id
+                                        editableCategory = picked.legacyCategory ?: if (editableType == TransactionType.INCOME) {
+                                            ExpenseCategory.SALARY_INCOME
+                                        } else {
+                                            ExpenseCategory.OTHER
                                         }
-                                    }
-                                    categories.forEach { cat ->
-                                        FilterChip(
-                                            selected = editableCategory == cat,
-                                            onClick = { editableCategory = cat },
-                                            label = { Text(cat.label(language)) }
-                                        )
-                                    }
-                                }
+                                    },
+                                    onAddCustomCategory = onAddCustomCategory
+                                )
                             }
 
                             Button(
@@ -1737,14 +2019,29 @@ fun VoiceEntrySheet(
                                         )
                                         onDismiss()
                                     } else if (canSaveStandard && fromAccount != null) {
-                                        val finalTitle = editableTitle.ifBlank { editableCategory.label(language) }
-                                        onSaveParsedTransaction(
-                                            finalTitle,
-                                            parsedAmount,
-                                            editableType,
-                                            editableCategory,
-                                            fromAccount.id
-                                        )
+                                        val managedLabel = selectedManagedCategory?.label(language).orEmpty()
+                                        val finalTitle = editableTitle.ifBlank {
+                                            managedLabel.ifBlank { editableCategory.label(language) }
+                                        }
+                                        if (onSaveParsedTransactionWithSubcategory != null) {
+                                            onSaveParsedTransactionWithSubcategory(
+                                                finalTitle,
+                                                parsedAmount,
+                                                editableType,
+                                                editableCategory,
+                                                managedLabel,
+                                                fromAccount.id,
+                                                editableNote
+                                            )
+                                        } else {
+                                            onSaveParsedTransaction(
+                                                finalTitle,
+                                                parsedAmount,
+                                                editableType,
+                                                editableCategory,
+                                                fromAccount.id
+                                            )
+                                        }
                                         onDismiss()
                                     }
                                 },
@@ -1767,26 +2064,6 @@ fun VoiceEntrySheet(
                         }
                     }
                 }
-
-                is VoiceParseUiState.Error -> {
-                    Surface(
-                        color = crystal.warningAmberBg,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("voice_error_card")
-                    ) {
-                        Text(
-                            text = voiceState.message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(12.dp)
-                        )
-                    }
-                }
-
-                else -> Unit
-            }
             Spacer(modifier = Modifier.height(12.dp))
         }
     }

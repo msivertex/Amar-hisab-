@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -15,11 +16,16 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -51,10 +57,12 @@ import com.example.data.local.AccountEntity
 import com.example.data.market.MarketSnapshot
 import com.example.data.model.AccountNameResolver
 import com.example.data.model.AccountType
+import com.example.data.model.AppCountry
 import com.example.data.model.AppCurrency
-import com.example.data.model.BankRegion
 import com.example.data.model.BankSubtype
+import com.example.data.model.CardColorCatalog
 import com.example.data.model.CardNetwork
+import com.example.data.model.InternationalBank
 import com.example.data.model.InternationalBankCatalog
 import com.example.data.model.MfsProvider
 import com.example.data.model.defaultColorForCash
@@ -62,6 +70,7 @@ import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
 import com.example.ui.components.AccountVisualCard
+import com.example.ui.components.AppCountryPickerSheet
 import com.example.ui.components.AppCurrencyPickerSheet
 import com.example.ui.theme.LocalCrystalColors
 
@@ -74,27 +83,41 @@ fun AddAccountWizardSheet(
     onSaveAccount: (AccountEntity) -> Unit,
     defaultCurrencyCode: String = "BDT",
     secondaryCurrencyCode: String = "",
+    userCountryCode: String = "BD",
     marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val crystal = LocalCrystalColors.current
 
-    val initialCurrency = remember(defaultCurrencyCode, secondaryCurrencyCode) {
-        AppCurrency.fromCodeOrNull(secondaryCurrencyCode) ?: AppCurrency.fromCode(defaultCurrencyCode)
-    }
-    val initialRegion = remember(initialCurrency) {
-        BankRegion.preferredForCurrency(initialCurrency)
+    val initialCountry = remember(userCountryCode, defaultCurrencyCode, secondaryCurrencyCode) {
+        val secondaryCur = AppCurrency.fromCodeOrNull(secondaryCurrencyCode)
+        when {
+            userCountryCode.isNotBlank() && !userCountryCode.equals("BD", ignoreCase = true) ->
+                AppCountry.fromCode(userCountryCode)
+            secondaryCur != null -> AppCountry.preferredForCurrency(secondaryCur)
+            else -> AppCountry.fromCode(userCountryCode)
+        }
     }
 
     var selectedType by remember { mutableStateOf(AccountType.DEBIT_BANK) }
-    var selectedRegion by remember { mutableStateOf(initialRegion) }
+    var selectedCountry by remember { mutableStateOf(initialCountry) }
     var selectedBank by remember {
-        mutableStateOf(
-            InternationalBankCatalog.banksForRegion(initialRegion).firstOrNull()
-                ?: InternationalBankCatalog.all.first()
+        mutableStateOf<InternationalBank?>(
+            InternationalBankCatalog.banksForCountry(initialCountry).firstOrNull()
         )
     }
-    var selectedCurrency by remember { mutableStateOf(initialRegion.defaultCurrency) }
+    var isManualCustomBank by remember {
+        mutableStateOf(InternationalBankCatalog.banksForCountry(initialCountry).isEmpty())
+    }
+    var customBankName by remember { mutableStateOf("") }
+    var selectedCardColor by remember {
+        mutableStateOf(
+            InternationalBankCatalog.banksForCountry(initialCountry).firstOrNull()?.brandColor
+                ?: CardColorCatalog.swatches.first()
+        )
+    }
+    var selectedCurrency by remember { mutableStateOf(initialCountry.suggestedCurrency) }
+    var showCountryPicker by remember { mutableStateOf(false) }
     var showCurrencyPicker by remember { mutableStateOf(false) }
 
     var selectedSubtype by remember { mutableStateOf(BankSubtype.SALARY) }
@@ -109,14 +132,36 @@ fun AddAccountWizardSheet(
     val parsedBalance = balanceText.toDoubleOrNull() ?: 0.0
     val parsedLimit = creditLimitText.toDoubleOrNull() ?: 100000.0
 
+    fun applySelectedCountry(country: AppCountry) {
+        selectedCountry = country
+        selectedCurrency = country.suggestedCurrency
+        val countryBanks = InternationalBankCatalog.banksForCountry(country)
+        if (countryBanks.isNotEmpty()) {
+            isManualCustomBank = false
+            selectedBank = countryBanks.first()
+            selectedCardColor = countryBanks.first().brandColor
+        } else {
+            isManualCustomBank = true
+            selectedBank = null
+            selectedCardColor = CardColorCatalog.swatches.first()
+        }
+    }
+
     val previewColor = when (selectedType) {
-        AccountType.DEBIT_BANK, AccountType.CREDIT_CARD -> selectedBank.brandColor
+        AccountType.DEBIT_BANK, AccountType.CREDIT_CARD -> selectedCardColor
         AccountType.MFS -> selectedMfs.brandColor
         AccountType.CASH -> defaultColorForCash()
     }
 
+    val manualFallbackLabel = if (language == AppLanguage.BN) "কাস্টম ব্যাংক" else "Custom Bank"
     val resolvedProvider = when (selectedType) {
-        AccountType.DEBIT_BANK, AccountType.CREDIT_CARD -> selectedBank.label(language)
+        AccountType.DEBIT_BANK, AccountType.CREDIT_CARD -> {
+            if (isManualCustomBank || selectedBank == null) {
+                customBankName.trim().ifBlank { manualFallbackLabel }
+            } else {
+                selectedBank!!.label(language)
+            }
+        }
         AccountType.MFS -> selectedMfs.label(language)
         AccountType.CASH -> if (language == AppLanguage.BN) "নগদ টাকা" else "Physical Cash"
     }
@@ -158,7 +203,8 @@ fun AddAccountWizardSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        contentColor = MaterialTheme.colorScheme.onSurface
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.testTag("add_account_wizard_sheet")
     ) {
         Column(
             modifier = Modifier
@@ -184,7 +230,8 @@ fun AddAccountWizardSheet(
                 account = previewAccount,
                 language = language,
                 strings = strings,
-                compact = true
+                compact = true,
+                modifier = Modifier.testTag("wizard_live_card_preview")
             )
 
             // Account Type Selector (4 types)
@@ -211,7 +258,7 @@ fun AddAccountWizardSheet(
                             selectedType = type
                             selectedCurrency = when (type) {
                                 AccountType.MFS -> AppCurrency.BDT
-                                AccountType.DEBIT_BANK, AccountType.CREDIT_CARD -> selectedRegion.defaultCurrency
+                                AccountType.DEBIT_BANK, AccountType.CREDIT_CARD -> selectedCountry.suggestedCurrency
                                 AccountType.CASH -> AppCurrency.fromCodeOrNull(secondaryCurrencyCode)
                                     ?: AppCurrency.fromCode(defaultCurrencyCode)
                             }
@@ -225,43 +272,118 @@ fun AddAccountWizardSheet(
             // Conditional Wizard Fields per Account Type
             when (selectedType) {
                 AccountType.DEBIT_BANK, AccountType.CREDIT_CARD -> {
-                    // Country / Region Picker (Bangladesh + 8 international expat hubs)
-                    Text(
-                        text = strings.bankCountryRegionLabel,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    // Synchronized Country Selector (reads directly from unified AppCountry.entries)
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.bankCountryRegionLabel,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Surface(
+                            onClick = { showCountryPicker = true },
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = if (crystal.isDark) 0.22f else 0.12f),
+                            modifier = Modifier.testTag("wizard_country_picker_button")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Search,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = if (language == AppLanguage.BN) {
+                                        "সব দেশ (${BdtFormatter.formatNumber(AppCountry.entries.size, language)})"
+                                    } else {
+                                        "All ${AppCountry.entries.size} Countries"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+
+                    // Active Country Card (tappable to open searchable 28-country picker)
+                    Surface(
+                        color = if (crystal.isDark) Color(0xFF161C2B) else crystal.glassSurfaceElevated,
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, crystal.glassBorder),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            .minimumInteractiveComponentSize()
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { showCountryPicker = true }
+                            .testTag("wizard_selected_country_card")
                     ) {
-                        BankRegion.entries.forEach { region ->
-                            FilterChip(
-                                selected = selectedRegion == region,
-                                onClick = {
-                                    selectedRegion = region
-                                    val regionBanks = InternationalBankCatalog.banksForRegion(region)
-                                    if (regionBanks.isNotEmpty()) {
-                                        selectedBank = regionBanks.first()
-                                    }
-                                    selectedCurrency = region.defaultCurrency
-                                },
-                                label = { Text("${region.flag} ${region.label(language)}") },
-                                modifier = Modifier.testTag("wizard_region_${region.name}")
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            MaterialTheme.colorScheme.primary.copy(
+                                                alpha = if (crystal.isDark) 0.22f else 0.14f
+                                            )
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(text = selectedCountry.flag, fontSize = 20.sp)
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = selectedCountry.label(language),
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "${selectedCountry.group.label(language)} • ${selectedCountry.suggestedCurrency.code}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = crystal.mutedText,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = strings.bankCountryRegionLabel,
+                                tint = crystal.mutedText,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
 
-                    // Bank Selection for active Country / Region
-                    Text(
-                        text = strings.selectBank,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    val regionBanks = remember(selectedRegion) {
-                        InternationalBankCatalog.banksForRegion(selectedRegion)
+                    // Quick scrollable country chips for featured expatriate & neighboring countries
+                    // (plus any country chosen from the full 195-country picker above)
+                    val quickCountries = remember(selectedCountry) {
+                        if (AppCountry.quickSelectCountries.any { it.code == selectedCountry.code }) {
+                            AppCountry.quickSelectCountries
+                        } else {
+                            listOf(selectedCountry) + AppCountry.quickSelectCountries
+                        }
                     }
                     Row(
                         modifier = Modifier
@@ -269,16 +391,163 @@ fun AddAccountWizardSheet(
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        regionBanks.forEach { bank ->
+                        quickCountries.forEach { country ->
                             FilterChip(
-                                selected = selectedBank.id == bank.id,
+                                selected = selectedCountry == country,
+                                onClick = { applySelectedCountry(country) },
+                                label = { Text("${country.flag} ${country.label(language)}") },
+                                modifier = Modifier.testTag("wizard_country_${country.code}")
+                            )
+                        }
+                    }
+
+                    // Dynamic Country Bank Selection Heading (e.g., "Select Bangladeshi Bank", "Select Kuwait Bank")
+                    Text(
+                        text = selectedCountry.bankSelectionHeading(language),
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.testTag("wizard_bank_section_heading")
+                    )
+
+                    val countryBanks = remember(selectedCountry) {
+                        InternationalBankCatalog.banksForCountry(selectedCountry)
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        countryBanks.forEach { bank ->
+                            FilterChip(
+                                selected = !isManualCustomBank && selectedBank?.id == bank.id,
                                 onClick = {
+                                    isManualCustomBank = false
                                     selectedBank = bank
+                                    selectedCardColor = bank.brandColor
                                     selectedCurrency = bank.defaultCurrency
                                 },
                                 label = { Text(bank.label(language)) },
                                 modifier = Modifier.testTag("wizard_bank_${bank.id}")
                             )
+                        }
+
+                        // Always available for every country: Manual / Custom Bank option
+                        FilterChip(
+                            selected = isManualCustomBank,
+                            onClick = { isManualCustomBank = true },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            label = {
+                                Text(
+                                    if (language == AppLanguage.BN) {
+                                        "ম্যানুয়াল / কাস্টম ব্যাংক"
+                                    } else {
+                                        "Manual / Custom Bank"
+                                    }
+                                )
+                            },
+                            modifier = Modifier.testTag("wizard_bank_custom")
+                        )
+                    }
+
+                    // Manual / Custom Bank Name input when user chooses Manual / Custom Bank
+                    if (isManualCustomBank) {
+                        OutlinedTextField(
+                            value = customBankName,
+                            onValueChange = { customBankName = it.take(60) },
+                            label = {
+                                Text(
+                                    if (language == AppLanguage.BN) {
+                                        "ব্যাংক বা কার্ড প্রতিষ্ঠানের নাম লিখুন"
+                                    } else {
+                                        "Enter Bank / Card Institution Name"
+                                    }
+                                )
+                            },
+                            placeholder = {
+                                Text(
+                                    if (language == AppLanguage.BN) {
+                                        "যেমন: Citizens Bank, Private Card..."
+                                    } else {
+                                        "e.g. Citizens Bank, Local Private Bank..."
+                                    }
+                                )
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("wizard_custom_bank_input")
+                        )
+                    }
+
+                    // Card Color Picker (swatches update Live Card Preview immediately)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Palette,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = if (language == AppLanguage.BN) "কার্ডের রঙ (Card Color)" else "Card Color",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .testTag("wizard_card_color_picker"),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CardColorCatalog.swatches.forEachIndexed { idx, swatch ->
+                            val isSelectedColor = selectedCardColor.toArgb() == swatch.toArgb()
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .clickable { selectedCardColor = swatch }
+                                    .testTag("wizard_card_color_$idx"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(if (isSelectedColor) 38.dp else 32.dp)
+                                        .clip(CircleShape)
+                                        .background(swatch)
+                                        .border(
+                                            width = if (isSelectedColor) 2.5.dp else 1.dp,
+                                            color = if (isSelectedColor) {
+                                                MaterialTheme.colorScheme.onSurface
+                                            } else {
+                                                Color.White.copy(alpha = 0.45f)
+                                            },
+                                            shape = CircleShape
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (isSelectedColor) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Check,
+                                            contentDescription = if (language == AppLanguage.BN) "নির্বাচিত রঙ" else "Selected color",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -345,7 +614,7 @@ fun AddAccountWizardSheet(
                 AccountType.CASH -> Unit
             }
 
-            // Interactive Account / Card Currency Selector (opens full flag+name picker)
+            // Interactive Account / Card Currency Selector (opens synchronized flag+name+rate picker)
             Text(
                 text = strings.accountCurrencyLabel,
                 style = MaterialTheme.typography.labelLarge,
@@ -413,10 +682,10 @@ fun AddAccountWizardSheet(
                     ) {
                         Surface(
                             color = MaterialTheme.colorScheme.primary.copy(alpha = if (crystal.isDark) 0.24f else 0.12f),
-                            shape = RoundedCornerShape(10.dp)
+                            shape = CircleShape
                         ) {
                             Text(
-                                text = "${selectedCurrency.code} (${selectedCurrency.symbol})",
+                                text = selectedCurrency.codeAndSymbolLabel(),
                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
@@ -554,6 +823,24 @@ fun AddAccountWizardSheet(
             }
             Spacer(modifier = Modifier.height(14.dp))
         }
+    }
+
+    if (showCountryPicker) {
+        AppCountryPickerSheet(
+            title = strings.bankCountryRegionLabel,
+            subtitle = if (language == AppLanguage.BN) {
+                "দেশ নির্বাচন করলে সংশ্লিষ্ট দেশের প্রধান ব্যাংক ও মুদ্রা স্বয়ংক্রিয়ভাবে দেখানো হবে"
+            } else {
+                "Selecting a country automatically loads its major banks and default currency"
+            },
+            selectedCountry = selectedCountry,
+            language = language,
+            onSelect = { chosen ->
+                applySelectedCountry(chosen)
+                showCountryPicker = false
+            },
+            onDismiss = { showCountryPicker = false }
+        )
     }
 
     if (showCurrencyPicker) {

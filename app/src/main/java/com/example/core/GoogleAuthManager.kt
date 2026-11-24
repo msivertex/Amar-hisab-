@@ -17,10 +17,21 @@ import androidx.credentials.exceptions.GetCredentialProviderConfigurationExcepti
 import androidx.credentials.exceptions.GetCredentialUnsupportedException
 import androidx.credentials.exceptions.NoCredentialException
 import com.example.localization.AppLanguage
+import com.google.android.gms.tasks.Task
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
+import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.auth
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.security.SecureRandom
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 private const val TAG = "GoogleAuthManager"
 
@@ -28,7 +39,8 @@ data class GoogleAccountProfile(
     val displayName: String,
     val email: String,
     val avatarUrl: String,
-    val idToken: String = ""
+    val idToken: String = "",
+    val firebaseUid: String = ""
 )
 
 enum class GoogleSignInErrorReason {
@@ -49,10 +61,9 @@ sealed interface GoogleSignInOutcome {
 }
 
 /**
- * Production Google Sign-In using Android Jetpack Credential Manager (`GetSignInWithGoogleOption`).
- * Operates completely independently for any user's Gmail account without testing-mode/mock
- * fallbacks, and maps OAuth, Error 403, offline, and Play Services issues into calm localized
- * feedback while keeping local usage 100% functional.
+ * Production Google Sign-In using Android Jetpack Credential Manager (`GetSignInWithGoogleOption`)
+ * paired with Firebase Authentication (`GoogleAuthProvider.getCredential(idToken, null)`) so the
+ * central Firestore data store has a verified `request.auth.uid` for strict per-user isolation.
  */
 object GoogleAuthManager {
 
@@ -82,9 +93,18 @@ object GoogleAuthManager {
                 request = request,
                 context = activityContext
             )
-            parseCredentialResponse(response)
-        } catch (_: GetCredentialCancellationException) {
+            when (val parsed = parseCredentialResponse(response)) {
+                is GoogleSignInOutcome.Success -> {
+                    val firebaseUid = authenticateWithFirebase(context, parsed.profile.idToken)
+                    GoogleSignInOutcome.Success(parsed.profile.copy(firebaseUid = firebaseUid))
+                }
+                else -> parsed
+            }
+        } catch (e: GetCredentialCancellationException) {
+            Log.w("Auth", "Sign-in cancelled", e)
             GoogleSignInOutcome.Cancelled
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: NoCredentialException) {
             Log.i(TAG, "No Google account credential available on device", e)
             GoogleSignInOutcome.Error(
@@ -121,12 +141,52 @@ object GoogleAuthManager {
         }
     }
 
-    suspend fun signOut(context: Context) {
-        try {
-            val credentialManager = CredentialManager.create(context)
-            credentialManager.clearCredentialState(ClearCredentialStateRequest())
+    /**
+     * Exchanges the Google ID token from Credential Manager for a Firebase Auth session.
+     * Never falls back to anonymous auth; if Firebase Auth is unreachable offline, returns ""
+     * so local usage continues cleanly without blocking the user.
+     */
+    private suspend fun authenticateWithFirebase(context: Context, idToken: String): String {
+        if (idToken.isBlank()) return ""
+        return try {
+            if (FirebaseApp.getApps(context.applicationContext).isEmpty()) {
+                FirebaseApp.initializeApp(context.applicationContext)
+            }
+            val credential = GoogleAuthProvider.getCredential(idToken, null)
+            val result = Firebase.auth.signInWithCredential(credential).awaitTask()
+            result.user?.uid.orEmpty()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Log.d(TAG, "clearCredentialState skipped: ${e.localizedMessage}")
+            Log.w(TAG, "Firebase Auth credential exchange deferred; continuing with local store", e)
+            ""
+        }
+    }
+
+    fun currentFirebaseUid(context: Context): String? {
+        return try {
+            if (FirebaseApp.getApps(context.applicationContext).isEmpty()) return null
+            Firebase.auth.currentUser?.uid?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    suspend fun signOut(context: Context) {
+        withContext(NonCancellable) {
+            try {
+                if (FirebaseApp.getApps(context.applicationContext).isNotEmpty()) {
+                    Firebase.auth.signOut()
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Firebase signOut skipped: ${e.localizedMessage}")
+            }
+            try {
+                val credentialManager = CredentialManager.create(context)
+                credentialManager.clearCredentialState(ClearCredentialStateRequest())
+            } catch (e: Exception) {
+                Log.d(TAG, "clearCredentialState skipped: ${e.localizedMessage}")
+            }
         }
     }
 
@@ -255,5 +315,17 @@ object GoogleAuthManager {
             randomBytes,
             Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING
         )
+    }
+
+    private suspend fun <T> Task<T>.awaitTask(): T = suspendCancellableCoroutine { cont ->
+        addOnSuccessListener { result ->
+            if (cont.isActive) cont.resume(result)
+        }
+        addOnFailureListener { exc ->
+            if (cont.isActive) cont.resumeWithException(exc)
+        }
+        addOnCanceledListener {
+            cont.cancel()
+        }
     }
 }

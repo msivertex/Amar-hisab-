@@ -1,0 +1,145 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User financial vault profile and currency preferences",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "userCountryCode": { "type": "string", "description": "ISO country code (e.g. BD, KW)" },
+        "mainCurrencyCode": { "type": "string", "description": "Primary 3-letter currency code (e.g. BDT)" },
+        "secondaryCurrencyCode": { "type": "string", "description": "Optional secondary 3-letter currency code or empty string" },
+        "monthlyBudget": { "type": "number", "description": "Monthly budget limit in main currency" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update" }
+      },
+      "required": ["userId", "displayName", "userCountryCode", "mainCurrencyCode", "secondaryCurrencyCode", "monthlyBudget", "createdAt", "updatedAt"]
+    },
+    "AccountRecord": {
+      "title": "AccountRecord",
+      "description": "User wallet, bank account, MFS wallet, or credit card in the central data store",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner" },
+        "localId": { "type": "integer", "description": "Local Room primary key ID" },
+        "name": { "type": "string", "description": "Card or account display name" },
+        "type": { "type": "string", "description": "Account type enum (CASH, MFS, DEBIT_BANK, CREDIT_CARD)" },
+        "balance": { "type": "number", "description": "Current balance or credit card used amount" },
+        "creditLimit": { "type": "number", "description": "Credit limit for credit cards, 0 otherwise" },
+        "bankOrProvider": { "type": "string", "description": "Bank or MFS provider name" },
+        "accountSubtype": { "type": "string", "description": "Optional account subtype" },
+        "cardNetwork": { "type": "string", "description": "Optional card network (Visa, Mastercard, etc.)" },
+        "accountNumberLast4": { "type": "string", "description": "Optional last 4 digits" },
+        "colorArgb": { "type": "integer", "description": "Card accent color ARGB long" },
+        "currencyCode": { "type": "string", "description": "3-letter currency code" },
+        "localCreatedAtMillis": { "type": "integer", "description": "Local creation epoch millis" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update" }
+      },
+      "required": ["userId", "localId", "name", "type", "balance", "creditLimit", "bankOrProvider", "accountSubtype", "cardNetwork", "accountNumberLast4", "colorArgb", "currencyCode", "localCreatedAtMillis", "createdAt", "updatedAt"]
+    },
+    "TransactionRecord": {
+      "title": "TransactionRecord",
+      "description": "Income, expense, or transfer entry stored in the central ledger",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner" },
+        "localId": { "type": "integer", "description": "Local Room primary key ID" },
+        "title": { "type": "string", "description": "Transaction title or merchant name" },
+        "amount": { "type": "number", "description": "Positive transaction amount" },
+        "type": { "type": "string", "description": "Transaction type enum (EXPENSE, INCOME, TRANSFER)" },
+        "category": { "type": "string", "description": "ExpenseCategory enum name" },
+        "subcategory": { "type": "string", "description": "Optional subcategory label" },
+        "accountLocalId": { "type": "integer", "description": "Source account local Room ID" },
+        "toAccountLocalId": { "type": "integer", "description": "Optional destination account local Room ID for transfers" },
+        "note": { "type": "string", "description": "Optional transaction note" },
+        "currencyCode": { "type": "string", "description": "3-letter currency code" },
+        "timestampMillis": { "type": "integer", "description": "Transaction timestamp epoch millis" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update" }
+      },
+      "required": ["userId", "localId", "title", "amount", "type", "category", "subcategory", "accountLocalId", "note", "currencyCode", "timestampMillis", "createdAt", "updatedAt"]
+    },
+    "SavingsGoalRecord": {
+      "title": "SavingsGoalRecord",
+      "description": "User savings goal target and progress",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner" },
+        "localId": { "type": "integer", "description": "Local Room primary key ID" },
+        "name": { "type": "string", "description": "Goal name" },
+        "targetAmount": { "type": "number", "description": "Target amount" },
+        "savedAmount": { "type": "number", "description": "Amount saved so far" },
+        "dueDateMillis": { "type": "integer", "description": "Optional target due date epoch millis" },
+        "colorArgb": { "type": "integer", "description": "Goal accent color ARGB long" },
+        "localCreatedAtMillis": { "type": "integer", "description": "Local creation epoch millis" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update" }
+      },
+      "required": ["userId", "localId", "name", "targetAmount", "savedAmount", "colorArgb", "localCreatedAtMillis", "createdAt", "updatedAt"]
+    },
+    "LoanRecord": {
+      "title": "LoanRecord",
+      "description": "Personal loan or debt record",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner" },
+        "localId": { "type": "integer", "description": "Local Room primary key ID" },
+        "personName": { "type": "string", "description": "Counterparty person name" },
+        "loanType": { "type": "string", "description": "LoanType enum (I_OWE, OWED_TO_ME)" },
+        "totalAmount": { "type": "number", "description": "Total principal loan amount" },
+        "paidAmount": { "type": "number", "description": "Amount settled so far" },
+        "note": { "type": "string", "description": "Optional note" },
+        "dueDateMillis": { "type": "integer", "description": "Optional due date epoch millis" },
+        "currencyCode": { "type": "string", "description": "3-letter currency code" },
+        "localCreatedAtMillis": { "type": "integer", "description": "Local creation epoch millis" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update" }
+      },
+      "required": ["userId", "localId", "personName", "loanType", "totalAmount", "paidAmount", "note", "currencyCode", "localCreatedAtMillis", "createdAt", "updatedAt"]
+    },
+    "CategoryBudgetRecord": {
+      "title": "CategoryBudgetRecord",
+      "description": "Monthly budget limit per expense category",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner" },
+        "categoryName": { "type": "string", "description": "ExpenseCategory enum name" },
+        "limitAmount": { "type": "number", "description": "Positive monthly category budget limit" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update" }
+      },
+      "required": ["userId", "categoryName", "limitAmount", "createdAt", "updatedAt"]
+    }
+  },
+  "auth": {
+    "providers": ["google.com"]
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Owner-isolated user profile and currency preferences"
+    },
+    "/users/{userId}/accounts/{accountId}": {
+      "schema": { "$ref": "#/entities/AccountRecord" },
+      "description": "Owner-isolated financial accounts and cards"
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/TransactionRecord" },
+      "description": "Owner-isolated financial transactions including voice, receipt, and manual entries"
+    },
+    "/users/{userId}/goals/{goalId}": {
+      "schema": { "$ref": "#/entities/SavingsGoalRecord" },
+      "description": "Owner-isolated savings goals"
+    },
+    "/users/{userId}/loans/{loanId}": {
+      "schema": { "$ref": "#/entities/LoanRecord" },
+      "description": "Owner-isolated loans and debts"
+    },
+    "/users/{userId}/budgets/{budgetId}": {
+      "schema": { "$ref": "#/entities/CategoryBudgetRecord" },
+      "description": "Owner-isolated category monthly budgets"
+    }
+  }
+}

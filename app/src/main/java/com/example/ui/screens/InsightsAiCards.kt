@@ -39,6 +39,7 @@ import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.Diamond
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingBasket
@@ -60,6 +62,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -335,24 +338,43 @@ fun VoiceFinancialSummaryCard(
         state.insightFilter,
         state.prefs.language,
         state.prefs.userName,
-        state.totalLiquidBalance
+        state.prefs.mainCurrencyCode,
+        state.totalLiquidBalance,
+        state.accounts,
+        state.transactions,
+        state.goals,
+        state.loans
     ) {
         InsightsSummaryHelper.buildPeriodSummary(state)
     }
 
     var isSummaryExpanded by remember { mutableStateOf(false) }
 
-    // Auto-expand summary preview when playback starts or if TTS hits a temporary issue so user can read along
+    // Auto-expand full readable summary when playback runs, finishes, or falls back so user can always read along
     LaunchedEffect(ttsState) {
-        if (ttsState is TtsUiState.Playing || ttsState is TtsUiState.Error) {
+        if (ttsState is TtsUiState.Playing ||
+            ttsState is TtsUiState.Paused ||
+            ttsState is TtsUiState.Completed ||
+            ttsState is TtsUiState.Error
+        ) {
             isSummaryExpanded = true
         }
     }
 
     val activeScript = when (ttsState) {
-        is TtsUiState.Playing -> ttsState.script
-        is TtsUiState.Paused -> ttsState.script
+        is TtsUiState.Playing -> ttsState.script.ifBlank { periodSummaryText }
+        is TtsUiState.Paused -> ttsState.script.ifBlank { periodSummaryText }
+        is TtsUiState.Completed -> ttsState.script.ifBlank { periodSummaryText }
+        is TtsUiState.Error -> ttsState.script.ifBlank { periodSummaryText }
         else -> periodSummaryText
+    }
+
+    val replayLabel = if (lang == AppLanguage.BN) "আবার শুনুন" else "Replay"
+    val completedBadgeLabel = if (lang == AppLanguage.BN) "সম্পন্ন" else "Completed"
+    val completedHintLabel = if (lang == AppLanguage.BN) {
+        "সম্পূর্ণ বিস্তারিত সারসংক্ষেপ শোনা সম্পন্ন হয়েছে।"
+    } else {
+        "Finished reading the complete financial summary."
     }
 
     CrystalCard(
@@ -427,11 +449,13 @@ fun VoiceFinancialSummaryCard(
                 is TtsUiState.Playing -> strings.playingAudio
                 is TtsUiState.Paused -> modern.pausedLabel
                 is TtsUiState.Generating -> strings.generatingAudio
+                is TtsUiState.Completed -> completedBadgeLabel
                 else -> state.insightFilter.label(lang)
             }
             val statusBadgeColor = when (ttsState) {
                 is TtsUiState.Playing -> crystal.assetGreen
                 is TtsUiState.Paused -> crystal.warningAmber
+                is TtsUiState.Completed -> crystal.assetGreen
                 is TtsUiState.Generating -> primary
                 else -> primary
             }
@@ -454,7 +478,7 @@ fun VoiceFinancialSummaryCard(
             }
         }
 
-        // Animated Audio Equalizer & Progress Indicator when Playing or Paused
+        // Animated Audio Equalizer & Chunk Progress Indicator when Playing or Paused
         AnimatedVisibility(
             visible = ttsState is TtsUiState.Playing || ttsState is TtsUiState.Paused,
             enter = expandVertically() + fadeIn(),
@@ -465,6 +489,32 @@ fun VoiceFinancialSummaryCard(
                 is TtsUiState.Playing -> ttsState.progress
                 is TtsUiState.Paused -> ttsState.progress
                 else -> 0f
+            }
+            val currentChunk = when (ttsState) {
+                is TtsUiState.Playing -> ttsState.currentChunkIndex
+                is TtsUiState.Paused -> ttsState.currentChunkIndex
+                else -> 0
+            }
+            val totalChunks = when (ttsState) {
+                is TtsUiState.Playing -> ttsState.totalChunks.coerceAtLeast(1)
+                is TtsUiState.Paused -> ttsState.totalChunks.coerceAtLeast(1)
+                else -> 1
+            }
+            val voiceMeta = when (ttsState) {
+                is TtsUiState.Playing -> listOf(ttsState.engineLabel, ttsState.voiceLocaleLabel)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" • ")
+                is TtsUiState.Paused -> listOf(ttsState.engineLabel, ttsState.voiceLocaleLabel)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" • ")
+                else -> ""
+            }
+            val partLabel = if (totalChunks > 1) {
+                val curStr = BdtFormatter.formatNumber((currentChunk + 1).coerceIn(1, totalChunks), lang)
+                val totStr = BdtFormatter.formatNumber(totalChunks, lang)
+                if (lang == AppLanguage.BN) "অংশ $curStr/$totStr" else "Part $curStr/$totStr"
+            } else {
+                ""
             }
 
             Column(
@@ -495,14 +545,43 @@ fun VoiceFinancialSummaryCard(
                             modifier = Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            Text(
-                                text = if (isSpeaking) strings.playingAudio else modern.pausedLabel,
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontFamily = HindSiliguriFamily
-                                ),
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (isSpeaking) strings.playingAudio else modern.pausedLabel,
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontFamily = HindSiliguriFamily
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                if (partLabel.isNotBlank()) {
+                                    Text(
+                                        text = partLabel,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = HindSiliguriFamily
+                                        ),
+                                        color = primary,
+                                        modifier = Modifier.testTag("tts_chunk_progress_label")
+                                    )
+                                }
+                            }
+                            if (voiceMeta.isNotBlank()) {
+                                Text(
+                                    text = voiceMeta,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = HindSiliguriFamily,
+                                        fontSize = 11.sp
+                                    ),
+                                    color = crystal.mutedText,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                             if (progressValue > 0.01f) {
                                 LinearProgressIndicator(
                                     progress = { progressValue.coerceIn(0f, 1f) },
@@ -531,7 +610,7 @@ fun VoiceFinancialSummaryCard(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Playback Controls (Play / Pause / Resume / Stop / Error)
+        // Playback Controls (Play / Pause / Resume / Stop / Replay / Completed / Error)
         when (ttsState) {
             is TtsUiState.Idle -> {
                 Button(
@@ -592,7 +671,8 @@ fun VoiceFinancialSummaryCard(
             is TtsUiState.Playing -> {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     FilledTonalButton(
                         onClick = onPauseTts,
@@ -612,6 +692,18 @@ fun VoiceFinancialSummaryCard(
                             ),
                             maxLines = 1,
                             softWrap = false
+                        )
+                    }
+                    FilledTonalIconButton(
+                        onClick = onPlayBriefingTts,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("tts_replay_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Replay,
+                            contentDescription = replayLabel,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                     Button(
@@ -644,7 +736,8 @@ fun VoiceFinancialSummaryCard(
             is TtsUiState.Paused -> {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Button(
                         onClick = onResumeTts,
@@ -664,6 +757,18 @@ fun VoiceFinancialSummaryCard(
                             ),
                             maxLines = 1,
                             softWrap = false
+                        )
+                    }
+                    FilledTonalIconButton(
+                        onClick = onPlayBriefingTts,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("tts_replay_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Replay,
+                            contentDescription = replayLabel,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                     OutlinedButton(
@@ -686,6 +791,61 @@ fun VoiceFinancialSummaryCard(
                             ),
                             maxLines = 1,
                             softWrap = false
+                        )
+                    }
+                }
+            }
+
+            is TtsUiState.Completed -> {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = crystal.assetGreen.copy(alpha = if (crystal.isDark) 0.16f else 0.10f),
+                        border = BorderStroke(1.dp, crystal.assetGreen.copy(alpha = 0.34f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("tts_completed_notice")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.CheckCircle,
+                                contentDescription = completedBadgeLabel,
+                                tint = crystal.assetGreen,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = completedHintLabel,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = HindSiliguriFamily,
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = onPlayBriefingTts,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("tts_replay_button")
+                    ) {
+                        Icon(Icons.Filled.Replay, contentDescription = null, modifier = Modifier.size(19.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = replayLabel,
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = HindSiliguriFamily
+                            )
                         )
                     }
                 }
@@ -751,7 +911,7 @@ fun VoiceFinancialSummaryCard(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Toggleable / Collapsible Bangla Text Summary Preview Trigger
+        // Toggleable / Collapsible Full Text Summary Preview Trigger
         Surface(
             onClick = { isSummaryExpanded = !isSummaryExpanded },
             shape = RoundedCornerShape(12.dp),
@@ -811,6 +971,9 @@ fun VoiceFinancialSummaryCard(
             enter = expandVertically() + fadeIn(),
             exit = shrinkVertically() + fadeOut()
         ) {
+            val paragraphs = remember(activeScript) {
+                activeScript.split(Regex("\\r?\\n+")).map { it.trim() }.filter { it.isNotEmpty() }
+            }
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = if (crystal.isDark) Color(0xFF141B2B) else Color(0xFFF7FAFF),
@@ -826,14 +989,17 @@ fun VoiceFinancialSummaryCard(
                         .padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = activeScript,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontFamily = HindSiliguriFamily,
-                            lineHeight = 22.sp
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    paragraphs.forEachIndexed { idx, para ->
+                        Text(
+                            text = para,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontFamily = HindSiliguriFamily,
+                                fontWeight = if (idx == 0) FontWeight.SemiBold else FontWeight.Normal,
+                                lineHeight = 22.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
             }
         }

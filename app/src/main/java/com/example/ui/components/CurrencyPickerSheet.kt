@@ -51,6 +51,7 @@ import com.example.data.market.MarketCalculators
 import com.example.data.market.MarketSnapshot
 import com.example.data.model.AppCountry
 import com.example.data.model.AppCurrency
+import com.example.data.model.CountryRegionGroup
 import com.example.localization.AppLanguage
 import com.example.ui.theme.HindSiliguriFamily
 import com.example.ui.theme.JetBrainsMonoFamily
@@ -58,8 +59,11 @@ import com.example.ui.theme.LocalCrystalColors
 
 /**
  * Crystal Liquid frosted-glass bottom sheet for selecting Main Currency,
- * Current / Second Currency, or an individual Card/Account's currency.
- * Displays country flag/icon, localized country & currency name, and code/symbol.
+ * Second Currency, or an individual Card/Account's currency.
+ *
+ * Reads directly from the unified [AppCountry] dataset grouped by [CountryRegionGroup]
+ * so Main Currency, Second Currency, Profile Details > Country, and the Card / New Account Wizard
+ * stay 100% synchronized automatically without manual duplication.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,26 +83,38 @@ fun AppCurrencyPickerSheet(
     val primary = MaterialTheme.colorScheme.primary
     var searchQuery by remember { mutableStateOf("") }
 
-    val filteredCurrencies = remember(searchQuery) {
+    // Canonical first country for each currency preserves deterministic test tags (e.g., app_currency_option_EUR)
+    val canonicalCountryForCurrency = remember {
+        AppCurrency.entries.associateWith { cur ->
+            AppCountry.entries.firstOrNull { it.suggestedCurrency == cur }
+        }
+    }
+
+    val groupedEntries = remember(searchQuery) {
         val q = searchQuery.trim()
-        if (q.isEmpty()) {
-            AppCurrency.entries
-        } else {
-            AppCurrency.entries.filter { cur ->
-                cur.code.contains(q, ignoreCase = true) ||
-                    cur.symbol.contains(q, ignoreCase = true) ||
-                    cur.countryEn.contains(q, ignoreCase = true) ||
-                    cur.countryBn.contains(q, ignoreCase = true) ||
-                    cur.nameEn.contains(q, ignoreCase = true) ||
-                    cur.nameBn.contains(q, ignoreCase = true)
+        CountryRegionGroup.entries.mapNotNull { group ->
+            val matches = AppCountry.entries.filter { country ->
+                country.group == group && (
+                    q.isEmpty() ||
+                        country.code.contains(q, ignoreCase = true) ||
+                        country.nameEn.contains(q, ignoreCase = true) ||
+                        country.nameBn.contains(q, ignoreCase = true) ||
+                        country.suggestedCurrency.code.contains(q, ignoreCase = true) ||
+                        country.suggestedCurrency.symbol.contains(q, ignoreCase = true) ||
+                        country.suggestedCurrency.nameEn.contains(q, ignoreCase = true) ||
+                        country.suggestedCurrency.nameBn.contains(q, ignoreCase = true) ||
+                        group.en.contains(q, ignoreCase = true) ||
+                        group.bn.contains(q, ignoreCase = true)
+                    )
             }
+            if (matches.isEmpty()) null else group to matches
         }
     }
 
     val searchHint = if (language == AppLanguage.BN) {
-        "দেশ বা মুদ্রা খুঁজুন (যেমন: BDT, KWD, সৌদি, দুবাই, ইতালি, UK)..."
+        "দেশ বা মুদ্রা খুঁজুন (BDT, KWD, সৌদি, দুবাই, ইতালি, সাইপ্রাস, UK)..."
     } else {
-        "Search country or currency (BDT, KWD, Saudi, Dubai, Italy, UK)..."
+        "Search country or currency (BDT, KWD, Saudi, Italy, Cyprus, UK)..."
     }
     val clearLabel = if (language == AppLanguage.BN) "দ্বিতীয় মুদ্রা মুছুন" else "Clear Second Currency"
 
@@ -212,118 +228,145 @@ fun AppCurrencyPickerSheet(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 420.dp),
+                    .heightIn(max = 440.dp)
+                    .testTag("app_currency_picker_list"),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(filteredCurrencies, key = { it.code }) { currency ->
-                    val isSelected = currency == selectedCurrency
-                    val rateText = if (currency != referenceCurrency) {
-                        val converted = marketSnapshot.convert(
-                            amount = 1.0,
-                            from = currency.toMarketCurrency(),
-                            to = referenceCurrency.toMarketCurrency()
+                groupedEntries.forEach { (group, countries) ->
+                    item(key = "header_${group.name}") {
+                        Text(
+                            text = group.label(language),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = HindSiliguriFamily
+                            ),
+                            color = primary,
+                            modifier = Modifier.padding(top = 6.dp, bottom = 2.dp, start = 4.dp)
                         )
-                        "1 ${currency.code} ≈ ${referenceCurrency.symbol}${MarketCalculators.formatDecimal(converted, 2, language)}"
-                    } else {
-                        if (language == AppLanguage.BN) "মূল ভিত্তি" else "Base"
                     }
 
-                    Surface(
-                        onClick = { onSelect(currency) },
-                        shape = RoundedCornerShape(18.dp),
-                        color = if (isSelected) {
-                            primary.copy(alpha = if (crystal.isDark) 0.24f else 0.12f)
-                        } else if (crystal.isDark) {
-                            Color.White.copy(alpha = 0.05f)
+                    items(countries, key = { "${group.name}_${it.code}" }) { country ->
+                        val currency = country.suggestedCurrency
+                        val isSelected = currency == selectedCurrency
+                        val rateText = if (!currency.code.equals(referenceCurrency.code, ignoreCase = true)) {
+                            val converted = marketSnapshot.convertCurrencyCode(
+                                amount = 1.0,
+                                fromCode = currency.code,
+                                toCode = referenceCurrency.code
+                            )
+                            val decimals = if (referenceCurrency.code.equals("KWD", ignoreCase = true) || converted < 1.0) 3 else 2
+                            val refPrefix = referenceCurrency.codeAndSymbolLabel()
+                            "1 ${currency.code} ≈ $refPrefix ${MarketCalculators.formatDecimal(converted, decimals, language)}"
                         } else {
-                            Color.White.copy(alpha = 0.88f)
-                        },
-                        border = BorderStroke(
-                            width = if (isSelected) 1.4.dp else 0.9.dp,
-                            color = if (isSelected) primary else crystal.glassBorder
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 64.dp)
-                            .testTag("app_currency_option_${currency.code}")
-                    ) {
-                        Row(
+                            if (language == AppLanguage.BN) "মূল ভিত্তি" else "Base"
+                        }
+
+                        val isCanonical = canonicalCountryForCurrency[currency] == country
+                        val rowTag = if (isCanonical) {
+                            "app_currency_option_${currency.code}"
+                        } else {
+                            "app_currency_option_${currency.code}_${country.code}"
+                        }
+
+                        val badgeText = currency.codeAndSymbolLabel()
+
+                        Surface(
+                            onClick = { onSelect(currency) },
+                            shape = RoundedCornerShape(18.dp),
+                            color = if (isSelected) {
+                                primary.copy(alpha = if (crystal.isDark) 0.24f else 0.12f)
+                            } else if (crystal.isDark) {
+                                Color.White.copy(alpha = 0.05f)
+                            } else {
+                                Color.White.copy(alpha = 0.88f)
+                            },
+                            border = BorderStroke(
+                                width = if (isSelected) 1.4.dp else 0.9.dp,
+                                color = if (isSelected) primary else crystal.glassBorder
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 11.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                                .heightIn(min = 64.dp)
+                                .testTag(rowTag)
                         ) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(44.dp)
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(
-                                            if (crystal.isDark) Color.White.copy(alpha = 0.08f)
-                                            else primary.copy(alpha = 0.08f)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(
+                                                if (crystal.isDark) Color.White.copy(alpha = 0.08f)
+                                                else primary.copy(alpha = 0.08f)
+                                            )
+                                            .border(0.8.dp, crystal.glassBorder, RoundedCornerShape(14.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(text = country.flag, fontSize = 23.sp)
+                                    }
+
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Text(
+                                            text = country.label(language),
+                                            style = MaterialTheme.typography.titleSmall.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                fontFamily = HindSiliguriFamily
+                                            ),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
-                                        .border(0.8.dp, crystal.glassBorder, RoundedCornerShape(14.dp)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(text = currency.flag, fontSize = 23.sp)
+                                        Text(
+                                            text = "${currency.currencyName(language)} • $rateText",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontFamily = JetBrainsMonoFamily
+                                            ),
+                                            color = crystal.mutedText,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
 
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Text(
-                                        text = "${currency.countryName(language)} • ${currency.currencyName(language)}",
-                                        style = MaterialTheme.typography.titleSmall.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            fontFamily = HindSiliguriFamily
-                                        ),
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = rateText,
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontFamily = JetBrainsMonoFamily
-                                        ),
-                                        color = crystal.mutedText,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = if (isSelected) primary else primary.copy(alpha = if (crystal.isDark) 0.18f else 0.11f)
-                                ) {
-                                    Text(
-                                        text = "${currency.code} (${currency.symbol})",
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontFamily = JetBrainsMonoFamily,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = if (isSelected) Color.White else primary,
-                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
-                                    )
-                                }
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Filled.CheckCircle,
-                                        contentDescription = null,
-                                        tint = primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = if (isSelected) primary else primary.copy(alpha = if (crystal.isDark) 0.18f else 0.11f)
+                                    ) {
+                                        Text(
+                                            text = badgeText,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontFamily = JetBrainsMonoFamily,
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = if (isSelected) Color.White else primary,
+                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Filled.CheckCircle,
+                                            contentDescription = null,
+                                            tint = primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -336,8 +379,9 @@ fun AppCurrencyPickerSheet(
 }
 
 /**
- * Crystal Liquid frosted-glass bottom sheet for selecting the user's Country/Region.
- * Supports instant search by country code, English name, or Bangla name.
+ * Crystal Liquid frosted-glass bottom sheet for selecting a Country/Region.
+ * Shared across Profile Details > Country and the Card / New Account Wizard.
+ * Displays all 28 synchronized countries grouped by [CountryRegionGroup] with instant search.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -353,24 +397,30 @@ fun AppCountryPickerSheet(
     val primary = MaterialTheme.colorScheme.primary
     var searchQuery by remember { mutableStateOf("") }
 
-    val filteredCountries = remember(searchQuery) {
+    val groupedCountries = remember(searchQuery) {
         val q = searchQuery.trim()
-        if (q.isEmpty()) {
-            AppCountry.entries
-        } else {
-            AppCountry.entries.filter { country ->
-                country.code.contains(q, ignoreCase = true) ||
-                    country.nameEn.contains(q, ignoreCase = true) ||
-                    country.nameBn.contains(q, ignoreCase = true) ||
-                    country.suggestedCurrency.code.contains(q, ignoreCase = true)
+        CountryRegionGroup.entries.mapNotNull { group ->
+            val matches = AppCountry.entries.filter { country ->
+                country.group == group && (
+                    q.isEmpty() ||
+                        country.code.contains(q, ignoreCase = true) ||
+                        country.nameEn.contains(q, ignoreCase = true) ||
+                        country.nameBn.contains(q, ignoreCase = true) ||
+                        country.suggestedCurrency.code.contains(q, ignoreCase = true) ||
+                        country.suggestedCurrency.nameEn.contains(q, ignoreCase = true) ||
+                        country.suggestedCurrency.nameBn.contains(q, ignoreCase = true) ||
+                        group.en.contains(q, ignoreCase = true) ||
+                        group.bn.contains(q, ignoreCase = true)
+                    )
             }
+            if (matches.isEmpty()) null else group to matches
         }
     }
 
     val searchHint = if (language == AppLanguage.BN) {
-        "দেশ খুঁজুন (যেমন: Bangladesh, Kuwait, Saudi, UAE, UK)..."
+        "দেশ খুঁজুন (Bangladesh, Kuwait, Saudi, Oman, Italy, Cyprus)..."
     } else {
-        "Search country (Bangladesh, Kuwait, Saudi, UAE, UK)..."
+        "Search country (Bangladesh, Kuwait, Saudi, Oman, Italy, Cyprus)..."
     }
 
     ModalBottomSheet(
@@ -462,89 +512,125 @@ fun AppCountryPickerSheet(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 420.dp),
+                    .heightIn(max = 440.dp)
+                    .testTag("app_country_picker_list"),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(filteredCountries, key = { it.code }) { country ->
-                    val isSelected = country == selectedCountry
-                    Surface(
-                        onClick = { onSelect(country) },
-                        shape = RoundedCornerShape(18.dp),
-                        color = if (isSelected) {
-                            primary.copy(alpha = if (crystal.isDark) 0.24f else 0.12f)
-                        } else if (crystal.isDark) {
-                            Color.White.copy(alpha = 0.05f)
-                        } else {
-                            Color.White.copy(alpha = 0.88f)
-                        },
-                        border = BorderStroke(
-                            width = if (isSelected) 1.4.dp else 0.9.dp,
-                            color = if (isSelected) primary else crystal.glassBorder
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 60.dp)
-                            .testTag("app_country_option_${country.code}")
-                    ) {
-                        Row(
+                groupedCountries.forEach { (group, countries) ->
+                    item(key = "country_group_${group.name}") {
+                        Text(
+                            text = group.label(language),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = HindSiliguriFamily
+                            ),
+                            color = primary,
+                            modifier = Modifier.padding(top = 6.dp, bottom = 2.dp, start = 4.dp)
+                        )
+                    }
+
+                    items(countries, key = { it.code }) { country ->
+                        val isSelected = country == selectedCountry
+                        val cur = country.suggestedCurrency
+                        val badgeText = cur.codeAndSymbolLabel()
+                        Surface(
+                            onClick = { onSelect(country) },
+                            shape = RoundedCornerShape(18.dp),
+                            color = if (isSelected) {
+                                primary.copy(alpha = if (crystal.isDark) 0.24f else 0.12f)
+                            } else if (crystal.isDark) {
+                                Color.White.copy(alpha = 0.05f)
+                            } else {
+                                Color.White.copy(alpha = 0.88f)
+                            },
+                            border = BorderStroke(
+                                width = if (isSelected) 1.4.dp else 0.9.dp,
+                                color = if (isSelected) primary else crystal.glassBorder
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 11.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                                .heightIn(min = 64.dp)
+                                .testTag("app_country_option_${country.code}")
                         ) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(42.dp)
-                                        .clip(RoundedCornerShape(13.dp))
-                                        .background(
-                                            if (crystal.isDark) Color.White.copy(alpha = 0.08f)
-                                            else primary.copy(alpha = 0.08f)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(
+                                                if (crystal.isDark) Color.White.copy(alpha = 0.08f)
+                                                else primary.copy(alpha = 0.08f)
+                                            )
+                                            .border(0.8.dp, crystal.glassBorder, RoundedCornerShape(14.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(text = country.flag, fontSize = 23.sp)
+                                    }
+
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Text(
+                                            text = country.label(language),
+                                            style = MaterialTheme.typography.titleSmall.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                fontFamily = HindSiliguriFamily
+                                            ),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
-                                        .border(0.8.dp, crystal.glassBorder, RoundedCornerShape(13.dp)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(text = country.flag, fontSize = 22.sp)
+                                        Text(
+                                            text = cur.currencyName(language),
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontFamily = HindSiliguriFamily
+                                            ),
+                                            color = crystal.mutedText,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
 
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Text(
-                                        text = country.label(language),
-                                        style = MaterialTheme.typography.titleSmall.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            fontFamily = HindSiliguriFamily
-                                        ),
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "${country.code} • ${country.suggestedCurrency.code} (${country.suggestedCurrency.symbol})",
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontFamily = JetBrainsMonoFamily
-                                        ),
-                                        color = crystal.mutedText,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = if (isSelected) primary else primary.copy(alpha = if (crystal.isDark) 0.18f else 0.11f)
+                                    ) {
+                                        Text(
+                                            text = badgeText,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontFamily = JetBrainsMonoFamily,
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = if (isSelected) Color.White else primary,
+                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Filled.CheckCircle,
+                                            contentDescription = null,
+                                            tint = primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
-                            }
-
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Filled.CheckCircle,
-                                    contentDescription = null,
-                                    tint = primary,
-                                    modifier = Modifier.size(22.dp)
-                                )
                             }
                         }
                     }

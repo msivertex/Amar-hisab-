@@ -50,7 +50,7 @@ enum class BankSubtype(val en: String, val bn: String) {
     SALARY("Salary Account", "স্যালারি অ্যাকাউন্ট"),
     SAVINGS("Savings Account", "সেভিংস অ্যাকাউন্ট");
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 }
 
 enum class CardNetwork(val label: String) {
@@ -63,7 +63,7 @@ enum class BankCategory(val en: String, val bn: String) {
     GOVERNMENT("Government Banks", "সরকারি ব্যাংক"),
     PRIVATE("Private Banks", "বেসরকারি ব্যাংক");
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 }
 
 enum class BangladeshiBank(
@@ -101,7 +101,7 @@ enum class BangladeshiBank(
     UCB("United Commercial Bank", "ইউনাইটেড কমার্শিয়াল ব্যাংক", "UCB", Color(0xFFB91C1C), BankCategory.PRIVATE),
     MBL("Mercantile Bank", "মার্কেন্টাইল ব্যাংক", "MBL", Color(0xFF0D9488), BankCategory.PRIVATE);
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 }
 
 enum class MfsProvider(
@@ -123,11 +123,11 @@ enum class MfsProvider(
     MYCASH("MyCash", "মাইক্যাশ", Color(0xFF0F766E), Color(0xFF14B8A6), "Mercantile Bank", "মার্কেন্টাইল ব্যাংক"),
     ISLAMIC_WALLET("Islamic Wallet", "ইসলামিক ওয়ালেট", Color(0xFF166534), Color(0xFF22C55E), "Islami Bank", "ইসলামী ব্যাংক");
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 
     fun directoryLabel(lang: AppLanguage): String {
         val base = label(lang)
-        val parent = if (lang == AppLanguage.BN) parentBankBn else parentBankEn
+        val parent = if (lang.isBangla) parentBankBn else parentBankEn
         return if (parent.isNotBlank()) "$base ($parent)" else base
     }
 }
@@ -139,7 +139,7 @@ enum class TransactionType {
 }
 
 data class SubcategoryOption(val key: String, val en: String, val bn: String) {
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 }
 
 enum class ExpenseCategory(
@@ -158,7 +158,7 @@ enum class ExpenseCategory(
     TRANSFER("Wallet Transfer", "অ্যাকাউন্ট স্থানান্তর", CatTransfer),
     OTHER("Other", "অন্যান্য", SlateOcean);
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 
     fun subcategories(): List<SubcategoryOption> = when (this) {
         FOOD_DINING -> listOf(
@@ -227,7 +227,7 @@ data class ManagedCategoryItem(
     val isActive: Boolean = true,
     val legacyCategory: ExpenseCategory? = null
 ) {
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 }
 
 object CategoryEditorCatalog {
@@ -272,7 +272,7 @@ object CategoryEditorCatalog {
 
 object BuiltInCategoriesCatalog {
     val all: List<ManagedCategoryItem> = listOf(
-        // Expense Categories (8)
+        // Expense Categories (12)
         ManagedCategoryItem(
             id = "exp_food_dining",
             type = TransactionType.EXPENSE,
@@ -280,7 +280,11 @@ object BuiltInCategoriesCatalog {
             bn = "খাবার ও ডাইনিং",
             accentColor = CatFood,
             iconKey = "restaurant",
-            subcategories = ExpenseCategory.FOOD_DINING.subcategories(),
+            subcategories = listOf(
+                SubcategoryOption("Restaurant", "Restaurant", "রেস্টুরেন্ট"),
+                SubcategoryOption("Coffee & Tea", "Coffee & Tea", "চা ও কফি"),
+                SubcategoryOption("Snacks", "Meals & Snacks", "নাস্তা ও খাবার")
+            ),
             legacyCategory = ExpenseCategory.FOOD_DINING
         ),
         ManagedCategoryItem(
@@ -290,67 +294,149 @@ object BuiltInCategoriesCatalog {
             bn = "বাজার ও গ্রোসারি",
             accentColor = CatGroceries,
             iconKey = "groceries",
-            subcategories = ExpenseCategory.GROCERIES.subcategories(),
+            subcategories = listOf(
+                SubcategoryOption("Super Shop", "Super Shop", "সুপার শপ"),
+                SubcategoryOption("Kacha Bazar", "Kacha Bazar", "কাঁচাবাজার"),
+                SubcategoryOption("Fish & Meat", "Fish & Meat", "মাছ ও মাংস")
+            ),
             legacyCategory = ExpenseCategory.GROCERIES
         ),
         ManagedCategoryItem(
-            id = "exp_rent_utilities",
+            id = "exp_housing_rent",
             type = TransactionType.EXPENSE,
-            en = "Rent & Utilities",
-            bn = "বাসা ভাড়া ও বিল",
+            en = "Housing & Rent",
+            bn = "বাসা ভাড়া ও আবাসন",
             accentColor = CatRent,
             iconKey = "home",
-            subcategories = ExpenseCategory.RENT_UTILITIES.subcategories(),
+            subcategories = listOf(
+                SubcategoryOption("House Rent", "House Rent", "বাসা ভাড়া"),
+                SubcategoryOption("Service Charge", "Service Charge", "সার্ভিস চার্জ"),
+                SubcategoryOption("Maintenance", "Home Maintenance", "বাসা মেরামত")
+            ),
+            legacyCategory = ExpenseCategory.RENT_UTILITIES
+        ),
+        ManagedCategoryItem(
+            id = "exp_utilities_bills",
+            type = TransactionType.EXPENSE,
+            en = "Utilities & Bills",
+            bn = "ইউটিলিটি ও বিল",
+            accentColor = Color(0xFF0284C7),
+            iconKey = "bills",
+            subcategories = listOf(
+                SubcategoryOption("Electricity", "Electricity Bill", "বিদ্যুৎ বিল"),
+                SubcategoryOption("Gas & Water", "Gas & Water", "গ্যাস ও পানি"),
+                SubcategoryOption("Internet & Mobile", "Internet & Recharge", "ইন্টারনেট ও রিচার্জ")
+            ),
             legacyCategory = ExpenseCategory.RENT_UTILITIES
         ),
         ManagedCategoryItem(
             id = "exp_transport",
             type = TransactionType.EXPENSE,
-            en = "Transport",
-            bn = "যাতায়াত",
+            en = "Transport & Commute",
+            bn = "যাতায়াত ও পরিবহন",
             accentColor = CatTransport,
             iconKey = "transport",
-            subcategories = ExpenseCategory.TRANSPORT.subcategories(),
+            subcategories = listOf(
+                SubcategoryOption("Ride Share", "Ride Share", "রাইড শেয়ার"),
+                SubcategoryOption("Metro & Bus", "Metro & Bus", "মেট্রো ও বাস"),
+                SubcategoryOption("Fuel", "Fuel / CNG", "জ্বালানি")
+            ),
             legacyCategory = ExpenseCategory.TRANSPORT
         ),
         ManagedCategoryItem(
-            id = "exp_shopping",
+            id = "exp_family_remittance",
             type = TransactionType.EXPENSE,
-            en = "Shopping",
-            bn = "কেনাকাটা",
-            accentColor = CatShopping,
-            iconKey = "shopping",
-            subcategories = ExpenseCategory.SHOPPING.subcategories(),
-            legacyCategory = ExpenseCategory.SHOPPING
+            en = "Family & Remittance",
+            bn = "পরিবার ও রেমিট্যান্স",
+            accentColor = Color(0xFF0D9488),
+            iconKey = "payments",
+            subcategories = listOf(
+                SubcategoryOption("Home Remittance", "Home Remittance", "দেশে টাকা পাঠানো"),
+                SubcategoryOption("Parents & Family", "Parents & Family", "পরিবার খরচ"),
+                SubcategoryOption("Education", "Family Education", "পড়াশোনা")
+            ),
+            legacyCategory = ExpenseCategory.OTHER
         ),
         ManagedCategoryItem(
             id = "exp_health",
             type = TransactionType.EXPENSE,
-            en = "Health & Meds",
-            bn = "স্বাস্থ্য ও ঔষধ",
+            en = "Health & Medical",
+            bn = "স্বাস্থ্য ও চিকিৎসা",
             accentColor = CatHealth,
             iconKey = "health",
-            subcategories = ExpenseCategory.HEALTH.subcategories(),
+            subcategories = listOf(
+                SubcategoryOption("Medicine", "Medicine", "ঔষধ"),
+                SubcategoryOption("Doctor", "Doctor Visit", "ডাক্তার ফি"),
+                SubcategoryOption("Lab & Test", "Hospital & Lab", "হাসপাতাল ও টেস্ট")
+            ),
             legacyCategory = ExpenseCategory.HEALTH
         ),
         ManagedCategoryItem(
-            id = "exp_entertainment",
+            id = "exp_shopping",
             type = TransactionType.EXPENSE,
-            en = "Entertainment",
-            bn = "বিনোদন",
+            en = "Shopping & Apparel",
+            bn = "কেনাকাটা ও পোশাক",
+            accentColor = CatShopping,
+            iconKey = "shopping",
+            subcategories = listOf(
+                SubcategoryOption("Clothing", "Clothing", "পোশাক"),
+                SubcategoryOption("Electronics", "Electronics", "ইলেকট্রনিক্স"),
+                SubcategoryOption("Home Care", "Home Care", "ঘরের সামগ্রী")
+            ),
+            legacyCategory = ExpenseCategory.SHOPPING
+        ),
+        ManagedCategoryItem(
+            id = "exp_subscriptions",
+            type = TransactionType.EXPENSE,
+            en = "Subscriptions & Digital",
+            bn = "সাবস্ক্রিপশন ও ডিজিটাল সেবা",
             accentColor = CatEntertainment,
             iconKey = "entertainment",
-            subcategories = ExpenseCategory.ENTERTAINMENT.subcategories(),
+            subcategories = listOf(
+                SubcategoryOption("Streaming", "Streaming & Apps", "স্ট্রিমিং ও অ্যাপ"),
+                SubcategoryOption("Cloud & Software", "Cloud & Software", "ক্লাউড ও সফটওয়্যার"),
+                SubcategoryOption("Gaming", "Games & Media", "গেমস ও মিডিয়া")
+            ),
             legacyCategory = ExpenseCategory.ENTERTAINMENT
+        ),
+        ManagedCategoryItem(
+            id = "exp_travel",
+            type = TransactionType.EXPENSE,
+            en = "Travel & Vacation",
+            bn = "ভ্রমণ ও ছুটি",
+            accentColor = Color(0xFF4F46E5),
+            iconKey = "travel",
+            subcategories = listOf(
+                SubcategoryOption("Flights & Tickets", "Flights & Tickets", "ফ্লাইট ও টিকেট"),
+                SubcategoryOption("Hotel & Stay", "Hotel & Resort", "হোটেল ও রিসোর্ট"),
+                SubcategoryOption("Tour", "Tour & Outing", "ট্যুর ও ভ্রমণ")
+            ),
+            legacyCategory = ExpenseCategory.ENTERTAINMENT
+        ),
+        ManagedCategoryItem(
+            id = "exp_charity_gifts",
+            type = TransactionType.EXPENSE,
+            en = "Charity & Gifts",
+            bn = "দান ও উপহার",
+            accentColor = Color(0xFFDB2777),
+            iconKey = "gift",
+            subcategories = listOf(
+                SubcategoryOption("Charity & Zakat", "Charity & Zakat", "দান ও যাকাত"),
+                SubcategoryOption("Gift", "Gifts & Events", "উপহার ও অনুষ্ঠান")
+            ),
+            legacyCategory = ExpenseCategory.OTHER
         ),
         ManagedCategoryItem(
             id = "exp_other",
             type = TransactionType.EXPENSE,
-            en = "Other",
-            bn = "অন্যান্য",
+            en = "Other Expense",
+            bn = "অন্যান্য খরচ",
             accentColor = SlateOcean,
             iconKey = "other",
-            subcategories = ExpenseCategory.OTHER.subcategories(),
+            subcategories = listOf(
+                SubcategoryOption("Debt Repayment", "Debt Repayment", "দেনা পরিশোধ"),
+                SubcategoryOption("Miscellaneous", "Miscellaneous", "বিবিধ খরচ")
+            ),
             legacyCategory = ExpenseCategory.OTHER
         ),
 
@@ -358,67 +444,67 @@ object BuiltInCategoriesCatalog {
         ManagedCategoryItem(
             id = "inc_salary",
             type = TransactionType.INCOME,
-            en = "Salary & Wages",
-            bn = "বেতন ও আয়",
+            en = "Salary & Allowance",
+            bn = "বেতন ও ভাতা",
             accentColor = CatIncome,
             iconKey = "payments",
             subcategories = listOf(
                 SubcategoryOption("Monthly Salary", "Monthly Salary", "মাসিক বেতন"),
-                SubcategoryOption("Overtime", "Overtime", "ওভারটাইম")
+                SubcategoryOption("Allowance", "Allowance & Overtime", "ভাতা ও ওভারটাইম")
             ),
             legacyCategory = ExpenseCategory.SALARY_INCOME
         ),
         ManagedCategoryItem(
-            id = "inc_freelance",
+            id = "inc_bonus",
             type = TransactionType.INCOME,
-            en = "Freelancing",
-            bn = "ফ্রিল্যান্সিং",
-            accentColor = Color(0xFF0284C7),
-            iconKey = "work",
+            en = "Bonus & Incentives",
+            bn = "বোনাস ও ইনসেনটিভ",
+            accentColor = Color(0xFFD97706),
+            iconKey = "gift",
             subcategories = listOf(
-                SubcategoryOption("Client Project", "Client Project", "ক্লায়েন্ট প্রজেক্ট"),
-                SubcategoryOption("Consulting", "Consulting", "কনসাল্টিং")
+                SubcategoryOption("Festival Bonus", "Festival Bonus", "উৎসব বোনাস"),
+                SubcategoryOption("Incentive", "Performance Incentive", "ইনসেনটিভ ও কমিশন")
             ),
             legacyCategory = ExpenseCategory.SALARY_INCOME
         ),
         ManagedCategoryItem(
             id = "inc_business",
             type = TransactionType.INCOME,
-            en = "Business",
-            bn = "ব্যবসা",
+            en = "Business & Side Income",
+            bn = "ব্যবসা ও সাইড ইনকাম",
             accentColor = Color(0xFF0D9488),
             iconKey = "business",
             subcategories = listOf(
-                SubcategoryOption("Sales Profit", "Sales Profit", "বিক্রয় মুনাফা"),
-                SubcategoryOption("Commission", "Commission", "কমিশন")
+                SubcategoryOption("Sales Profit", "Business Profit", "ব্যবসায়িক মুনাফা"),
+                SubcategoryOption("Freelance", "Freelance & Side Gig", "ফ্রিল্যান্সিং ও সাইড ইনকাম")
             ),
             legacyCategory = ExpenseCategory.SALARY_INCOME
         ),
         ManagedCategoryItem(
-            id = "inc_investment",
+            id = "inc_refund",
             type = TransactionType.INCOME,
-            en = "Investments & Profit",
-            bn = "বিনিয়োগ ও লভ্যাংশ",
-            accentColor = Color(0xFF7C3AED),
+            en = "Refund & Cashback",
+            bn = "রিফান্ড ও ক্যাশব্যাক",
+            accentColor = Color(0xFF0284C7),
             iconKey = "trending_up",
             subcategories = listOf(
-                SubcategoryOption("DPS / FDR", "DPS / FDR Profit", "ডিপিএস / এফডিআর"),
-                SubcategoryOption("Dividend", "Dividend", "লভ্যাংশ")
+                SubcategoryOption("Refund", "Order Refund", "রিফান্ড"),
+                SubcategoryOption("Cashback", "Cashback & Reward", "ক্যাশব্যাক ও রিওয়ার্ড")
             ),
             legacyCategory = ExpenseCategory.SALARY_INCOME
         ),
         ManagedCategoryItem(
-            id = "inc_bonus_gift",
+            id = "inc_other",
             type = TransactionType.INCOME,
-            en = "Bonus & Gift",
-            bn = "বোনাস ও উপহার",
-            accentColor = Color(0xFFD97706),
-            iconKey = "gift",
+            en = "Other Income",
+            bn = "অন্যান্য আয়",
+            accentColor = Color(0xFF7C3AED),
+            iconKey = "other",
             subcategories = listOf(
-                SubcategoryOption("Festival Bonus", "Festival Bonus", "উৎসব বোনাস"),
-                SubcategoryOption("Cash Gift", "Cash Gift", "নগদ উপহার")
+                SubcategoryOption("Gift Received", "Cash Gift", "নগদ উপহার"),
+                SubcategoryOption("Miscellaneous Income", "Other Income", "বিবিধ আয়")
             ),
-            legacyCategory = ExpenseCategory.SALARY_INCOME
+            legacyCategory = ExpenseCategory.OTHER
         ),
 
         // Transfer Categories (3)
@@ -482,6 +568,59 @@ object BuiltInCategoriesCatalog {
         val builtInIds = all.map { it.id }.toSet()
         val customAdded = overrides.filter { it.id !in builtInIds && it.id !in deletedIds && it.type == type }
         return builtInMerged + customAdded
+    }
+
+    fun mergedAll(
+        overrides: List<ManagedCategoryItem>,
+        deletedIds: Set<String>
+    ): List<ManagedCategoryItem> =
+        mergedFor(TransactionType.EXPENSE, overrides, deletedIds) +
+            mergedFor(TransactionType.INCOME, overrides, deletedIds) +
+            mergedFor(TransactionType.TRANSFER, overrides, deletedIds)
+
+    fun resolveForLegacy(
+        type: TransactionType,
+        legacyCategory: ExpenseCategory,
+        mergedItems: List<ManagedCategoryItem>
+    ): ManagedCategoryItem? {
+        val typed = mergedItems.filter { it.type == type && it.isActive }
+        if (typed.isEmpty()) return null
+        return typed.firstOrNull { it.legacyCategory == legacyCategory }
+            ?: typed.firstOrNull { it.id == if (type == TransactionType.INCOME) "inc_other" else "exp_other" }
+            ?: typed.first()
+    }
+
+    fun createCustomCategory(
+        type: TransactionType,
+        name: String,
+        accentColor: Color = CategoryEditorCatalog.colorSwatches.first(),
+        iconKey: String = if (type == TransactionType.INCOME) "payments" else "other"
+    ): ManagedCategoryItem {
+        val clean = name.trim()
+        val slug = clean
+            .lowercase()
+            .replace(Regex("[^a-z0-9\\u0980-\\u09FF]+"), "_")
+            .trim('_')
+            .take(24)
+            .ifBlank { System.currentTimeMillis().toString() }
+        val id = "custom_${type.name.lowercase()}_${slug}_${System.currentTimeMillis() % 10000}"
+        val fallbackLegacy = when (type) {
+            TransactionType.INCOME -> ExpenseCategory.SALARY_INCOME
+            TransactionType.TRANSFER -> ExpenseCategory.TRANSFER
+            TransactionType.EXPENSE -> ExpenseCategory.OTHER
+        }
+        return ManagedCategoryItem(
+            id = id,
+            type = type,
+            en = clean,
+            bn = clean,
+            accentColor = accentColor,
+            iconKey = iconKey,
+            subcategories = emptyList(),
+            isBuiltIn = false,
+            isActive = true,
+            legacyCategory = fallbackLegacy
+        )
     }
 
     fun orderedFor(type: TransactionType, savedOrder: List<String>): List<ManagedCategoryItem> =
@@ -590,7 +729,7 @@ enum class InsightTimeFilter(val en: String, val bn: String) {
     THIS_MONTH("This Month", "এই মাস"),
     LAST_MONTH("Last Month", "গত মাস");
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 }
 
 enum class TransactionSortOption(val en: String, val bn: String) {
@@ -599,7 +738,7 @@ enum class TransactionSortOption(val en: String, val bn: String) {
     HIGHEST("Highest ৳", "বেশি টাকা"),
     LOWEST("Lowest ৳", "কম টাকা");
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 }
 
 enum class StartOfWeek(val calendarDay: Int, val en: String, val bn: String) {
@@ -611,7 +750,7 @@ enum class StartOfWeek(val calendarDay: Int, val en: String, val bn: String) {
     THURSDAY(Calendar.THURSDAY, "Thursday", "বৃহস্পতিবার"),
     FRIDAY(Calendar.FRIDAY, "Friday", "শুক্রবার");
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 }
 
 enum class AppThemeMode(val en: String, val bn: String) {
@@ -619,7 +758,7 @@ enum class AppThemeMode(val en: String, val bn: String) {
     LIGHT("Light", "লাইট"),
     DARK("Dark", "ডার্ক");
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 }
 
 enum class AppColourTheme(
@@ -697,8 +836,8 @@ enum class AppColourTheme(
         previewGradient = listOf(Color(0xFF9F1239), Color(0xFFE11D48), Color(0xFFF97316))
     );
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
-    fun subtitle(lang: AppLanguage): String = if (lang == AppLanguage.BN) subtitleBn else subtitleEn
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
+    fun subtitle(lang: AppLanguage): String = if (lang.isBangla) subtitleBn else subtitleEn
 }
 
 enum class HomeLayoutStyle {
@@ -717,7 +856,7 @@ enum class HomeSectionId(val en: String, val bn: String) {
     GOALS("Savings Goals", "সঞ্চয় লক্ষ্য"),
     FINANCIAL_HEALTH("Financial Health", "আর্থিক স্বাস্থ্য");
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 }
 
 data class DailyTrendPoint(
@@ -768,7 +907,9 @@ data class ReceiptScanResult(
     val referenceId: String = "",
     val timestampMillis: Long? = null,
     val detectedDirectionKeyword: String = "",
-    val isLocalFallback: Boolean = false
+    val isLocalFallback: Boolean = false,
+    val managedCategoryId: String = "",
+    val managedCategoryLabel: String = ""
 )
 
 data class GroundingSource(
@@ -791,7 +932,9 @@ data class VoiceParsedTransaction(
     val currencyCode: String = "BDT",
     val toAccountHint: String = "",
     val note: String = "",
-    val isLocalFallback: Boolean = false
+    val isLocalFallback: Boolean = false,
+    val managedCategoryId: String = "",
+    val managedCategoryLabel: String = ""
 )
 
 fun defaultColorForCash(): Color = BrandCash

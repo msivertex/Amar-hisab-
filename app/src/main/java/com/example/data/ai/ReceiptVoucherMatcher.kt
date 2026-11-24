@@ -43,12 +43,22 @@ object ReceiptVoucherMatcher {
         "salary",
         "refund",
         "cashback",
+        "received",
+        "income",
         "credited",
         "ক্যাশ ইন",
         "ক্যাশ-ইন",
         "রিসিভড মানি",
         "টাকা পেয়েছেন",
         "টাকা পেয়েছেন",
+        "পেয়েছি",
+        "পেয়েছি",
+        "ঢুকেছে",
+        "ঢুকছে",
+        "ঢুকলো",
+        "ঢুকল",
+        "জমা হয়েছে",
+        "জমা হয়েছে",
         "টাকা এসেছে",
         "অ্যাড মানি",
         "এড মানি",
@@ -101,15 +111,29 @@ object ReceiptVoucherMatcher {
         "rocket" to listOf("rocket", "রকেট", "dbbl mobile"),
         "upay" to listOf("upay", "উপায়", "উপায়"),
         "city bank" to listOf("city bank", "citytouch", "city", "সিটি ব্যাংক", "সিটি"),
-        "dutch-bangla bank" to listOf("dutch-bangla", "dutch bangla", "dbbl", "nexuspay", "ডাচ-বাংলা"),
+        "dutch-bangla bank" to listOf("dutch-bangla", "dutch bangla", "dutchbangla", "dbbl", "nexuspay", "ডাচ-বাংলা", "ডাচ বাংলা", "ডাচবাংলা", "ডিবিবিএল"),
         "brac bank" to listOf("brac bank", "brac", "astha", "ব্র্যাক ব্যাংক", "ব্র্যাক"),
         "islami bank" to listOf("islami bank", "ibbl", "cellfin", "ইসলামী ব্যাংক", "ইসলামি ব্যাংক"),
         "trust bank" to listOf("trust bank", "tap", "ট্রাস্ট ব্যাংক"),
         "sonali bank" to listOf("sonali bank", "sonali", "সোনালী ব্যাংক"),
+        "eastern bank" to listOf("eastern bank", "ebl", "ইস্টার্ন ব্যাংক", "ইবিএল"),
+        "prime bank" to listOf("prime bank", "প্রাইম ব্যাংক"),
+        "pubali bank" to listOf("pubali bank", "pubali", "পূবালী ব্যাংক", "পূবালী"),
+        "ucb" to listOf("united commercial bank", "ucb", "ইউসিবি"),
+        "mutual trust bank" to listOf("mutual trust bank", "mutual trust", "mtb", "মিউচুয়াল ট্রাস্ট"),
+        "bank asia" to listOf("bank asia", "ব্যাংক এশিয়া", "ব্যাংক এশিয়া"),
+        "dhaka bank" to listOf("dhaka bank", "ঢাকা ব্যাংক"),
+        "ab bank" to listOf("ab bank", "এবি ব্যাংক"),
+        "al-arafah bank" to listOf("al-arafah", "al arafah", "আল আরাফাহ"),
+        "abk" to listOf("abk", "al ahli bank of kuwait", "al ahli kuwait", "ahli bank", "এবিকে", "আল আহলি"),
         "kfh" to listOf("kfh", "kuwait finance house", "কুয়েত ফিন্যান্স", "কুয়েত ফিন্যান্স"),
         "nbk" to listOf("nbk", "national bank of kuwait", "ন্যাশনাল ব্যাংক অফ কুয়েত"),
         "gulf bank" to listOf("gulf bank", "গালফ ব্যাংক"),
-        "boubyan" to listOf("boubyan", "বুবিয়ান", "বুবিয়ান"),
+        "boubyan" to listOf("boubyan", "boubyan bank", "বুবিয়ান", "বুবিয়ান"),
+        "burgan bank" to listOf("burgan", "burgan bank", "বুরগান"),
+        "al tijari" to listOf("al tijari", "cbk", "commercial bank of kuwait", "আল তিজারি"),
+        "warba bank" to listOf("warba", "warba bank", "ওয়ারবা", "ওয়ারবা"),
+        "kib" to listOf("kib", "kuwait international bank"),
         "al rajhi" to listOf("al rajhi", "alrajhi", "rajhi", "আল রাজি"),
         "snb" to listOf("snb", "saudi national bank", "alahli", "সৌদি ন্যাশনাল"),
         "riyad bank" to listOf("riyad bank", "riyad", "রিয়াদ ব্যাংক"),
@@ -237,7 +261,8 @@ object ReceiptVoucherMatcher {
         accounts: List<AccountEntity>,
         providerHint: String,
         accountLast4Hint: String = "",
-        currencyCode: String = "BDT"
+        currencyCode: String = "BDT",
+        allowCurrencyFallback: Boolean = true
     ): MatchedAccountResult {
         if (accounts.isEmpty()) {
             return MatchedAccountResult(
@@ -252,7 +277,7 @@ object ReceiptVoucherMatcher {
             .lastOrNull()?.value.orEmpty()
         val normProvider = normalizeForMatch(providerHint)
         val canonicalProviderKey = resolveCanonicalProviderKey(normProvider)
-        val normCurrency = normalizeCurrencyCode(currencyCode)
+        val normCurrency = if (currencyCode.isBlank()) "" else normalizeCurrencyCode(currencyCode)
 
         data class Candidate(
             val account: AccountEntity,
@@ -319,15 +344,17 @@ object ReceiptVoucherMatcher {
         }
 
         // Secondary fallback: match by currency (e.g., KD receipt -> KFH KWD account)
-        val currencyMatched = accounts.firstOrNull { it.currencyCode.equals(normCurrency, ignoreCase = true) }
-        if (currencyMatched != null) {
-            val cleanBadge = AppCurrency.fromCode(normCurrency).cleanBadgeLabel()
-            return MatchedAccountResult(
-                account = currencyMatched,
-                isAutoMatched = true,
-                matchReasonEn = "Matched $cleanBadge wallet: ${currencyMatched.name}",
-                matchReasonBn = "$cleanBadge ওয়ালেট মিলেছে: ${currencyMatched.name}"
-            )
+        if (allowCurrencyFallback && normCurrency.isNotBlank()) {
+            val currencyMatched = accounts.firstOrNull { it.currencyCode.equals(normCurrency, ignoreCase = true) }
+            if (currencyMatched != null) {
+                val cleanBadge = AppCurrency.fromCode(normCurrency).cleanBadgeLabel()
+                return MatchedAccountResult(
+                    account = currencyMatched,
+                    isAutoMatched = true,
+                    matchReasonEn = "Matched $cleanBadge wallet: ${currencyMatched.name}",
+                    matchReasonBn = "$cleanBadge ওয়ালেট মিলেছে: ${currencyMatched.name}"
+                )
+            }
         }
 
         val fallback = accounts.first()

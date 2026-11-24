@@ -73,7 +73,7 @@ class MultiCurrencyTransferReportRobolectricTest {
             colorArgb = 0xFF10B981L,
             currencyCode = "KWD"
         )
-        assertEquals("নগদ টাকা (KD)", AccountNameResolver.resolveAccountName(blankCashBn, AppLanguage.BN))
+        assertEquals("নগদ টাকা (KWD)", AccountNameResolver.resolveAccountName(blankCashBn, AppLanguage.BN))
 
         val kfhUser = AccountEntity(
             id = 10L,
@@ -100,7 +100,7 @@ class MultiCurrencyTransferReportRobolectricTest {
             allAccounts = listOf(kfhUser, bkashUser),
             language = AppLanguage.EN
         )
-        assertEquals("Shariful Islam (KFH • KD) → Shariful Islam (bKash • BDT)", routeTitle)
+        assertEquals("Shariful Islam (KFH • KWD) → Shariful Islam (bKash • BDT)", routeTitle)
     }
 
     @Test
@@ -165,7 +165,7 @@ class MultiCurrencyTransferReportRobolectricTest {
             val transferTx = db.transactionDao().getAllTransactionsOnce().first()
             assertEquals("KWD", transferTx.currencyCode)
             assertEquals(10.0, transferTx.amount, 0.001)
-            assertTrue(transferTx.title.contains("Shariful Islam (KFH • KD)"))
+            assertTrue(transferTx.title.contains("Shariful Islam (KFH • KWD)"))
             assertTrue(transferTx.title.contains("Shariful Islam (bKash • BDT)"))
 
             val parsed = TransferNoteCodec.parse(transferTx, afterTo)
@@ -285,10 +285,10 @@ class MultiCurrencyTransferReportRobolectricTest {
         assertTrue(csv.contains("Currency_Summary,KWD,0.00,2.50,-2.50,10.00"))
         assertTrue(csv.contains("Currency_Summary,BDT,0.00,500.00,-500.00,0.00"))
         assertTrue(csv.contains("Date,Title,Type,Category,Subcategory,Wallet,To_Wallet,Currency,Amount,Conversion_Details,Note"))
-        assertTrue(csv.contains("\"Shariful Islam (KFH • KD)\",\"Shariful Islam (bKash • BDT)\",KWD,10.00"))
-        assertTrue(csv.contains("-> BDT 3957.65 @ 1 KD = BDT 395.77"))
+        assertTrue(csv.contains("\"Shariful Islam (KFH • KWD)\",\"Shariful Islam (bKash • BDT)\",KWD,10.00"))
+        assertTrue(csv.contains("-> BDT 3957.65 @ 1 KWD = BDT 395.77"))
         assertTrue(csv.contains("\"Cash (BDT)\""))
-        assertTrue(csv.contains("\"KD Wallet\""))
+        assertTrue(csv.contains("\"KWD Wallet\""))
         assertFalse(csv.contains("\"—\""))
         assertFalse(csv.contains("\"-\""))
 
@@ -303,8 +303,8 @@ class MultiCurrencyTransferReportRobolectricTest {
         assertTrue(pdfResult.file.exists())
         assertTrue(pdfResult.file.length() > 500L)
         val shareText = pdfResult.shareIntent.getStringExtra(android.content.Intent.EXTRA_TEXT).orEmpty()
-        assertTrue(shareText.contains("KD:"))
-        assertTrue(shareText.contains("KD 10"))
+        assertTrue(shareText.contains("KWD:"))
+        assertTrue(shareText.contains("KWD د.ك 10.000"))
     }
 
     @Test
@@ -331,7 +331,7 @@ class MultiCurrencyTransferReportRobolectricTest {
         )
         val transferTx = TransactionEntity(
             id = 501L,
-            title = "Shariful Islam (KFH • KD) → Shariful Islam (bKash • BDT)",
+            title = "Shariful Islam (KFH • KWD) → Shariful Islam (bKash • BDT)",
             amount = 10.0,
             type = TransactionType.TRANSFER,
             category = ExpenseCategory.TRANSFER,
@@ -365,11 +365,11 @@ class MultiCurrencyTransferReportRobolectricTest {
         composeRule.onNodeWithTag("activity_transfer_pill_${state.deviceTimeContext.dayKey}_KWD")
             .assertIsDisplayed()
         assertTrue(
-            composeRule.onAllNodesWithText("KD 10", substring = true).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithText("KWD د.ك 10.000", substring = true).fetchSemanticsNodes().isNotEmpty()
         )
         // Full From -> To route visible without truncation
         assertTrue(
-            composeRule.onAllNodesWithText("Shariful Islam (KFH • KD) → Shariful Islam (bKash • BDT)", substring = true)
+            composeRule.onAllNodesWithText("Shariful Islam (KFH • KWD) → Shariful Islam (bKash • BDT)", substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         )
 

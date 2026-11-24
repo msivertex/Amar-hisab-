@@ -39,7 +39,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.foundation.isSystemInDarkTheme
 import com.example.core.DevicePermissionsHelper
-import com.example.core.configureAppCheck
 import com.example.data.model.AppTab
 import com.example.data.model.AppThemeMode
 import com.example.data.model.TransactionType
@@ -81,8 +80,6 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Configure Firebase App Check with launch intent before any UI or ViewModels.
-        configureAppCheck(this, intent)
         AmarHisabNotificationManager.ensureChannels(this)
         dispatchNotificationRoute(intent)
 
@@ -269,7 +266,8 @@ fun AmarHisabApp(
     AmarHisabTheme(
         darkTheme = resolvedDark,
         colourTheme = uiState.prefs.colourTheme,
-        isBangla = uiState.prefs.language == AppLanguage.BN
+        isBangla = uiState.prefs.language.isBangla,
+        isRtl = uiState.prefs.language.isRtl
     ) {
         AnimatedContent(
             targetState = rootScreenKey,
@@ -610,7 +608,10 @@ fun AmarHisabApp(
                                 )
                             },
                             defaultCurrencyCode = uiState.prefs.mainCurrencyCode,
-                            marketSnapshot = marketSyncState.snapshot
+                            marketSnapshot = marketSyncState.snapshot,
+                            managedCategoryOverrides = uiState.prefs.managedCategoryOverrides,
+                            deletedCategoryIds = uiState.prefs.deletedCategoryIds,
+                            onAddCustomCategory = { item -> viewModel.upsertManagedCategory(item) }
                         )
                     }
 
@@ -654,6 +655,30 @@ fun AmarHisabApp(
                                     timestamp = timestamp
                                 )
                             },
+                            onSaveVoucherWithSubcategory = { title, amount, type, category, subcat, accountId, note, timestamp ->
+                                viewModel.addTransaction(
+                                    title = title,
+                                    amount = amount,
+                                    type = type,
+                                    category = category,
+                                    accountId = accountId,
+                                    subcategory = subcat,
+                                    note = note,
+                                    timestamp = timestamp
+                                )
+                            },
+                            onExecuteTransfer = { fromId, toId, amount, note, timestamp ->
+                                viewModel.transferFunds(
+                                    fromAccountId = fromId,
+                                    toAccountId = toId,
+                                    amount = amount,
+                                    note = note,
+                                    timestamp = timestamp
+                                )
+                            },
+                            managedCategoryOverrides = uiState.prefs.managedCategoryOverrides,
+                            deletedCategoryIds = uiState.prefs.deletedCategoryIds,
+                            onAddCustomCategory = { item -> viewModel.upsertManagedCategory(item) },
                             onAddAccount = {
                                 showReceiptScanSheet = false
                                 viewModel.resetReceiptScan()
@@ -685,6 +710,17 @@ fun AmarHisabApp(
                                     accountId = accountId
                                 )
                             },
+                            onSaveParsedTransactionWithSubcategory = { title, amount, type, category, subcat, accountId, note ->
+                                viewModel.addTransaction(
+                                    title = title,
+                                    amount = amount,
+                                    type = type,
+                                    category = category,
+                                    accountId = accountId,
+                                    subcategory = subcat,
+                                    note = note
+                                )
+                            },
                             onDismiss = { showVoiceEntrySheet = false },
                             defaultCurrencyCode = uiState.prefs.secondaryCurrencyCode.ifBlank {
                                 uiState.prefs.mainCurrencyCode
@@ -696,7 +732,10 @@ fun AmarHisabApp(
                                     amount = amount,
                                     note = note
                                 )
-                            }
+                            },
+                            managedCategoryOverrides = uiState.prefs.managedCategoryOverrides,
+                            deletedCategoryIds = uiState.prefs.deletedCategoryIds,
+                            onAddCustomCategory = { item -> viewModel.upsertManagedCategory(item) }
                         )
                     }
 
@@ -708,6 +747,7 @@ fun AmarHisabApp(
                             onSaveAccount = { viewModel.addAccount(it) },
                             defaultCurrencyCode = uiState.prefs.mainCurrencyCode,
                             secondaryCurrencyCode = uiState.prefs.secondaryCurrencyCode,
+                            userCountryCode = uiState.prefs.userCountryCode,
                             marketSnapshot = marketSyncState.snapshot
                         )
                     }

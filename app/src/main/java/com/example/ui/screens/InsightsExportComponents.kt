@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -16,19 +17,24 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,18 +45,24 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.export.MonthlyReportPayload
+import com.example.data.export.QrCodeBitmapGenerator
 import com.example.data.export.ReportExportFormat
+import com.example.data.export.ReportLocalizedStrings
+import com.example.data.export.ReportPeriodType
 import com.example.data.model.AccountNameResolver
 import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
@@ -120,13 +132,17 @@ fun MonthlyReportExportCard(
     statusMessage: String?,
     isError: Boolean,
     onQuickExport: (ReportExportFormat) -> Unit,
-    onOpenExportSheet: () -> Unit
+    onOpenExportSheet: () -> Unit,
+    selectedPeriodType: ReportPeriodType = payload.periodType,
+    onSelectPeriodType: (ReportPeriodType) -> Unit = {}
 ) {
     val crystal = LocalCrystalColors.current
     val primary = MaterialTheme.colorScheme.primary
     val exp = strings.reportExport
+    val reportCopy = ReportLocalizedStrings.forLanguage(payload.language)
     val pdfAccent = Color(0xFFE11D48)
     val csvAccent = crystal.assetGreen
+    val qrAccent = primary
     val isBusy = exportingFormat != null
 
     CrystalCard(
@@ -153,7 +169,7 @@ fun MonthlyReportExportCard(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Description,
-                    contentDescription = exp.cardTitle,
+                    contentDescription = reportCopy.reportTitleFor(selectedPeriodType),
                     tint = primary,
                     modifier = Modifier.size(23.dp)
                 )
@@ -161,7 +177,7 @@ fun MonthlyReportExportCard(
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = exp.cardTitle,
+                    text = reportCopy.reportTitleFor(selectedPeriodType),
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
                         fontFamily = HindSiliguriFamily
@@ -171,12 +187,12 @@ fun MonthlyReportExportCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = exp.cardSubtitle,
+                    text = "${payload.language.nativeName} • PDF / CSV / QR",
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontFamily = HindSiliguriFamily
                     ),
                     color = crystal.mutedText,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -189,14 +205,49 @@ fun MonthlyReportExportCard(
                     .testTag("insights_card_open_sheet_button")
             ) {
                 Icon(
-                    imageVector = Icons.Filled.Share,
-                    contentDescription = exp.sheetTitle,
+                    imageVector = Icons.Filled.QrCode2,
+                    contentDescription = reportCopy.qrSectionTitle,
                     tint = primary
                 )
             }
         }
 
         Spacer(modifier = Modifier.height(10.dp))
+
+        // Daily / Weekly / Monthly Period Switcher
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ReportPeriodType.entries.forEach { period ->
+                val selected = period == selectedPeriodType
+                FilterChip(
+                    selected = selected,
+                    onClick = { onSelectPeriodType(period) },
+                    label = {
+                        Text(
+                            text = reportCopy.periodTabLabel(period),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                fontFamily = HindSiliguriFamily
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = primary.copy(alpha = if (crystal.isDark) 0.28f else 0.16f),
+                        selectedLabelColor = primary
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 40.dp)
+                        .testTag("export_period_${period.name}")
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Period & Transaction Count Strip
         Surface(
@@ -213,7 +264,7 @@ fun MonthlyReportExportCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${exp.periodBadgePrefix}: ${payload.periodLabel}",
+                    text = "${reportCopy.periodLabel}: ${payload.periodLabel}",
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontWeight = FontWeight.SemiBold,
                         fontFamily = HindSiliguriFamily
@@ -224,7 +275,7 @@ fun MonthlyReportExportCard(
                     modifier = Modifier.weight(1f)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                val txCountFormatted = if (payload.language == AppLanguage.BN) {
+                val txCountFormatted = if (payload.language.isBangla) {
                     BdtFormatter.toBanglaDigits(payload.transactions.size.toString())
                 } else {
                     payload.transactions.size.toString()
@@ -234,7 +285,7 @@ fun MonthlyReportExportCard(
                     color = primary.copy(alpha = if (crystal.isDark) 0.20f else 0.11f)
                 ) {
                     Text(
-                        text = "$txCountFormatted ${exp.transactionsCountSuffix}",
+                        text = "$txCountFormatted ${reportCopy.txCountSuffix}",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.SemiBold,
                             fontFamily = HindSiliguriFamily,
@@ -251,10 +302,10 @@ fun MonthlyReportExportCard(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 1-Tap PDF & CSV Share Buttons
+        // 1-Tap PDF, CSV & QR Receipt Buttons
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
                 onClick = { onQuickExport(ReportExportFormat.PDF) },
@@ -264,7 +315,7 @@ fun MonthlyReportExportCard(
                     containerColor = pdfAccent,
                     contentColor = Color.White
                 ),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp),
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = 48.dp)
@@ -283,7 +334,7 @@ fun MonthlyReportExportCard(
                         modifier = Modifier.size(18.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(5.dp))
                 Text(
                     text = exp.quickPdfBtn,
                     style = MaterialTheme.typography.labelLarge.copy(
@@ -301,7 +352,7 @@ fun MonthlyReportExportCard(
                 shape = RoundedCornerShape(14.dp),
                 border = BorderStroke(1.2.dp, csvAccent.copy(alpha = 0.65f)),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = csvAccent),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp),
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = 48.dp)
@@ -320,12 +371,48 @@ fun MonthlyReportExportCard(
                         modifier = Modifier.size(18.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(5.dp))
                 Text(
                     text = exp.quickCsvBtn,
                     style = MaterialTheme.typography.labelLarge.copy(
                         fontWeight = FontWeight.Bold,
                         fontFamily = HindSiliguriFamily
+                    ),
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+
+            OutlinedButton(
+                onClick = onOpenExportSheet,
+                enabled = !isBusy,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.2.dp, qrAccent.copy(alpha = 0.65f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = qrAccent),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp),
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .testTag("insights_quick_export_qr")
+            ) {
+                if (exportingFormat == ReportExportFormat.QR_PNG) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = qrAccent
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Filled.QrCode2,
+                        contentDescription = reportCopy.qrSectionTitle,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "QR",
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = JetBrainsMonoFamily
                     ),
                     maxLines = 1,
                     softWrap = false
@@ -368,14 +455,24 @@ fun MonthlyReportExportSheet(
     strings: AppStrings,
     exportingFormat: ReportExportFormat?,
     onExport: (ReportExportFormat) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    selectedPeriodType: ReportPeriodType = payload.periodType,
+    onSelectPeriodType: (ReportPeriodType) -> Unit = {}
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val crystal = LocalCrystalColors.current
     val primary = MaterialTheme.colorScheme.primary
     val exp = strings.reportExport
     val lang = payload.language
+    val reportCopy = ReportLocalizedStrings.forLanguage(lang)
     val isBusy = exportingFormat != null
+
+    val qrBitmap = remember(payload.qrPayload) {
+        QrCodeBitmapGenerator.generateQrBitmap(
+            content = payload.qrPayload,
+            sizePx = 320
+        ).asImageBitmap()
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -387,6 +484,7 @@ fun MonthlyReportExportSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 6.dp)
                 .testTag("insights_export_sheet"),
             verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -399,7 +497,7 @@ fun MonthlyReportExportSheet(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = exp.sheetTitle,
+                        text = reportCopy.reportTitleFor(selectedPeriodType),
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Bold,
                             fontFamily = HindSiliguriFamily
@@ -407,7 +505,7 @@ fun MonthlyReportExportSheet(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = exp.sheetSubtitle,
+                        text = "${payload.language.nativeName} • ${payload.periodLabel}",
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = HindSiliguriFamily
                         ),
@@ -428,7 +526,40 @@ fun MonthlyReportExportSheet(
                 }
             }
 
-            // Month Financial Preview Card
+            // Daily / Weekly / Monthly Period Switcher inside Sheet
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ReportPeriodType.entries.forEach { period ->
+                    val selected = period == selectedPeriodType
+                    FilterChip(
+                        selected = selected,
+                        onClick = { onSelectPeriodType(period) },
+                        label = {
+                            Text(
+                                text = reportCopy.periodTabLabel(period),
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                    fontFamily = HindSiliguriFamily
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = primary.copy(alpha = if (crystal.isDark) 0.28f else 0.16f),
+                            selectedLabelColor = primary
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 42.dp)
+                            .testTag("export_sheet_period_${period.name}")
+                    )
+                }
+            }
+
+            // Period Financial Preview Card
             Surface(
                 shape = RoundedCornerShape(18.dp),
                 color = if (crystal.isDark) Color(0xFF172235) else Color(0xFFF1F6FD),
@@ -456,13 +587,13 @@ fun MonthlyReportExportSheet(
                             ),
                             color = primary
                         )
-                        val countStr = if (lang == AppLanguage.BN) {
+                        val countStr = if (lang.isBangla) {
                             BdtFormatter.toBanglaDigits(payload.transactions.size.toString())
                         } else {
                             payload.transactions.size.toString()
                         }
                         Text(
-                            text = "$countStr ${exp.transactionsCountSuffix}",
+                            text = "$countStr ${reportCopy.txCountSuffix}",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontFamily = HindSiliguriFamily,
                                 fontWeight = FontWeight.SemiBold
@@ -478,19 +609,19 @@ fun MonthlyReportExportSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         SheetMetricColumn(
-                            label = strings.incomeLabel,
+                            label = reportCopy.totalIncomeLabel,
                             value = BdtFormatter.formatCurrency(payload.totalIncome, payload.mainCurrencyCode, lang),
                             valueColor = crystal.assetGreen,
                             modifier = Modifier.weight(1f)
                         )
                         SheetMetricColumn(
-                            label = strings.expenseLabel,
+                            label = reportCopy.totalExpenseLabel,
                             value = BdtFormatter.formatCurrency(payload.totalExpense, payload.mainCurrencyCode, lang),
                             valueColor = crystal.liabilityRed,
                             modifier = Modifier.weight(1f)
                         )
                         SheetMetricColumn(
-                            label = strings.netFlowLabel,
+                            label = reportCopy.netFlowLabel,
                             value = BdtFormatter.formatCurrency(payload.netFlow, payload.mainCurrencyCode, lang, includeSign = true),
                             valueColor = if (payload.netFlow >= 0) crystal.assetGreen else crystal.liabilityRed,
                             modifier = Modifier.weight(1f)
@@ -507,11 +638,7 @@ fun MonthlyReportExportSheet(
                                 val incStr = BdtFormatter.formatCurrency(cur.income, cur.currencyCode, lang)
                                 val expStr = BdtFormatter.formatCurrency(cur.expense, cur.currencyCode, lang)
                                 val trfStr = BdtFormatter.formatCurrency(cur.transferOut, cur.currencyCode, lang)
-                                val lineText = if (lang == AppLanguage.BN) {
-                                    "$curBadge • আয় $incStr | ব্যয় $expStr | ট্রান্সফার $trfStr"
-                                } else {
-                                    "$curBadge • Inc $incStr | Exp $expStr | Trf $trfStr"
-                                }
+                                val lineText = "$curBadge • ${reportCopy.totalIncomeLabel}: $incStr | ${reportCopy.totalExpenseLabel}: $expStr | ${reportCopy.transferShortLabel}: $trfStr"
                                 Text(
                                     text = lineText,
                                     style = MaterialTheme.typography.labelSmall.copy(
@@ -526,9 +653,100 @@ fun MonthlyReportExportSheet(
                 }
             }
 
-            // PDF Option Tile
+            // Live Scannable Verification QR Code Preview Card
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = if (crystal.isDark) Color(0xFF152033) else Color.White,
+                border = BorderStroke(1.dp, primary.copy(alpha = if (crystal.isDark) 0.36f else 0.24f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("export_receipt_qr_preview")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color.White,
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        modifier = Modifier.size(96.dp)
+                    ) {
+                        Image(
+                            bitmap = qrBitmap,
+                            contentDescription = reportCopy.qrSectionTitle,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(96.dp)
+                                .padding(6.dp)
+                        )
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = reportCopy.qrSectionTitle,
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = HindSiliguriFamily
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = reportCopy.qrScanCaption,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = HindSiliguriFamily
+                            ),
+                            color = crystal.mutedText,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = primary.copy(alpha = if (crystal.isDark) 0.24f else 0.12f)
+                            ) {
+                                Text(
+                                    text = "${reportCopy.qrVerifyCodeLabel}: ${payload.verificationId}",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = JetBrainsMonoFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp
+                                    ),
+                                    color = primary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                            Surface(
+                                shape = CircleShape,
+                                color = crystal.assetGreen.copy(alpha = if (crystal.isDark) 0.22f else 0.12f)
+                            ) {
+                                Text(
+                                    text = lang.nativeName,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = HindSiliguriFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 10.sp
+                                    ),
+                                    color = crystal.assetGreen,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // PDF Option Tile (with embedded QR code)
             ExportFormatOptionTile(
-                title = exp.pdfOptionTitle,
+                title = "${reportCopy.reportTitleFor(selectedPeriodType)} (PDF + QR)",
                 subtitle = if (exportingFormat == ReportExportFormat.PDF) exp.exportingPdfLabel else exp.pdfOptionSubtitle,
                 badgeText = "PDF",
                 icon = Icons.Filled.PictureAsPdf,
@@ -537,6 +755,19 @@ fun MonthlyReportExportSheet(
                 enabled = !isBusy,
                 testTagName = "export_pdf_option",
                 onClick = { onExport(ReportExportFormat.PDF) }
+            )
+
+            // Scannable Verification QR Receipt PNG Option Tile
+            ExportFormatOptionTile(
+                title = reportCopy.qrShareOptionTitle,
+                subtitle = reportCopy.qrShareOptionSubtitle,
+                badgeText = "QR PNG",
+                icon = Icons.Filled.QrCode2,
+                accentColor = primary,
+                isLoading = exportingFormat == ReportExportFormat.QR_PNG,
+                enabled = !isBusy,
+                testTagName = "export_qr_option",
+                onClick = { onExport(ReportExportFormat.QR_PNG) }
             )
 
             // CSV Option Tile

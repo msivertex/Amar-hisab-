@@ -10,6 +10,7 @@ import com.example.data.local.TransactionEntity
 import com.example.data.local.UserPreferencesRepository
 import com.example.data.local.UserPrefs
 import com.example.data.model.AccountType
+import com.example.data.model.BuiltInCategoriesCatalog
 import com.example.data.model.ExpenseCategory
 import com.example.data.model.LoanType
 import com.example.data.model.StartOfWeek
@@ -46,6 +47,8 @@ object BackupManager {
                 put("mainCurrencyCode", prefs.mainCurrencyCode)
                 put("secondaryCurrencyCode", prefs.secondaryCurrencyCode)
                 put("userCountryCode", prefs.userCountryCode)
+                put("managedCategoriesJson", BuiltInCategoriesCatalog.encodeOverridesToJson(prefs.managedCategoryOverrides))
+                put("deletedCategoryIds", prefs.deletedCategoryIds.joinToString(","))
             })
 
             put("accounts", JSONArray().apply {
@@ -265,9 +268,7 @@ object BackupManager {
                 userName = p.optString("userName", ""),
                 monthlyBudget = p.optDouble("monthlyBudget", 0.0)
             )
-            prefsRepo.setLanguage(
-                if (p.optString("language") == AppLanguage.BN.code) AppLanguage.BN else AppLanguage.EN
-            )
+            prefsRepo.setLanguage(AppLanguage.fromCode(p.optString("language")))
             prefsRepo.setDarkTheme(p.optBoolean("isDarkTheme", false))
             prefsRepo.setEnableSubcategories(p.optBoolean("enableSubcategories", true))
             prefsRepo.setHapticFeedback(p.optBoolean("hapticFeedbackEnabled", true))
@@ -280,6 +281,16 @@ object BackupManager {
             prefsRepo.setSecondaryCurrency(secCur)
             val countryCode = p.optString("userCountryCode", "")
             if (countryCode.isNotBlank()) prefsRepo.setUserCountryCode(countryCode)
+            if (p.has("managedCategoriesJson") || p.has("deletedCategoryIds")) {
+                val restoredOverrides = BuiltInCategoriesCatalog.decodeOverridesFromJson(
+                    p.optString("managedCategoriesJson", "")
+                )
+                val restoredDeleted = p.optString("deletedCategoryIds", "")
+                    .split(",")
+                    .filter { it.isNotBlank() }
+                    .toSet()
+                prefsRepo.restoreManagedCategories(restoredOverrides, restoredDeleted)
+            }
         }
 
         return txList.size

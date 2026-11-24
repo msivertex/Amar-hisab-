@@ -271,7 +271,7 @@ class NotificationSystemRobolectricTest {
         )
         assertTrue(duplicateCheck.isEmpty())
 
-        // 4. Multi-currency KWD loan due reminder formats cleanly with KD label
+        // 4. Multi-currency KWD loan due reminder formats cleanly with KWD د.ك label & 3 decimals
         val kwdLoan = LoanEntity(
             id = 99L,
             personName = "Imran",
@@ -288,7 +288,10 @@ class NotificationSystemRobolectricTest {
             nowMillis = now
         )
         assertEquals(NotificationActionRoute.OPEN_PLAN_LOANS, loanLog.route)
-        assertTrue("Expected KD formatted amount in '${loanLog.body}'", loanLog.body.contains("KD"))
+        assertTrue(
+            "Expected KWD د.ك 3-decimal formatted amount in '${loanLog.body}'",
+            loanLog.body.contains("KWD د.ك")
+        )
 
         // JSON codec round-trip for in-app notification history
         val encoded = NotificationLogItem.encodeListToJson(triggered + loanLog)

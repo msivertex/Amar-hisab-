@@ -34,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -49,15 +50,19 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.core.CalculatorEngine
+import com.example.data.ai.UnifiedCategoryDetector
 import com.example.data.local.AccountEntity
 import com.example.data.market.MarketSnapshot
 import com.example.data.model.AccountNameResolver
 import com.example.data.model.AppCurrency
+import com.example.data.model.BuiltInCategoriesCatalog
 import com.example.data.model.ExpenseCategory
+import com.example.data.model.ManagedCategoryItem
 import com.example.data.model.TransactionType
 import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
+import com.example.ui.components.UnifiedCategoryPickerSection
 import com.example.ui.theme.JetBrainsMonoFamily
 import com.example.ui.theme.LocalCrystalColors
 import java.text.SimpleDateFormat
@@ -103,27 +108,101 @@ fun SmartTransactionModal(
         note: String,
         timestamp: Long,
         customConversionRate: Double?
-    ) -> Unit)? = null
+    ) -> Unit)? = null,
+    managedCategoryOverrides: List<ManagedCategoryItem> = emptyList(),
+    deletedCategoryIds: Set<String> = emptySet(),
+    onAddCustomCategory: ((ManagedCategoryItem) -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val crystal = LocalCrystalColors.current
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
 
+    val mergedExpenseCategories = remember(managedCategoryOverrides, deletedCategoryIds) {
+        BuiltInCategoriesCatalog.mergedFor(TransactionType.EXPENSE, managedCategoryOverrides, deletedCategoryIds)
+    }
+    val mergedIncomeCategories = remember(managedCategoryOverrides, deletedCategoryIds) {
+        BuiltInCategoriesCatalog.mergedFor(TransactionType.INCOME, managedCategoryOverrides, deletedCategoryIds)
+    }
+    val mergedAllCategories = remember(managedCategoryOverrides, deletedCategoryIds) {
+        BuiltInCategoriesCatalog.mergedAll(managedCategoryOverrides, deletedCategoryIds)
+    }
+
     var mode by remember { mutableStateOf(initialMode) }
     var expression by remember { mutableStateOf("") }
     var keypadVisible by remember { mutableStateOf(autoOpenKeypad) }
     var title by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
-    var selectedCategory by remember {
+    var hasManualTypeOverride by remember { mutableStateOf(false) }
+    var hasManualCategoryOverride by remember { mutableStateOf(false) }
+    var isCategoryAutoDetected by remember { mutableStateOf(false) }
+
+    var selectedManagedCategoryId by remember {
         mutableStateOf(
-            if (initialMode == TransactionType.INCOME) ExpenseCategory.SALARY_INCOME
-            else ExpenseCategory.FOOD_DINING
+            when (initialMode) {
+                TransactionType.INCOME -> mergedIncomeCategories.firstOrNull()?.id ?: "inc_salary"
+                TransactionType.TRANSFER -> "trf_wallet"
+                TransactionType.EXPENSE -> mergedExpenseCategories.firstOrNull()?.id ?: "exp_food_dining"
+            }
         )
     }
-    var selectedSubcategory by remember(selectedCategory) {
-        mutableStateOf(selectedCategory.subcategories().firstOrNull()?.key.orEmpty())
+    var selectedCategory by remember {
+        mutableStateOf(
+            when (initialMode) {
+                TransactionType.INCOME -> ExpenseCategory.SALARY_INCOME
+                TransactionType.TRANSFER -> ExpenseCategory.TRANSFER
+                TransactionType.EXPENSE -> ExpenseCategory.FOOD_DINING
+            }
+        )
     }
+    val activeManagedCategories = remember(mode, mergedExpenseCategories, mergedIncomeCategories) {
+        when (mode) {
+            TransactionType.INCOME -> mergedIncomeCategories
+            TransactionType.EXPENSE -> mergedExpenseCategories
+            TransactionType.TRANSFER -> BuiltInCategoriesCatalog.defaultsFor(TransactionType.TRANSFER)
+        }
+    }
+    val selectedManagedCategory = remember(selectedManagedCategoryId, activeManagedCategories) {
+        activeManagedCategories.firstOrNull { it.id == selectedManagedCategoryId }
+            ?: activeManagedCategories.firstOrNull()
+    }
+    var selectedSubcategory by remember(selectedManagedCategory?.id) {
+        mutableStateOf(selectedManagedCategory?.subcategories?.firstOrNull()?.key.orEmpty())
+    }
+
+    // Unified live category & type detection as user types title/note (unless manually overridden)
+    LaunchedEffect(title, note, mergedAllCategories) {
+        val combined = "$title $note".trim()
+        if (combined.length < 2) {
+            isCategoryAutoDetected = false
+            return@LaunchedEffect
+        }
+        val effectiveMode = if (!hasManualTypeOverride) {
+            val detectedType = UnifiedCategoryDetector.detectTransactionType(combined, mode)
+            if (detectedType != mode) {
+                mode = detectedType
+            }
+            detectedType
+        } else {
+            mode
+        }
+        if (!hasManualCategoryOverride && effectiveMode != TransactionType.TRANSFER) {
+            val detected = UnifiedCategoryDetector.detectCategory(
+                text = combined,
+                type = effectiveMode,
+                managedCategories = mergedAllCategories,
+                language = language
+            )
+            val isSpecificMatch = detected.isExactCustomMatch ||
+                (detected.managedCategory.id != "exp_other" && detected.managedCategory.id != "inc_other")
+            if (isSpecificMatch) {
+                selectedManagedCategoryId = detected.managedCategory.id
+                selectedCategory = detected.legacyCategory
+                isCategoryAutoDetected = true
+            }
+        }
+    }
+
     val resolvedDefaultId = remember(accounts, defaultAccountId) {
         accounts.firstOrNull { it.id == defaultAccountId }?.id ?: accounts.firstOrNull()?.id ?: 0L
     }
@@ -158,16 +237,6 @@ fun SmartTransactionModal(
     }
     val effectiveTransferRate = customRateText.toDoubleOrNull()?.takeIf { it > 0.0 && it.isFinite() }
         ?: marketTransferRate
-
-    val availableCategories = remember(mode) {
-        when (mode) {
-            TransactionType.INCOME -> listOf(ExpenseCategory.SALARY_INCOME, ExpenseCategory.OTHER)
-            TransactionType.EXPENSE -> ExpenseCategory.entries.filter {
-                it != ExpenseCategory.SALARY_INCOME && it != ExpenseCategory.TRANSFER
-            }
-            TransactionType.TRANSFER -> listOf(ExpenseCategory.TRANSFER)
-        }
-    }
 
     fun triggerHaptic() {
         if (hapticEnabled) {
@@ -250,11 +319,28 @@ fun SmartTransactionModal(
                         selected = mode == m,
                         onClick = {
                             triggerHaptic()
+                            hasManualTypeOverride = true
+                            hasManualCategoryOverride = false
+                            isCategoryAutoDetected = false
                             mode = m
-                            selectedCategory = when (m) {
-                                TransactionType.INCOME -> ExpenseCategory.SALARY_INCOME
-                                TransactionType.TRANSFER -> ExpenseCategory.TRANSFER
-                                TransactionType.EXPENSE -> ExpenseCategory.FOOD_DINING
+                            val defaultManaged = when (m) {
+                                TransactionType.INCOME -> mergedIncomeCategories.firstOrNull()
+                                TransactionType.TRANSFER -> BuiltInCategoriesCatalog.defaultsFor(TransactionType.TRANSFER).firstOrNull()
+                                TransactionType.EXPENSE -> mergedExpenseCategories.firstOrNull()
+                            }
+                            if (defaultManaged != null) {
+                                selectedManagedCategoryId = defaultManaged.id
+                                selectedCategory = defaultManaged.legacyCategory ?: when (m) {
+                                    TransactionType.INCOME -> ExpenseCategory.SALARY_INCOME
+                                    TransactionType.TRANSFER -> ExpenseCategory.TRANSFER
+                                    TransactionType.EXPENSE -> ExpenseCategory.FOOD_DINING
+                                }
+                            } else {
+                                selectedCategory = when (m) {
+                                    TransactionType.INCOME -> ExpenseCategory.SALARY_INCOME
+                                    TransactionType.TRANSFER -> ExpenseCategory.TRANSFER
+                                    TransactionType.EXPENSE -> ExpenseCategory.FOOD_DINING
+                                }
                             }
                         },
                         label = { Text(label) },
@@ -473,24 +559,30 @@ fun SmartTransactionModal(
                     }
                 }
 
-                Text(text = strings.categoryLabel, style = MaterialTheme.typography.labelLarge)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    availableCategories.forEach { cat ->
-                        FilterChip(
-                            selected = selectedCategory == cat,
-                            onClick = { selectedCategory = cat },
-                            label = { Text(cat.label(language)) }
-                        )
-                    }
-                }
+                UnifiedCategoryPickerSection(
+                    transactionType = mode,
+                    categories = activeManagedCategories,
+                    selectedCategoryId = selectedManagedCategory?.id.orEmpty(),
+                    language = language,
+                    label = strings.categoryLabel,
+                    testTagPrefix = "smart_tx",
+                    autoDetectedBadge = isCategoryAutoDetected,
+                    onSelectCategory = { picked ->
+                        triggerHaptic()
+                        hasManualCategoryOverride = true
+                        isCategoryAutoDetected = false
+                        selectedManagedCategoryId = picked.id
+                        selectedCategory = picked.legacyCategory ?: if (mode == TransactionType.INCOME) {
+                            ExpenseCategory.SALARY_INCOME
+                        } else {
+                            ExpenseCategory.OTHER
+                        }
+                    },
+                    onAddCustomCategory = onAddCustomCategory
+                )
 
                 if (enableSubcategories) {
-                    val subs = selectedCategory.subcategories()
+                    val subs = selectedManagedCategory?.subcategories.orEmpty()
                     if (subs.isNotEmpty()) {
                         Text(text = strings.subcategoryLabel, style = MaterialTheme.typography.labelLarge)
                         Row(
@@ -596,8 +688,15 @@ fun SmartTransactionModal(
                             onExecuteTransfer(selectedAccountId, toAccountId, evaluatedAmount, note, selectedTimestamp)
                         }
                     } else {
+                        val managedLabel = selectedManagedCategory?.label(language).orEmpty()
+                        val finalSubcat = when {
+                            selectedManagedCategory != null && !selectedManagedCategory.isBuiltIn -> managedLabel
+                            enableSubcategories && selectedSubcategory.isNotBlank() -> selectedSubcategory
+                            else -> managedLabel
+                        }
                         val finalTitle = title.ifBlank {
-                            if (enableSubcategories && selectedSubcategory.isNotBlank()) selectedSubcategory
+                            if (managedLabel.isNotBlank()) managedLabel
+                            else if (enableSubcategories && selectedSubcategory.isNotBlank()) selectedSubcategory
                             else selectedCategory.label(language)
                         }
                         onSaveExpenseOrIncome(
@@ -605,7 +704,7 @@ fun SmartTransactionModal(
                             evaluatedAmount,
                             mode,
                             selectedCategory,
-                            if (enableSubcategories) selectedSubcategory else "",
+                            finalSubcat,
                             selectedAccountId,
                             note,
                             selectedTimestamp

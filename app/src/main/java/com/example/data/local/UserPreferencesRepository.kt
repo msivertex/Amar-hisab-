@@ -165,7 +165,7 @@ class UserPreferencesRepository(private val context: Context) {
 
     val userPrefs: Flow<UserPrefs> = context.dataStore.data.map { prefs ->
         val langCode = prefs[Keys.LANGUAGE] ?: AppLanguage.EN.code
-        val lang = if (langCode == AppLanguage.BN.code) AppLanguage.BN else AppLanguage.EN
+        val lang = AppLanguage.fromCode(langCode)
 
         val startOfWeek = prefs[Keys.START_OF_WEEK]?.let { name ->
             runCatching { StartOfWeek.valueOf(name) }.getOrNull()
@@ -632,6 +632,16 @@ class UserPreferencesRepository(private val context: Context) {
                 deleted.add(categoryId)
                 prefs[Keys.DELETED_CATEGORY_IDS] = deleted.joinToString(",")
             }
+        }
+    }
+
+    suspend fun restoreManagedCategories(
+        overrides: List<ManagedCategoryItem>,
+        deletedIds: Set<String>
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.MANAGED_CATEGORIES_JSON] = BuiltInCategoriesCatalog.encodeOverridesToJson(overrides)
+            prefs[Keys.DELETED_CATEGORY_IDS] = deletedIds.filter { it.isNotBlank() }.joinToString(",")
         }
     }
 

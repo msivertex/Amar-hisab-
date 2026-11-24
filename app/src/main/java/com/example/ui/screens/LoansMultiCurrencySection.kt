@@ -114,7 +114,7 @@ object LoanCurrencyAggregator {
         val orderedCurrencies = linkedSetOf<AppCurrency>().apply {
             if (secondaryCur != null) add(secondaryCur)
             add(mainCur)
-            grouped.keys.sortedBy { it.ordinal }.forEach { add(it) }
+            grouped.keys.sortedBy { it.code }.forEach { add(it) }
         }
 
         val summaries = orderedCurrencies.map { cur ->
@@ -600,9 +600,9 @@ fun LoanEditorDialog(
         AppCurrencyPickerSheet(
             title = if (isBn) "দেনা-পাওনার মুদ্রা বাছাই করুন" else "Select Due / Loan Currency",
             subtitle = if (isBn) {
-                "KD, SAR, AED, BDT বা অন্য যেকোনো মুদ্রা নির্বাচন করুন"
+                "KWD, SAR, AED, BDT বা অন্য যেকোনো মুদ্রা নির্বাচন করুন"
             } else {
-                "Pick KD, SAR, AED, BDT, or any supported currency"
+                "Pick KWD, SAR, AED, BDT, or any supported currency"
             },
             selectedCurrency = selectedCurrency,
             language = language,
@@ -987,10 +987,10 @@ fun LoanSettlementDialog(
                 }
 
                 if (chosenWallet != null && !chosenWallet.currencyCode.equals(loan.currencyCode, ignoreCase = true) && effectiveAmount > 0.0) {
-                    val converted = marketSnapshot.convert(
+                    val converted = marketSnapshot.convertCurrencyCode(
                         amount = effectiveAmount,
-                        from = loanCurrency.toMarketCurrency(),
-                        to = AppCurrency.fromCode(chosenWallet.currencyCode).toMarketCurrency()
+                        fromCode = loan.currencyCode,
+                        toCode = chosenWallet.currencyCode
                     )
                     val targetFormatted = formatLoanCurrencyAmount(converted, chosenWallet.currencyCode, language)
                     Surface(
@@ -1047,7 +1047,7 @@ internal fun formatLoanCurrencyAmount(
         val frac = formattedUs.substring(dot + 1)
         val wholeFormatted = BdtFormatter.formatAmountOnly(whole.toDouble(), "BDT", language, includeSign = false)
         val fracLocalized = if (language == AppLanguage.BN) BdtFormatter.toBanglaDigits(frac) else frac
-        return "$sign${currency.symbol} $wholeFormatted.$fracLocalized"
+        return "$sign${currency.code} ${currency.symbol} $wholeFormatted.$fracLocalized"
     }
     return BdtFormatter.formatCurrency(amount, currencyCode, language)
 }

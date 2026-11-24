@@ -39,7 +39,8 @@ enum class ReportExportFormat(
     val mimeType: String
 ) {
     PDF("pdf", "application/pdf"),
-    CSV("csv", "text/csv")
+    CSV("csv", "text/csv"),
+    QR_PNG("png", "image/png")
 }
 
 data class CurrencyMonthlyTotals(
@@ -71,7 +72,10 @@ data class MonthlyReportPayload(
     val wallets: List<AccountEntity>,
     val mainCurrencyCode: String = AppCurrency.BDT.code,
     val perCurrencyTotals: List<CurrencyMonthlyTotals> = emptyList(),
-    val marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
+    val marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference(),
+    val periodType: ReportPeriodType = ReportPeriodType.MONTHLY,
+    val verificationId: String = "",
+    val qrPayload: String = ""
 )
 
 data class ExportSharePayload(
@@ -95,12 +99,21 @@ object MonthlyReportExporter {
         state: MainUiState,
         nowMillis: Long = System.currentTimeMillis(),
         marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
+    ): MonthlyReportPayload = buildReportPayload(
+        state = state,
+        periodType = ReportPeriodType.MONTHLY,
+        nowMillis = nowMillis,
+        marketSnapshot = marketSnapshot
+    )
+
+    fun buildReportPayload(
+        state: MainUiState,
+        periodType: ReportPeriodType = ReportPeriodType.MONTHLY,
+        nowMillis: Long = System.currentTimeMillis(),
+        marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
     ): MonthlyReportPayload {
-        val monthOffset = if (state.insightFilter == InsightTimeFilter.LAST_MONTH) {
-            -1
-        } else {
-            state.insightMonthOffset
-        }
+        val lang = state.prefs.language
+        val locale = Locale.forLanguageTag(lang.localeTag)
 
         val startCal = Calendar.getInstance().apply {
             timeInMillis = nowMillis
@@ -108,20 +121,66 @@ object MonthlyReportExporter {
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
-            add(Calendar.MONTH, monthOffset)
-            set(Calendar.DAY_OF_MONTH, 1)
         }
-        val endCal = Calendar.getInstance().apply {
-            timeInMillis = startCal.timeInMillis
-            add(Calendar.MONTH, 1)
-        }
-        val prevStartCal = Calendar.getInstance().apply {
-            timeInMillis = startCal.timeInMillis
-            add(Calendar.MONTH, -1)
-        }
+        val endCal = Calendar.getInstance()
+        val prevStartCal = Calendar.getInstance()
 
-        val periodLabel = SimpleDateFormat("MMMM yyyy", Locale.ENGLISH).format(startCal.time)
-        val fileSlug = SimpleDateFormat("yyyy_MM", Locale.US).format(startCal.time)
+        val periodLabel: String
+        val fileSlug: String
+
+        when (periodType) {
+            ReportPeriodType.DAILY -> {
+                endCal.timeInMillis = startCal.timeInMillis
+                endCal.add(Calendar.DAY_OF_YEAR, 1)
+                prevStartCal.timeInMillis = startCal.timeInMillis
+                prevStartCal.add(Calendar.DAY_OF_YEAR, -1)
+                val rawDate = SimpleDateFormat("dd MMM yyyy", locale).format(startCal.time)
+                periodLabel = if (lang.isBangla) BdtFormatter.toBanglaDigits(rawDate) else rawDate
+                fileSlug = SimpleDateFormat("yyyy_MM_dd", Locale.US).format(startCal.time)
+            }
+            ReportPeriodType.WEEKLY -> {
+                val targetStartDow = when (state.prefs.startOfWeek) {
+                    com.example.data.model.StartOfWeek.SATURDAY -> Calendar.SATURDAY
+                    com.example.data.model.StartOfWeek.SUNDAY -> Calendar.SUNDAY
+                    com.example.data.model.StartOfWeek.MONDAY -> Calendar.MONDAY
+                    com.example.data.model.StartOfWeek.TUESDAY -> Calendar.TUESDAY
+                    com.example.data.model.StartOfWeek.WEDNESDAY -> Calendar.WEDNESDAY
+                    com.example.data.model.StartOfWeek.THURSDAY -> Calendar.THURSDAY
+                    com.example.data.model.StartOfWeek.FRIDAY -> Calendar.FRIDAY
+                }
+                while (startCal.get(Calendar.DAY_OF_WEEK) != targetStartDow) {
+                    startCal.add(Calendar.DAY_OF_YEAR, -1)
+                }
+                endCal.timeInMillis = startCal.timeInMillis
+                endCal.add(Calendar.DAY_OF_YEAR, 7)
+                prevStartCal.timeInMillis = startCal.timeInMillis
+                prevStartCal.add(Calendar.DAY_OF_YEAR, -7)
+                val endInclusive = Calendar.getInstance().apply {
+                    timeInMillis = endCal.timeInMillis - 1L
+                }
+                val startStr = SimpleDateFormat("dd MMM", locale).format(startCal.time)
+                val endStr = SimpleDateFormat("dd MMM yyyy", locale).format(endInclusive.time)
+                val rawRange = "$startStr – $endStr"
+                periodLabel = if (lang.isBangla) BdtFormatter.toBanglaDigits(rawRange) else rawRange
+                fileSlug = "week_${SimpleDateFormat("yyyy_MM_dd", Locale.US).format(startCal.time)}"
+            }
+            ReportPeriodType.MONTHLY -> {
+                val monthOffset = if (state.insightFilter == InsightTimeFilter.LAST_MONTH) {
+                    -1
+                } else {
+                    state.insightMonthOffset
+                }
+                startCal.add(Calendar.MONTH, monthOffset)
+                startCal.set(Calendar.DAY_OF_MONTH, 1)
+                endCal.timeInMillis = startCal.timeInMillis
+                endCal.add(Calendar.MONTH, 1)
+                prevStartCal.timeInMillis = startCal.timeInMillis
+                prevStartCal.add(Calendar.MONTH, -1)
+                val rawMonth = SimpleDateFormat("MMMM yyyy", locale).format(startCal.time)
+                periodLabel = if (lang.isBangla) BdtFormatter.toBanglaDigits(rawMonth) else rawMonth
+                fileSlug = SimpleDateFormat("yyyy_MM", Locale.US).format(startCal.time)
+            }
+        }
         val mainCurCode = AppCurrency.fromCode(state.prefs.mainCurrencyCode).code
 
         val monthTx = state.transactions
@@ -165,14 +224,19 @@ object MonthlyReportExporter {
                     .thenBy { it.currencyCode }
             )
 
-        val daysInMonth = startCal.getActualMaximum(Calendar.DAY_OF_MONTH).coerceAtLeast(1)
-        val nowCal = Calendar.getInstance().apply { timeInMillis = nowMillis }
-        val isCurrentMonth = startCal.get(Calendar.YEAR) == nowCal.get(Calendar.YEAR) &&
-            startCal.get(Calendar.MONTH) == nowCal.get(Calendar.MONTH)
-        val elapsedDays = if (isCurrentMonth) {
-            nowCal.get(Calendar.DAY_OF_MONTH).coerceIn(1, daysInMonth)
-        } else {
-            daysInMonth
+        val elapsedDays = when (periodType) {
+            ReportPeriodType.DAILY -> 1
+            ReportPeriodType.WEEKLY -> {
+                val elapsed = (((nowMillis - startCal.timeInMillis) / (24L * 60L * 60L * 1000L)).toInt() + 1)
+                elapsed.coerceIn(1, 7)
+            }
+            ReportPeriodType.MONTHLY -> {
+                val daysInMonth = startCal.getActualMaximum(Calendar.DAY_OF_MONTH).coerceAtLeast(1)
+                val nowCal = Calendar.getInstance().apply { timeInMillis = nowMillis }
+                val isCurrentMonth = startCal.get(Calendar.YEAR) == nowCal.get(Calendar.YEAR) &&
+                    startCal.get(Calendar.MONTH) == nowCal.get(Calendar.MONTH)
+                if (isCurrentMonth) nowCal.get(Calendar.DAY_OF_MONTH).coerceIn(1, daysInMonth) else daysInMonth
+            }
         }
         val dailyAverage = if (totalExpense > 0.0) totalExpense / elapsedDays else 0.0
 
@@ -208,18 +272,26 @@ object MonthlyReportExporter {
             .sortedByDescending { it.amount }
 
         val accountNames = state.accounts.associate { acc ->
-            acc.id to AccountNameResolver.resolveAccountName(acc, state.prefs.language)
+            acc.id to AccountNameResolver.resolveAccountName(acc, lang)
         }
         val effectiveUser = state.prefs.userName.ifBlank {
-            if (state.prefs.language == AppLanguage.BN) "গেস্ট ইউজার" else "Guest"
+            if (lang.isBangla) "গেস্ট ইউজার" else "Guest"
         }
 
-        return MonthlyReportPayload(
+        val periodTag = when (periodType) {
+            ReportPeriodType.DAILY -> "D"
+            ReportPeriodType.WEEKLY -> "W"
+            ReportPeriodType.MONTHLY -> "M"
+        }
+        val checksum = abs((fileSlug + "|" + monthTx.size + "|" + totalIncome.toLong() + "|" + totalExpense.toLong()).hashCode()) % 100_000
+        val verificationId = "AH-$periodTag-${fileSlug.replace("_", "")}-${String.format(Locale.US, "%05d", checksum)}"
+
+        val draftPayload = MonthlyReportPayload(
             periodLabel = periodLabel,
             fileSlug = fileSlug,
             generatedAtMillis = nowMillis,
             userName = effectiveUser,
-            language = state.prefs.language,
+            language = lang,
             totalIncome = totalIncome,
             totalExpense = totalExpense,
             netFlow = totalIncome - totalExpense,
@@ -234,19 +306,78 @@ object MonthlyReportExporter {
             wallets = state.accounts,
             mainCurrencyCode = mainCurCode,
             perCurrencyTotals = perCurrencyTotals,
-            marketSnapshot = marketSnapshot
+            marketSnapshot = marketSnapshot,
+            periodType = periodType,
+            verificationId = verificationId
         )
+
+        return draftPayload.copy(qrPayload = buildQrPayload(draftPayload))
+    }
+
+    /**
+     * Builds a clean, scannable UTF-8 QR verification payload localized in the active app language.
+     */
+    fun buildQrPayload(payload: MonthlyReportPayload): String {
+        val lang = payload.language
+        val copy = ReportLocalizedStrings.forLanguage(lang)
+        val inc = BdtFormatter.formatCurrency(payload.totalIncome, payload.mainCurrencyCode, lang)
+        val exp = BdtFormatter.formatCurrency(payload.totalExpense, payload.mainCurrencyCode, lang)
+        val net = BdtFormatter.formatCurrency(payload.netFlow, payload.mainCurrencyCode, lang, includeSign = true)
+        val countText = if (lang.isBangla) {
+            BdtFormatter.toBanglaDigits(payload.transactions.size.toString())
+        } else {
+            payload.transactions.size.toString()
+        }
+        return buildString {
+            appendLine("${copy.brandTitle} • ${copy.reportTitleFor(payload.periodType)}")
+            appendLine("${copy.periodLabel}: ${payload.periodLabel}")
+            appendLine("${copy.accountHolderLabel}: ${payload.userName}")
+            appendLine("${copy.totalIncomeLabel}: $inc")
+            appendLine("${copy.totalExpenseLabel}: $exp")
+            appendLine("${copy.netFlowLabel}: $net")
+            appendLine("${copy.transactionsLedgerTitle}: $countText ${copy.txCountSuffix}")
+            append("${copy.qrVerifyCodeLabel}: ${payload.verificationId} [${lang.code}]")
+        }
+    }
+
+    /**
+     * Builds a localized QR verification payload for an individual transaction voucher.
+     */
+    fun buildTransactionVoucherQrPayload(
+        tx: TransactionEntity,
+        walletLabel: String,
+        language: AppLanguage
+    ): String {
+        val copy = ReportLocalizedStrings.forLanguage(language)
+        val locale = Locale.forLanguageTag(language.localeTag)
+        val dateStr = SimpleDateFormat("dd MMM yyyy, hh:mm a", locale).format(Date(tx.timestamp))
+        val formattedDate = if (language.isBangla) BdtFormatter.toBanglaDigits(dateStr) else dateStr
+        val amountStr = BdtFormatter.formatCurrency(tx.amount, tx.currencyCode, language)
+        val verifyId = "AH-TX-${tx.id}-${abs((tx.timestamp xor tx.amount.toBits()).toInt()) % 100_000}"
+        val catName = if (language.isBangla) tx.category.bn else tx.category.en
+        return buildString {
+            appendLine("${copy.brandTitle} • ${copy.voucherQrTitle}")
+            appendLine("${copy.colTitleCategory}: ${tx.title} ($catName)")
+            appendLine("${copy.colAmount}: $amountStr (${tx.currencyCode})")
+            appendLine("${copy.colWallet}: $walletLabel")
+            appendLine("${copy.colDate}: $formattedDate")
+            append("${copy.qrVerifyCodeLabel}: $verifyId [${language.code}]")
+        }
     }
 
     fun generateMonthlyCsv(payload: MonthlyReportPayload): String {
+        val copy = ReportLocalizedStrings.forLanguage(payload.language)
         val dateFmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
         val accountsById = payload.wallets.associateBy { it.id }
         val sb = StringBuilder()
 
-        // Section 1: Monthly Financial Summary
+        // Section 1: Localized Financial Summary
         sb.appendLine("Section,Metric,Value")
-        sb.appendLine("Summary,App,${csvEscape("Amar Hisab (আমার হিসাব)")}")
+        sb.appendLine("Summary,App,${csvEscape(copy.brandTitle)}")
+        sb.appendLine("Summary,Report_Type,${csvEscape(copy.reportTitleFor(payload.periodType))}")
+        sb.appendLine("Summary,Language,${csvEscape("${payload.language.nativeName} (${payload.language.code})")}")
         sb.appendLine("Summary,Report_Period,${csvEscape(payload.periodLabel)}")
+        sb.appendLine("Summary,Verification_ID,${csvEscape(payload.verificationId)}")
         sb.appendLine("Summary,Account_Holder,${csvEscape(payload.userName)}")
         sb.appendLine("Summary,Main_Currency,${payload.mainCurrencyCode}")
         sb.appendLine("Summary,Generated_At,${csvEscape(dateFmt.format(Date(payload.generatedAtMillis)))}")
@@ -285,7 +416,7 @@ object MonthlyReportExporter {
             sb.appendLine("Category_Breakdown,None,0.00,0.0")
         } else {
             payload.categoryBreakdown.forEach { item ->
-                val catLabel = if (payload.language == AppLanguage.BN) {
+                val catLabel = if (payload.language.isBangla) {
                     "${item.category.bn} (${item.category.en})"
                 } else {
                     item.category.en
@@ -326,7 +457,7 @@ object MonthlyReportExporter {
                 conversionDetails = ""
                 cleanNote = tx.note
             }
-            val catName = if (payload.language == AppLanguage.BN) tx.category.bn else tx.category.en
+            val catName = if (payload.language.isBangla) tx.category.bn else tx.category.en
             sb.appendLine(
                 listOf(
                     csvEscape(dateStr),
@@ -367,14 +498,24 @@ object MonthlyReportExporter {
         payload: MonthlyReportPayload,
         outputFile: File
     ): File {
-        val isBn = payload.language == AppLanguage.BN
-        val baseTypeface = runCatching {
-            ResourcesCompat.getFont(context, R.font.hind_siliguri)
-        }.getOrNull() ?: Typeface.SANS_SERIF
+        val lang = payload.language
+        val isBn = lang.isBangla
+        val copy = ReportLocalizedStrings.forLanguage(lang)
+        val locale = Locale.forLanguageTag(lang.localeTag)
+
+        // Use Hind Siliguri for Bangla & English; use system SANS_SERIF for global scripts (Arabic, Hindi, Urdu, CJK, Cyrillic, etc.)
+        // so Android Skia PDF Canvas renders every international script cleanly without missing glyphs.
+        val baseTypeface = if (lang.isBangla || lang == AppLanguage.EN) {
+            runCatching { ResourcesCompat.getFont(context, R.font.hind_siliguri) }.getOrNull() ?: Typeface.SANS_SERIF
+        } else {
+            Typeface.SANS_SERIF
+        }
         val boldTypeface = Typeface.create(baseTypeface, Typeface.BOLD)
-        val monoTypeface = runCatching {
-            ResourcesCompat.getFont(context, R.font.jetbrains_mono)
-        }.getOrNull() ?: Typeface.MONOSPACE
+        val monoTypeface = if (lang.isBangla || lang == AppLanguage.EN) {
+            runCatching { ResourcesCompat.getFont(context, R.font.jetbrains_mono) }.getOrNull() ?: Typeface.MONOSPACE
+        } else {
+            Typeface.SANS_SERIF
+        }
 
         val document = PdfDocument()
         try {
@@ -385,32 +526,32 @@ object MonthlyReportExporter {
 
             val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
-                textSize = 18f
+                textSize = 16.5f
                 typeface = boldTypeface
             }
             val subtitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.parseColor("#DBEAFE")
-                textSize = 10.5f
+                textSize = 9.8f
                 typeface = baseTypeface
             }
             val sectionTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.parseColor("#0F172A")
-                textSize = 12.5f
+                textSize = 12f
                 typeface = boldTypeface
             }
             val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.parseColor("#1E293B")
-                textSize = 9.5f
+                textSize = 9.3f
                 typeface = baseTypeface
             }
             val mutedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.parseColor("#64748B")
-                textSize = 8.5f
+                textSize = 8.3f
                 typeface = baseTypeface
             }
             val valueBoldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.parseColor("#0F172A")
-                textSize = 11.5f
+                textSize = 11f
                 typeface = Typeface.create(monoTypeface, Typeface.BOLD)
             }
             val cardFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -427,19 +568,15 @@ object MonthlyReportExporter {
                 strokeWidth = 0.8f
             }
 
-            val generatedDateStr = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.ENGLISH)
-                .format(Date(payload.generatedAtMillis))
+            val rawGenDate = SimpleDateFormat("dd MMM yyyy, hh:mm a", locale).format(Date(payload.generatedAtMillis))
+            val generatedDateStr = if (isBn) BdtFormatter.toBanglaDigits(rawGenDate) else rawGenDate
 
             fun drawFooter(c: Canvas, pageNum: Int) {
                 val footerY = PAGE_HEIGHT - 24f
                 c.drawLine(MARGIN_X, footerY - 12f, PAGE_WIDTH - MARGIN_X, footerY - 12f, dividerPaint)
-                val leftText = if (isBn) {
-                    "আমার হিসাব • অফলাইন ব্যক্তিগত আর্থিক রিপোর্ট"
-                } else {
-                    "Amar Hisab • Offline Personal Finance Vault"
-                }
-                c.drawText(leftText, MARGIN_X, footerY, mutedPaint)
-                val rightText = if (isBn) "পৃষ্ঠা $pageNum" else "Page $pageNum"
+                val leftText = "${copy.footerText}  •  ${lang.nativeName}"
+                c.drawText(ellipsize(leftText, mutedPaint, CONTENT_WIDTH - 64f), MARGIN_X, footerY, mutedPaint)
+                val rightText = if (isBn) "পৃষ্ঠা ${BdtFormatter.toBanglaDigits(pageNum.toString())}" else "Page $pageNum"
                 val rightW = mutedPaint.measureText(rightText)
                 c.drawText(rightText, PAGE_WIDTH - MARGIN_X - rightW, footerY, mutedPaint)
             }
@@ -454,43 +591,62 @@ object MonthlyReportExporter {
 
                 val headerBar = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#0F172A") }
                 canvas.drawRect(0f, 0f, PAGE_WIDTH.toFloat(), 44f, headerBar)
-                val contTitle = if (isBn) {
-                    "আমার হিসাব • মাসিক আর্থিক সারসংক্ষেপ (${payload.periodLabel})"
-                } else {
-                    "Amar Hisab • Monthly Financial Summary (${payload.periodLabel})"
-                }
+                val contTitle = "${copy.brandTitle} • ${copy.reportTitleFor(payload.periodType)} (${payload.periodLabel})"
                 val smallWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = Color.WHITE
-                    textSize = 10.5f
+                    textSize = 10.2f
                     typeface = boldTypeface
                 }
-                canvas.drawText(contTitle, MARGIN_X, 27f, smallWhite)
+                canvas.drawText(ellipsize(contTitle, smallWhite, CONTENT_WIDTH), MARGIN_X, 27f, smallWhite)
                 return 64f
             }
 
-            // Top Branded Header Banner
+            // Top Branded Header Banner with Embedded Scannable Verification QR Code
+            val bannerHeight = 114f
             val bannerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#0F172A") }
-            canvas.drawRect(0f, 0f, PAGE_WIDTH.toFloat(), 106f, bannerPaint)
+            canvas.drawRect(0f, 0f, PAGE_WIDTH.toFloat(), bannerHeight, bannerPaint)
             val accentStripePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#0284C7") }
-            canvas.drawRect(0f, 102f, PAGE_WIDTH.toFloat(), 106f, accentStripePaint)
+            canvas.drawRect(0f, bannerHeight - 4f, PAGE_WIDTH.toFloat(), bannerHeight, accentStripePaint)
 
-            val appBannerTitle = if (isBn) "আমার হিসাব • মাসিক আর্থিক সারসংক্ষেপ" else "Amar Hisab • Monthly Financial Summary"
-            canvas.drawText(appBannerTitle, MARGIN_X, 38f, titlePaint)
-            val holderLine = if (isBn) {
-                "অ্যাকাউন্ট হোল্ডার: ${payload.userName}   •   তৈরির তারিখ: $generatedDateStr"
-            } else {
-                "Account Holder: ${payload.userName}   •   Generated: $generatedDateStr"
-            }
-            canvas.drawText(holderLine, MARGIN_X, 60f, subtitlePaint)
+            val qrBoxSize = 78f
+            val qrCardLeft = PAGE_WIDTH - MARGIN_X - qrBoxSize - 8f
+            val textMaxWidth = qrCardLeft - MARGIN_X - 14f
+
+            val appBannerTitle = "${copy.brandTitle} • ${copy.reportTitleFor(payload.periodType)}"
+            canvas.drawText(ellipsize(appBannerTitle, titlePaint, textMaxWidth), MARGIN_X, 34f, titlePaint)
+            val holderLine = "${copy.accountHolderLabel}: ${payload.userName}  •  ${copy.generatedLabel}: $generatedDateStr"
+            canvas.drawText(ellipsize(holderLine, subtitlePaint, textMaxWidth), MARGIN_X, 55f, subtitlePaint)
 
             val pillBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#1E3A5F") }
-            val periodText = if (isBn) "সময়কাল: ${payload.periodLabel}" else "Period: ${payload.periodLabel}"
-            val pillWidth = subtitlePaint.measureText(periodText) + 24f
-            val pillRect = RectF(MARGIN_X, 70f, MARGIN_X + pillWidth, 92f)
+            val periodText = "${copy.periodLabel}: ${payload.periodLabel}  •  ${lang.nativeName}"
+            val pillWidth = (subtitlePaint.measureText(periodText) + 22f).coerceAtMost(textMaxWidth)
+            val pillRect = RectF(MARGIN_X, 66f, MARGIN_X + pillWidth, 88f)
             canvas.drawRoundRect(pillRect, 11f, 11f, pillBg)
-            canvas.drawText(periodText, MARGIN_X + 12f, 84.5f, subtitlePaint)
+            canvas.drawText(ellipsize(periodText, subtitlePaint, pillWidth - 18f), MARGIN_X + 10f, 80.5f, subtitlePaint)
 
-            var y = 124f
+            val verifyLine = "${copy.qrVerifyCodeLabel}: ${payload.verificationId}  •  ${copy.qrScanCaption}"
+            val tinyBannerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#93C5FD")
+                textSize = 7.6f
+                typeface = baseTypeface
+            }
+            canvas.drawText(ellipsize(verifyLine, tinyBannerPaint, textMaxWidth), MARGIN_X, 102f, tinyBannerPaint)
+
+            // Draw crisp white QR card on right side of banner
+            val qrCardBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+            val qrCardRect = RectF(qrCardLeft, 14f, qrCardLeft + qrBoxSize + 8f, 14f + qrBoxSize + 8f)
+            canvas.drawRoundRect(qrCardRect, 8f, 8f, qrCardBg)
+            val qrContent = payload.qrPayload.ifBlank { buildQrPayload(payload) }
+            val qrBitmap = QrCodeBitmapGenerator.generateQrBitmap(qrContent, sizePx = 220)
+            canvas.drawBitmap(
+                qrBitmap,
+                null,
+                RectF(qrCardLeft + 4f, 18f, qrCardLeft + qrBoxSize + 4f, 18f + qrBoxSize),
+                null
+            )
+            qrBitmap.recycle()
+
+            var y = bannerHeight + 16f
 
             // 4 KPI Summary Cards
             val kpiGap = 10f
@@ -520,31 +676,27 @@ object MonthlyReportExporter {
 
             val kpiSpecs = listOf(
                 KpiCardSpec(
-                    label = if (isBn) "মোট আয়" else "Total Income",
-                    value = BdtFormatter.formatCurrency(payload.totalIncome, payload.mainCurrencyCode, AppLanguage.EN),
-                    sublabel = if (isBn) "সঞ্চয় হার: $savingsText" else "Savings rate: $savingsText",
+                    label = copy.totalIncomeLabel,
+                    value = BdtFormatter.formatCurrency(payload.totalIncome, payload.mainCurrencyCode, lang),
+                    sublabel = "${copy.savingsRateLabel}: $savingsText",
                     accentColor = Color.parseColor("#059669")
                 ),
                 KpiCardSpec(
-                    label = if (isBn) "মোট ব্যয়" else "Total Expense",
-                    value = BdtFormatter.formatCurrency(payload.totalExpense, payload.mainCurrencyCode, AppLanguage.EN),
+                    label = copy.totalExpenseLabel,
+                    value = BdtFormatter.formatCurrency(payload.totalExpense, payload.mainCurrencyCode, lang),
                     sublabel = deltaSub,
                     accentColor = Color.parseColor("#DC2626")
                 ),
                 KpiCardSpec(
-                    label = if (isBn) "নিট প্রবাহ" else "Net Cash Flow",
-                    value = BdtFormatter.formatCurrency(payload.netFlow, payload.mainCurrencyCode, AppLanguage.EN, includeSign = true),
-                    sublabel = if (payload.netFlow >= 0) {
-                        if (isBn) "ইতিবাচক উদ্বৃত্ত" else "Positive surplus"
-                    } else {
-                        if (isBn) "ঘাটতি প্রবাহ" else "Net deficit"
-                    },
+                    label = copy.netFlowLabel,
+                    value = BdtFormatter.formatCurrency(payload.netFlow, payload.mainCurrencyCode, lang, includeSign = true),
+                    sublabel = "${payload.transactions.size} ${copy.txCountSuffix}",
                     accentColor = if (payload.netFlow >= 0) Color.parseColor("#0284C7") else Color.parseColor("#DC2626")
                 ),
                 KpiCardSpec(
-                    label = if (isBn) "দৈনিক গড় ব্যয়" else "Daily Average",
-                    value = BdtFormatter.formatCurrency(payload.dailyAverage, payload.mainCurrencyCode, AppLanguage.EN),
-                    sublabel = if (isBn) "বাজেট ব্যবহার: $budgetPct%" else "Budget used: $budgetPct%",
+                    label = copy.dailyAverageLabel,
+                    value = BdtFormatter.formatCurrency(payload.dailyAverage, payload.mainCurrencyCode, lang),
+                    sublabel = "${copy.budgetUsedLabel}: $budgetPct%",
                     accentColor = Color.parseColor("#7C3AED")
                 )
             )
@@ -558,7 +710,7 @@ object MonthlyReportExporter {
                 val topAccent = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = spec.accentColor }
                 canvas.drawRoundRect(RectF(left + 10f, y + 8f, left + 34f, y + 11f), 2f, 2f, topAccent)
 
-                canvas.drawText(spec.label, left + 10f, y + 24f, mutedPaint)
+                canvas.drawText(ellipsize(spec.label, mutedPaint, kpiWidth - 18f), left + 10f, y + 24f, mutedPaint)
                 val valPaint = Paint(valueBoldPaint).apply {
                     color = spec.accentColor
                     textSize = 10.5f
@@ -572,19 +724,14 @@ object MonthlyReportExporter {
             val hasMultiCurrencyOrForeign = payload.perCurrencyTotals.size > 1 ||
                 payload.perCurrencyTotals.any { !it.currencyCode.equals(payload.mainCurrencyCode, ignoreCase = true) }
             if (hasMultiCurrencyOrForeign && payload.perCurrencyTotals.isNotEmpty()) {
-                val stripTitle = if (isBn) "মুদ্রাভিত্তিক প্রকৃত সারসংক্ষেপ" else "Per-Currency Activity Summary"
-                canvas.drawText(stripTitle, MARGIN_X, y + 6f, sectionTitlePaint)
+                canvas.drawText(copy.perCurrencyTitle, MARGIN_X, y + 6f, sectionTitlePaint)
                 y += 14f
                 payload.perCurrencyTotals.forEach { curSummary ->
                     val curBadge = AccountNameResolver.currencyShortLabel(curSummary.currencyCode)
-                    val incStr = BdtFormatter.formatCurrency(curSummary.income, curSummary.currencyCode, AppLanguage.EN)
-                    val expStr = BdtFormatter.formatCurrency(curSummary.expense, curSummary.currencyCode, AppLanguage.EN)
-                    val trStr = BdtFormatter.formatCurrency(curSummary.transferOut, curSummary.currencyCode, AppLanguage.EN)
-                    val summaryLine = if (isBn) {
-                        "$curBadge  •  আয়: $incStr   |   ব্যয়: $expStr   |   ট্রান্সফার: $trStr"
-                    } else {
-                        "$curBadge  •  Income: $incStr   |   Expense: $expStr   |   Transfers: $trStr"
-                    }
+                    val incStr = BdtFormatter.formatCurrency(curSummary.income, curSummary.currencyCode, lang)
+                    val expStr = BdtFormatter.formatCurrency(curSummary.expense, curSummary.currencyCode, lang)
+                    val trStr = BdtFormatter.formatCurrency(curSummary.transferOut, curSummary.currencyCode, lang)
+                    val summaryLine = "$curBadge  •  ${copy.totalIncomeLabel}: $incStr  |  ${copy.totalExpenseLabel}: $expStr  |  ${copy.transferShortLabel}: $trStr"
                     canvas.drawText(ellipsize(summaryLine, bodyPaint, CONTENT_WIDTH), MARGIN_X, y + 6f, bodyPaint)
                     y += 15f
                 }
@@ -594,15 +741,13 @@ object MonthlyReportExporter {
             }
 
             // Section 2: Category Expense Breakdown
-            val catSectionTitle = if (isBn) "খাতভিত্তিক ব্যয়ের বিভাজন" else "Expense Breakdown by Category"
-            canvas.drawText(catSectionTitle, MARGIN_X, y, sectionTitlePaint)
+            canvas.drawText(copy.categoryBreakdownTitle, MARGIN_X, y, sectionTitlePaint)
             y += 8f
             canvas.drawLine(MARGIN_X, y, PAGE_WIDTH - MARGIN_X, y, dividerPaint)
             y += 14f
 
             if (payload.categoryBreakdown.isEmpty()) {
-                val emptyCatMsg = if (isBn) "এই মাসে কোনো ব্যয়ের রেকর্ড নেই।" else "No expense records for this month."
-                canvas.drawText(emptyCatMsg, MARGIN_X, y + 4f, mutedPaint)
+                canvas.drawText(copy.noExpenseMessage, MARGIN_X, y + 4f, mutedPaint)
                 y += 22f
             } else {
                 val barTrackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#E2E8F0") }
@@ -622,7 +767,7 @@ object MonthlyReportExporter {
                     }
                     val catLabel = if (isBn) catSpend.category.bn else catSpend.category.en
                     val pctInt = (catSpend.share * 100f).toInt()
-                    val amountLabel = "${BdtFormatter.formatCurrency(catSpend.amount, payload.mainCurrencyCode, AppLanguage.EN)}  ($pctInt%)"
+                    val amountLabel = "${BdtFormatter.formatCurrency(catSpend.amount, payload.mainCurrencyCode, lang)}  ($pctInt%)"
 
                     canvas.drawText(ellipsize(catLabel, bodyPaint, 240f), MARGIN_X, y, bodyPaint)
                     val amtW = bodyPaint.measureText(amountLabel)
@@ -646,15 +791,12 @@ object MonthlyReportExporter {
 
             y += 10f
 
-            // Section 3: Monthly Transactions Ledger
+            // Section 3: Transactions Ledger
             if (y > PAGE_HEIGHT - 120f) {
                 y = startNextPage()
             }
-            val txTitle = if (isBn) {
-                "মাসিক লেনদেনের বিবরণী (${payload.transactions.size} টি)"
-            } else {
-                "Monthly Transactions Ledger (${payload.transactions.size})"
-            }
+            val txCountStr = if (isBn) BdtFormatter.toBanglaDigits(payload.transactions.size.toString()) else payload.transactions.size.toString()
+            val txTitle = "${copy.transactionsLedgerTitle} ($txCountStr)"
             canvas.drawText(txTitle, MARGIN_X, y, sectionTitlePaint)
             y += 8f
 
@@ -667,27 +809,26 @@ object MonthlyReportExporter {
                     typeface = boldTypeface
                 }
                 val textY = topY + 13.5f
-                canvas.drawText(if (isBn) "তারিখ" else "Date", MARGIN_X + 6f, textY, thPaint)
-                canvas.drawText(if (isBn) "বিবরণ ও খাত" else "Title & Category", MARGIN_X + 64f, textY, thPaint)
-                canvas.drawText(if (isBn) "ওয়ালেট" else "Wallet", MARGIN_X + 296f, textY, thPaint)
-                val amtHdr = if (isBn) "পরিমাণ" else "Amount"
-                val amtHdrW = thPaint.measureText(amtHdr)
-                canvas.drawText(amtHdr, PAGE_WIDTH - MARGIN_X - 6f - amtHdrW, textY, thPaint)
+                canvas.drawText(copy.colDate, MARGIN_X + 6f, textY, thPaint)
+                canvas.drawText(copy.colTitleCategory, MARGIN_X + 64f, textY, thPaint)
+                canvas.drawText(copy.colWallet, MARGIN_X + 296f, textY, thPaint)
+                val amtHdrW = thPaint.measureText(copy.colAmount)
+                canvas.drawText(copy.colAmount, PAGE_WIDTH - MARGIN_X - 6f - amtHdrW, textY, thPaint)
                 return topY + 22f
             }
 
             y = drawTableHeader(y)
 
             if (payload.transactions.isEmpty()) {
-                val noTxMsg = if (isBn) "এই মাসে কোনো লেনদেন পাওয়া যায়নি।" else "No transactions recorded for this month."
-                canvas.drawText(noTxMsg, MARGIN_X + 6f, y + 14f, mutedPaint)
+                canvas.drawText(copy.noTransactionsMessage, MARGIN_X + 6f, y + 14f, mutedPaint)
             } else {
-                val rowDateFmt = SimpleDateFormat("dd MMM", Locale.ENGLISH)
+                val rowDateFmt = SimpleDateFormat("dd MMM", locale)
                 val altRowBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F8FAFC") }
                 val accountsById = payload.wallets.associateBy { it.id }
 
                 payload.transactions.forEachIndexed { idx, tx ->
-                    val dateText = rowDateFmt.format(Date(tx.timestamp))
+                    val rawRowDate = rowDateFmt.format(Date(tx.timestamp))
+                    val dateText = if (isBn) BdtFormatter.toBanglaDigits(rawRowDate) else rawRowDate
                     val catText = if (isBn) tx.category.bn else tx.category.en
                     val isTransfer = tx.type == TransactionType.TRANSFER
                     val parsedTransfer = if (isTransfer) {
@@ -702,7 +843,7 @@ object MonthlyReportExporter {
                     val walletText = payload.accountNames[tx.accountId]
                         ?.takeIf { !isTransfer && it.isNotBlank() }
                         ?: AccountNameResolver.resolveTransactionWalletDisplay(tx, accountsById, payload.language)
-                    val formattedCurrencyAmt = BdtFormatter.formatCurrency(tx.amount, tx.currencyCode, AppLanguage.EN)
+                    val formattedCurrencyAmt = BdtFormatter.formatCurrency(tx.amount, tx.currencyCode, lang)
                     val signedAmount = when (tx.type) {
                         TransactionType.INCOME -> "+$formattedCurrencyAmt"
                         TransactionType.EXPENSE -> "-$formattedCurrencyAmt"
@@ -891,18 +1032,26 @@ object MonthlyReportExporter {
         format: ReportExportFormat,
         strings: AppStrings,
         nowMillis: Long = System.currentTimeMillis(),
-        marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
+        marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference(),
+        periodType: ReportPeriodType = ReportPeriodType.MONTHLY
     ): Result<ExportSharePayload> = runCatching {
-        val payload = buildMonthlyPayload(state, nowMillis, marketSnapshot)
+        val payload = buildReportPayload(state, periodType, nowMillis, marketSnapshot)
+        val copy = ReportLocalizedStrings.forLanguage(payload.language)
         val reportsDir = File(context.cacheDir, "reports").apply { mkdirs() }
-        val fileName = "amar_hisab_monthly_summary_${payload.fileSlug}.${format.extension}"
+        val periodPrefix = when (periodType) {
+            ReportPeriodType.DAILY -> "daily_receipt"
+            ReportPeriodType.WEEKLY -> "weekly_receipt"
+            ReportPeriodType.MONTHLY -> "monthly_summary"
+        }
+        val safeLangTag = payload.language.code.lowercase(Locale.US).replace("-", "_")
+        val fileName = "amar_hisab_${periodPrefix}_${payload.fileSlug}_${safeLangTag}.${format.extension}"
         val outFile = File(reportsDir, fileName)
 
         when (format) {
             ReportExportFormat.CSV -> {
                 val csvContent = generateMonthlyCsv(payload)
                 outFile.outputStream().use { out ->
-                    // UTF-8 BOM ensures Excel / Sheets displays Bangla & ৳ cleanly
+                    // UTF-8 BOM ensures Excel / Sheets displays Bangla, Arabic, Hindi, CJK & currency symbols cleanly
                     out.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
                     out.write(csvContent.toByteArray(Charsets.UTF_8))
                 }
@@ -910,12 +1059,31 @@ object MonthlyReportExporter {
             ReportExportFormat.PDF -> {
                 generateMonthlyPdf(context, payload, outFile)
             }
+            ReportExportFormat.QR_PNG -> {
+                val inc = BdtFormatter.formatCurrency(payload.totalIncome, payload.mainCurrencyCode, payload.language)
+                val expAmt = BdtFormatter.formatCurrency(payload.totalExpense, payload.mainCurrencyCode, payload.language)
+                val net = BdtFormatter.formatCurrency(payload.netFlow, payload.mainCurrencyCode, payload.language, includeSign = true)
+                QrCodeBitmapGenerator.renderQrReceiptPngToFile(
+                    outFile = outFile,
+                    qrPayload = payload.qrPayload.ifBlank { buildQrPayload(payload) },
+                    brandHeader = copy.brandTitle,
+                    reportTitle = copy.reportTitleFor(periodType),
+                    periodLabel = payload.periodLabel,
+                    summaryLine = "${copy.totalIncomeLabel}: $inc  |  ${copy.totalExpenseLabel}: $expAmt  |  ${copy.netFlowLabel}: $net",
+                    verificationCaption = "${copy.qrScanCaption} • ${payload.verificationId}",
+                    languageBadge = payload.language.nativeName
+                )
+            }
         }
 
         val authority = "${context.packageName}.fileprovider"
-        val contentUri = FileProvider.getUriForFile(context, authority, outFile)
+        val contentUri = runCatching {
+            FileProvider.getUriForFile(context, authority, outFile)
+        }.getOrElse {
+            android.net.Uri.fromFile(outFile)
+        }
         val exp = strings.reportExport
-        val subject = "${exp.shareSubjectPrefix} — ${payload.periodLabel}"
+        val subject = "${copy.shareTitlePrefix} (${copy.periodTabLabel(periodType)}) — ${payload.periodLabel}"
         val shareBody = buildShareBodyText(payload)
 
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -940,14 +1108,13 @@ object MonthlyReportExporter {
 
     private fun buildShareBodyText(payload: MonthlyReportPayload): String {
         val lang = payload.language
+        val copy = ReportLocalizedStrings.forLanguage(lang)
         val income = BdtFormatter.formatCurrency(payload.totalIncome, payload.mainCurrencyCode, lang)
         val expense = BdtFormatter.formatCurrency(payload.totalExpense, payload.mainCurrencyCode, lang)
         val net = BdtFormatter.formatCurrency(payload.netFlow, payload.mainCurrencyCode, lang, includeSign = true)
-        val base = if (lang == AppLanguage.BN) {
-            "আমার হিসাব — মাসিক আর্থিক সারসংক্ষেপ (${payload.periodLabel})\nআয়: $income | ব্যয়: $expense | নিট প্রবাহ: $net"
-        } else {
-            "Amar Hisab — Monthly Financial Summary (${payload.periodLabel})\nIncome: $income | Expense: $expense | Net Flow: $net"
-        }
+        val base = "${copy.brandTitle} — ${copy.reportTitleFor(payload.periodType)} (${payload.periodLabel})\n" +
+            "${copy.totalIncomeLabel}: $income | ${copy.totalExpenseLabel}: $expense | ${copy.netFlowLabel}: $net\n" +
+            "${copy.qrVerifyCodeLabel}: ${payload.verificationId}"
         val foreignLines = payload.perCurrencyTotals
             .filter { !it.currencyCode.equals(payload.mainCurrencyCode, ignoreCase = true) }
             .map { cur ->
@@ -955,11 +1122,7 @@ object MonthlyReportExporter {
                 val trf = BdtFormatter.formatCurrency(cur.transferOut, cur.currencyCode, lang)
                 val exp = BdtFormatter.formatCurrency(cur.expense, cur.currencyCode, lang)
                 val inc = BdtFormatter.formatCurrency(cur.income, cur.currencyCode, lang)
-                if (lang == AppLanguage.BN) {
-                    "$curLbl: আয় $inc | ব্যয় $exp | ট্রান্সফার $trf"
-                } else {
-                    "$curLbl: Income $inc | Expense $exp | Transfers $trf"
-                }
+                "$curLbl: ${copy.totalIncomeLabel} $inc | ${copy.totalExpenseLabel} $exp | ${copy.transferShortLabel} $trf"
             }
         return if (foreignLines.isEmpty()) base else "$base\n${foreignLines.joinToString("\n")}"
     }

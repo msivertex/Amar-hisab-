@@ -88,6 +88,7 @@ import com.example.data.market.MarketSnapshot
 import com.example.data.market.MarketSyncUiState
 import com.example.data.market.MarketToolTab
 import com.example.data.market.MfsChannel
+import com.example.data.model.AppCurrency
 import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
@@ -634,15 +635,22 @@ internal fun CurrencyConverterPanel(
                 } else {
                     MarketCalculators.formatDecimal(parsedAmount, 2, language)
                 }
-                val formattedOutput = MarketCalculators.formatDecimal(converted, 2, language)
+                val toAppCur = AppCurrency.fromCode(toCurrency.code)
+                val fromAppCur = AppCurrency.fromCode(fromCurrency.code)
+                val outputDecimals = if (toCurrency == MarketCurrency.KWD) 3 else 2
+                val formattedOutput = MarketCalculators.formatDecimal(converted, outputDecimals, language)
                 val inverseFormatted = MarketCalculators.formatDecimal(
                     inverseUnit,
-                    decimals = if (inverseUnit < 0.05) 4 else 2,
+                    decimals = when {
+                        inverseUnit < 0.05 -> 4
+                        fromCurrency == MarketCurrency.KWD -> 3
+                        else -> 2
+                    },
                     language = language
                 )
 
                 Text(
-                    text = "${fromCurrency.flag} $formattedInput ${fromCurrency.code} =",
+                    text = "${fromCurrency.flag} ${fromAppCur.codeAndSymbolLabel()} $formattedInput =",
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontFamily = HindSiliguriFamily,
                         fontWeight = FontWeight.Medium
@@ -650,7 +658,7 @@ internal fun CurrencyConverterPanel(
                     color = crystal.mutedText
                 )
                 Text(
-                    text = "${toCurrency.symbol}$formattedOutput ${toCurrency.code}",
+                    text = "${toAppCur.codeAndSymbolLabel()} $formattedOutput",
                     style = MaterialTheme.typography.headlineSmall.copy(
                         fontFamily = JetBrainsMonoFamily,
                         fontWeight = FontWeight.ExtraBold
@@ -658,7 +666,7 @@ internal fun CurrencyConverterPanel(
                     color = primary
                 )
                 Text(
-                    text = "1 ${toCurrency.code} = ${fromCurrency.symbol}$inverseFormatted ${fromCurrency.code} • ${fromCurrency.countryName(language)} → ${toCurrency.countryName(language)}",
+                    text = "1 ${toCurrency.code} = ${fromAppCur.codeAndSymbolLabel()} $inverseFormatted • ${fromCurrency.countryName(language)} → ${toCurrency.countryName(language)}",
                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily),
                     color = crystal.mutedText
                 )
@@ -697,7 +705,9 @@ internal fun CurrencyConverterPanel(
         ) {
             corridorList.forEach { cur ->
                 val oneUnit = snapshot.convert(1.0, cur, toCurrency)
-                val valText = MarketCalculators.formatDecimal(oneUnit, 2, language)
+                val corridorDecimals = if (toCurrency == MarketCurrency.KWD) 3 else 2
+                val valText = MarketCalculators.formatDecimal(oneUnit, corridorDecimals, language)
+                val toCorridorLabel = AppCurrency.fromCode(toCurrency.code).codeAndSymbolLabel()
                 val isCurrent = cur == fromCurrency
                 Surface(
                     onClick = {
@@ -719,7 +729,7 @@ internal fun CurrencyConverterPanel(
                     modifier = Modifier.testTag("currency_corridor_${cur.code}")
                 ) {
                     Text(
-                        text = "${cur.flag} 1 ${cur.code} = ${toCurrency.symbol}$valText",
+                        text = "${cur.flag} 1 ${cur.code} = $toCorridorLabel $valText",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = JetBrainsMonoFamily,
                             fontWeight = FontWeight.SemiBold
@@ -767,7 +777,7 @@ private fun CurrencyDropdownButton(
                     maxLines = 1
                 )
                 Text(
-                    text = "${currency.flag} ${currency.code}",
+                    text = "${currency.flag} ${AppCurrency.fromCode(currency.code).codeAndSymbolLabel()}",
                     style = MaterialTheme.typography.titleSmall.copy(
                         fontFamily = JetBrainsMonoFamily,
                         fontWeight = FontWeight.Bold
@@ -931,7 +941,12 @@ internal fun GoldPricePanel(
                     pair.forEach { carat ->
                         val isSelected = selectedCarat == carat
                         val price = snapshot.goldPriceInCurrency(carat, perGram, displayCurrency)
-                        val formatted = "${displayCurrency.symbol}${MarketCalculators.formatDecimal(price, if (displayCurrency == MarketCurrency.BDT) 0 else 2, language)}"
+                        val displayDecimals = when (displayCurrency) {
+                            MarketCurrency.BDT -> 0
+                            MarketCurrency.KWD -> 3
+                            else -> 2
+                        }
+                        val formatted = "${AppCurrency.fromCode(displayCurrency.code).codeAndSymbolLabel()} ${MarketCalculators.formatDecimal(price, displayDecimals, language)}"
                         Surface(
                             onClick = { selectedCarat = carat },
                             shape = RoundedCornerShape(14.dp),
@@ -1022,8 +1037,13 @@ internal fun GoldPricePanel(
                         color = crystal.mutedText,
                         maxLines = 1
                     )
+                    val totalDecimals = when (displayCurrency) {
+                        MarketCurrency.BDT -> 0
+                        MarketCurrency.KWD -> 3
+                        else -> 2
+                    }
                     Text(
-                        text = "${displayCurrency.symbol}${MarketCalculators.formatDecimal(finalTotal, if (displayCurrency == MarketCurrency.BDT) 0 else 2, language)}",
+                        text = "${AppCurrency.fromCode(displayCurrency.code).codeAndSymbolLabel()} ${MarketCalculators.formatDecimal(finalTotal, totalDecimals, language)}",
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontFamily = JetBrainsMonoFamily,
                             fontWeight = FontWeight.ExtraBold
@@ -2134,42 +2154,61 @@ internal fun CurrencyPickerModalSheet(
             ) {
                 items(filtered, key = { it.code }) { currency ->
                     val isSelected = currency == selected
+                    val appCur = AppCurrency.fromCode(currency.code)
                     val bdtPerUnit = snapshot.convert(1.0, currency, MarketCurrency.BDT)
+                    val rateLabel = "1 ${currency.code} ≈ BDT ৳ ${MarketCalculators.formatDecimal(bdtPerUnit, 2, language)}"
+                    val badgeText = appCur.codeAndSymbolLabel()
                     Surface(
                         onClick = { onSelect(currency) },
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(18.dp),
                         color = if (isSelected) {
-                            primary.copy(alpha = if (crystal.isDark) 0.22f else 0.12f)
+                            primary.copy(alpha = if (crystal.isDark) 0.24f else 0.12f)
                         } else if (crystal.isDark) {
-                            Color.White.copy(alpha = 0.04f)
+                            Color.White.copy(alpha = 0.05f)
                         } else {
-                            Color(0xFFF6F9FD)
+                            Color.White.copy(alpha = 0.88f)
                         },
                         border = BorderStroke(
-                            width = if (isSelected) 1.2.dp else 0.8.dp,
+                            width = if (isSelected) 1.4.dp else 0.9.dp,
                             color = if (isSelected) primary else crystal.glassBorder
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = 64.dp)
                             .testTag("currency_option_${currency.code}")
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text(text = currency.flag, fontSize = 22.sp)
-                                Column {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(
+                                            if (crystal.isDark) Color.White.copy(alpha = 0.08f)
+                                            else primary.copy(alpha = 0.08f)
+                                        )
+                                        .border(0.8.dp, crystal.glassBorder, RoundedCornerShape(14.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(text = currency.flag, fontSize = 23.sp)
+                                }
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
                                     Text(
-                                        text = "${currency.code} • ${currency.displayName(language)}",
-                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                        text = currency.countryName(language),
+                                        style = MaterialTheme.typography.titleSmall.copy(
                                             fontWeight = FontWeight.Bold,
                                             fontFamily = HindSiliguriFamily
                                         ),
@@ -2178,20 +2217,43 @@ internal fun CurrencyPickerModalSheet(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = currency.countryName(language),
-                                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily),
-                                        color = crystal.mutedText
+                                        text = "${currency.displayName(language)} • $rateLabel",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontFamily = JetBrainsMonoFamily
+                                        ),
+                                        color = crystal.mutedText,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
-                            Text(
-                                text = "৳${MarketCalculators.formatDecimal(bdtPerUnit, 2, language)}",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontFamily = JetBrainsMonoFamily,
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                color = primary
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (isSelected) primary else primary.copy(alpha = if (crystal.isDark) 0.18f else 0.11f)
+                                ) {
+                                    Text(
+                                        text = badgeText,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontFamily = JetBrainsMonoFamily,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = if (isSelected) Color.White else primary,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                    )
+                                }
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Filled.CheckCircle,
+                                        contentDescription = null,
+                                        tint = primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }

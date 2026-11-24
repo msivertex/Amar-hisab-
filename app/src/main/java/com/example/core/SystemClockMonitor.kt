@@ -46,7 +46,7 @@ data class DeviceTimeContext(
         }.format(Date(epochMillis))
 
     fun formattedLocalDateTime(language: AppLanguage): String {
-        val locale = if (language == AppLanguage.BN) Locale.forLanguageTag("bn-BD") else Locale.getDefault()
+        val locale = Locale.forLanguageTag(language.localeTag)
         val fmt = SimpleDateFormat("EEE, dd MMM yyyy • hh:mm a", locale).apply {
             timeZone = this@DeviceTimeContext.timeZone
         }
@@ -55,7 +55,7 @@ data class DeviceTimeContext(
     }
 
     fun formattedLocalDate(language: AppLanguage): String {
-        val locale = if (language == AppLanguage.BN) Locale.forLanguageTag("bn-BD") else Locale.getDefault()
+        val locale = Locale.forLanguageTag(language.localeTag)
         val fmt = SimpleDateFormat("EEE, dd MMM yyyy", locale).apply {
             timeZone = this@DeviceTimeContext.timeZone
         }

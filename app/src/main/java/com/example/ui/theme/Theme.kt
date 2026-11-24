@@ -15,7 +15,9 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import com.example.data.model.AppColourTheme
@@ -160,6 +162,7 @@ fun AmarHisabTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     colourTheme: AppColourTheme = AppColourTheme.SKY_CYAN,
     isBangla: Boolean = false,
+    isRtl: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (darkTheme) buildDarkColorScheme(colourTheme) else buildLightColorScheme(colourTheme)
@@ -179,7 +182,8 @@ fun AmarHisabTheme(
 
     CompositionLocalProvider(
         LocalCrystalColors provides crystalColors,
-        LocalContentColor provides colorScheme.onBackground
+        LocalContentColor provides colorScheme.onBackground,
+        LocalLayoutDirection provides if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
     ) {
         MaterialTheme(
             colorScheme = colorScheme,

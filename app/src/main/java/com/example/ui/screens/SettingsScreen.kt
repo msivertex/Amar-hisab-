@@ -625,7 +625,7 @@ fun SettingsScreen(
                                     border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
                                 ) {
                                     Text(
-                                        text = "${prefs.mainCurrency.code} (${prefs.mainCurrency.symbol})",
+                                        text = prefs.mainCurrency.codeAndSymbolLabel(),
                                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.primary,
                                         maxLines = 1,
@@ -684,10 +684,10 @@ fun SettingsScreen(
                     AppThemeMode.LIGHT -> "Light"
                     AppThemeMode.DARK -> "Dark"
                 }
-                val activeLanguageDisplay = if (prefs.language == AppLanguage.BN) {
-                    refined.languageActiveBangla
-                } else {
-                    refined.languageActiveEnglish
+                val activeLanguageDisplay = when (prefs.language) {
+                    AppLanguage.BN -> refined.languageActiveBangla
+                    AppLanguage.EN -> refined.languageActiveEnglish
+                    else -> "${prefs.language.nativeName} · ${prefs.language.englishName}"
                 }
 
                 CrystalCard(

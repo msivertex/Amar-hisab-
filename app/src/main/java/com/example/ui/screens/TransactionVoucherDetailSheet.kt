@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,9 +37,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.data.export.MonthlyReportExporter
+import com.example.data.export.QrCodeBitmapGenerator
+import com.example.data.export.ReportLocalizedStrings
 import com.example.data.local.AccountEntity
 import com.example.data.local.TransactionEntity
 import com.example.data.market.MarketSnapshot
@@ -68,10 +75,11 @@ fun TransactionVoucherDetailSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val crystal = LocalCrystalColors.current
-    val isBn = language == AppLanguage.BN
+    val isBn = language.isBangla
+    val reportCopy = ReportLocalizedStrings.forLanguage(language)
     val activeTz = java.util.TimeZone.getDefault()
-    val dateStr = remember(tx.timestamp, activeTz.id) {
-        SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).apply {
+    val dateStr = remember(tx.timestamp, activeTz.id, language) {
+        SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.forLanguageTag(language.localeTag)).apply {
             timeZone = activeTz
         }.format(Date(tx.timestamp))
     }
@@ -89,12 +97,25 @@ fun TransactionVoucherDetailSheet(
     val cleanNote = remember(tx.note, isTransfer) {
         if (isTransfer) TransferNoteCodec.stripEncodedSegment(tx.note) else tx.note.trim()
     }
+    val voucherQrPayload = remember(tx, resolvedWallet, language) {
+        MonthlyReportExporter.buildTransactionVoucherQrPayload(
+            tx = tx,
+            walletLabel = resolvedWallet,
+            language = language
+        )
+    }
+    val voucherQrBitmap = remember(voucherQrPayload) {
+        QrCodeBitmapGenerator.generateQrBitmap(
+            content = voucherQrPayload,
+            sizePx = 280
+        ).asImageBitmap()
+    }
 
     val headerTitle = when {
         isTransfer && isBn -> "ট্রান্সফার ভাউচার"
-        isTransfer -> "Transfer Voucher"
+        isTransfer -> "${reportCopy.transferShortLabel} • ${reportCopy.brandTitle}"
         isBn -> "লেনদেনের বিবরণ"
-        else -> "Transaction Voucher"
+        else -> reportCopy.dailyReportTitle
     }
 
     val primaryAmount = BdtFormatter.formatCurrency(tx.amount, tx.currencyCode, language)
@@ -326,6 +347,69 @@ fun TransactionVoucherDetailSheet(
                             label = if (isBn) "নোট" else "Note",
                             value = cleanNote
                         )
+                    }
+                }
+            }
+
+            // Language-Aware Scannable Verification QR Code Card
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = if (crystal.isDark) Color(0xFF152033) else Color.White,
+                border = BorderStroke(1.dp, accentColor.copy(alpha = if (crystal.isDark) 0.34f else 0.22f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("voucher_qr_code")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color.White,
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        modifier = Modifier.size(88.dp)
+                    ) {
+                        Image(
+                            bitmap = voucherQrBitmap,
+                            contentDescription = reportCopy.voucherQrTitle,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(88.dp)
+                                .padding(5.dp)
+                        )
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = reportCopy.voucherQrTitle,
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = reportCopy.voucherQrSubtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = crystal.mutedText
+                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = accentColor.copy(alpha = if (crystal.isDark) 0.22f else 0.12f)
+                        ) {
+                            Text(
+                                text = "${reportCopy.brandTitle} • ${language.nativeName}",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 10.sp
+                                ),
+                                color = accentColor,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
                     }
                 }
             }

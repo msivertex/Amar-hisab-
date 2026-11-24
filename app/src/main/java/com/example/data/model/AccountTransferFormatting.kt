@@ -23,11 +23,7 @@ object AccountNameResolver {
     private val placeholderNames = setOf("-", "—", "–", "n/a", "none", "null")
 
     fun currencyShortLabel(currencyCode: String): String {
-        val currency = AppCurrency.fromCode(currencyCode)
-        return when (currency) {
-            AppCurrency.KWD -> "KD"
-            else -> currency.code
-        }
+        return AppCurrency.fromCode(currencyCode).code
     }
 
     fun defaultAccountName(
@@ -45,7 +41,7 @@ object AccountNameResolver {
 
         return when (type) {
             AccountType.CASH -> {
-                if (language == AppLanguage.BN) {
+                if (language.isBangla) {
                     "নগদ টাকা ($curLabel)"
                 } else {
                     "Cash ($curLabel)"
@@ -53,9 +49,9 @@ object AccountNameResolver {
             }
             AccountType.MFS -> {
                 val baseProvider = provider.ifBlank {
-                    if (language == AppLanguage.BN) "মোবাইল ওয়ালেট" else "Mobile Wallet"
+                    if (language.isBangla) "মোবাইল ওয়ালেট" else "Mobile Wallet"
                 }
-                val suffix = if (language == AppLanguage.BN) "ওয়ালেট" else "Wallet"
+                val suffix = if (language.isBangla) "ওয়ালেট" else "Wallet"
                 if (baseProvider.contains("wallet", ignoreCase = true) ||
                     baseProvider.contains("ওয়ালেট") ||
                     baseProvider.contains("ওয়ালেট")
@@ -67,19 +63,19 @@ object AccountNameResolver {
             }
             AccountType.CREDIT_CARD -> {
                 val baseProvider = provider.ifBlank {
-                    if (language == AppLanguage.BN) "ব্যাংক" else "Bank"
+                    if (language.isBangla) "ব্যাংক" else "Bank"
                 }
                 val suffix = when {
                     subtype.isNotBlank() && !baseProvider.contains(subtype, ignoreCase = true) -> subtype
                     network.isNotBlank() && !baseProvider.contains(network, ignoreCase = true) ->
-                        "$network ${if (language == AppLanguage.BN) "ক্রেডিট কার্ড" else "Credit Card"}"
-                    else -> if (language == AppLanguage.BN) "ক্রেডিট কার্ড" else "Credit Card"
+                        "$network ${if (language.isBangla) "ক্রেডিট কার্ড" else "Credit Card"}"
+                    else -> if (language.isBangla) "ক্রেডিট কার্ড" else "Credit Card"
                 }
                 "$baseProvider $suffix".trim()
             }
             AccountType.DEBIT_BANK -> {
                 val baseProvider = provider.ifBlank {
-                    if (language == AppLanguage.BN) "ব্যাংক অ্যাকাউন্ট" else "Bank Account"
+                    if (language.isBangla) "ব্যাংক অ্যাকাউন্ট" else "Bank Account"
                 }
                 val suffix = when {
                     subtype.isNotBlank() && !baseProvider.contains(subtype, ignoreCase = true) -> subtype
@@ -148,7 +144,7 @@ object AccountNameResolver {
             .orEmpty()
         val typeHint = when {
             provider.isNotBlank() -> provider
-            account.type == AccountType.CASH -> if (language == AppLanguage.BN) "নগদ" else "Cash"
+            account.type == AccountType.CASH -> if (language.isBangla) "নগদ" else "Cash"
             account.accountSubtype.isNotBlank() && !baseName.contains(account.accountSubtype, ignoreCase = true) ->
                 account.accountSubtype.trim()
             else -> ""
@@ -253,7 +249,7 @@ object AccountNameResolver {
 
     fun defaultWalletFallback(currencyCode: String, language: AppLanguage): String {
         val curLabel = currencyShortLabel(currencyCode)
-        return if (language == AppLanguage.BN) {
+        return if (language.isBangla) {
             "ওয়ালেট ($curLabel)"
         } else {
             "$curLabel Wallet"
@@ -397,7 +393,7 @@ object TransferNoteCodec {
             detail.destCurrencyCode,
             language
         )
-        val oneDigit = if (language == AppLanguage.BN) "১" else "1"
+        val oneDigit = if (language.isBangla) "১" else "1"
         val approxPrefix = if (detail.isRecordedRate) "" else "≈ "
         return "→ $approxPrefix$receivedFormatted • $oneDigit $srcLabel = $rateFormatted"
     }

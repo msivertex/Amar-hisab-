@@ -11,11 +11,10 @@ import com.example.ui.theme.BrandSonaliBank
 import com.example.ui.theme.BrandTrustBank
 
 /**
- * Supported primary & secondary/current currencies for Bangladesh & international expat tracking.
- * Each currency includes country flag, localized country & currency names, symbol, and
- * direct mapping into [MarketCurrency] for live/offline exchange conversions.
+ * Supported primary, secondary, and card currencies synchronized 1:1 with [WorldCountryCatalog]
+ * and [AppCountry] across all 195 sovereign countries for live & offline exchange conversions.
  */
-enum class AppCurrency(
+data class AppCurrency(
     val code: String,
     val symbol: String,
     val flag: String,
@@ -24,206 +23,261 @@ enum class AppCurrency(
     val nameEn: String,
     val nameBn: String,
     val usesIndianGrouping: Boolean = false,
-    val decimalPlaces: Int = 2
+    val decimalPlaces: Int = 2,
+    val defaultPerUsd: Double = 1.0
 ) {
-    BDT(
-        code = "BDT",
-        symbol = "৳",
-        flag = "🇧🇩",
-        countryEn = "Bangladesh",
-        countryBn = "বাংলাদেশ",
-        nameEn = "Bangladeshi Taka",
-        nameBn = "বাংলাদেশী টাকা",
-        usesIndianGrouping = true,
-        decimalPlaces = 0
-    ),
-    KWD(
-        code = "KWD",
-        symbol = "KD",
-        flag = "🇰🇼",
-        countryEn = "Kuwait",
-        countryBn = "কুয়েত",
-        nameEn = "Kuwaiti Dinar",
-        nameBn = "কুয়েতি দিনার",
-        decimalPlaces = 3
-    ),
-    SAR(
-        code = "SAR",
-        symbol = "SAR",
-        flag = "🇸🇦",
-        countryEn = "Saudi Arabia",
-        countryBn = "সৌদি আরব",
-        nameEn = "Saudi Riyal",
-        nameBn = "সৌদি রিয়াল"
-    ),
-    AED(
-        code = "AED",
-        symbol = "AED",
-        flag = "🇦🇪",
-        countryEn = "UAE (Dubai)",
-        countryBn = "দুবাই / আমিরাত",
-        nameEn = "UAE Dirham",
-        nameBn = "আমিরাত দিরহাম"
-    ),
-    QAR(
-        code = "QAR",
-        symbol = "QAR",
-        flag = "🇶🇦",
-        countryEn = "Qatar",
-        countryBn = "কাতার",
-        nameEn = "Qatari Riyal",
-        nameBn = "কাতারি রিয়াল"
-    ),
-    MYR(
-        code = "MYR",
-        symbol = "RM",
-        flag = "🇲🇾",
-        countryEn = "Malaysia",
-        countryBn = "মালয়েশিয়া",
-        nameEn = "Malaysian Ringgit",
-        nameBn = "মালয়েশিয়ান রিংগিত"
-    ),
-    EUR(
-        code = "EUR",
-        symbol = "€",
-        flag = "🇮🇹",
-        countryEn = "Italy / Europe",
-        countryBn = "ইতালি / ইউরোপ",
-        nameEn = "Euro",
-        nameBn = "ইউরো"
-    ),
-    GBP(
-        code = "GBP",
-        symbol = "£",
-        flag = "🇬🇧",
-        countryEn = "UK / England",
-        countryBn = "যুক্তরাজ্য / ইংল্যান্ড",
-        nameEn = "British Pound",
-        nameBn = "ব্রিটিশ পাউন্ড"
-    ),
-    USD(
-        code = "USD",
-        symbol = "$",
-        flag = "🇺🇸",
-        countryEn = "USA",
-        countryBn = "যুক্তরাষ্ট্র",
-        nameEn = "US Dollar",
-        nameBn = "মার্কিন ডলার"
-    ),
-    INR(
-        code = "INR",
-        symbol = "₹",
-        flag = "🇮🇳",
-        countryEn = "India",
-        countryBn = "ভারত",
-        nameEn = "Indian Rupee",
-        nameBn = "ভারতীয় রুপি",
-        usesIndianGrouping = true,
-        decimalPlaces = 0
-    );
+    /** Backward-compatible alias matching enum `.name`. */
+    val name: String get() = code
 
-    fun countryName(lang: AppLanguage): String = if (lang == AppLanguage.BN) countryBn else countryEn
-    fun currencyName(lang: AppLanguage): String = if (lang == AppLanguage.BN) nameBn else nameEn
+    fun countryName(lang: AppLanguage): String = if (lang.isBangla) countryBn else countryEn
+    fun currencyName(lang: AppLanguage): String = if (lang.isBangla) nameBn else nameEn
+
+    /** Non-blank currency symbol when distinct from the ISO code (e.g., "د.ك", "৳", "₹", "Rs"). */
+    fun distinctSymbolOrNull(): String? =
+        symbol.trim().takeIf { it.isNotEmpty() && !it.equals(code, ignoreCase = true) }
+
+    /** Uniform code + symbol label (e.g., "KWD د.ك", "BDT ৳", "INR ₹", "LKR Rs"). */
+    fun codeAndSymbolLabel(): String = distinctSymbolOrNull()?.let { "$code $it" } ?: code
 
     fun shortBadge(): String = "$flag $code"
 
-    /** Clean flag-free badge label for balance cards (e.g., "BDT", "KD", "SAR", "USD"). */
-    fun cleanBadgeLabel(): String = when (this) {
-        KWD -> "KD"
-        else -> code
+    /** Clean uniform ISO badge label for cards & headers (always fixed ISO code, e.g., "KWD", "BDT", "INR", "LKR"). */
+    fun cleanBadgeLabel(): String = code
+
+    /** Uniform Country Name + Currency Code + Symbol display across pickers & selectors. */
+    fun pickerDisplayLabel(lang: AppLanguage, overrideCountryName: String? = null): String {
+        val country = overrideCountryName?.takeIf { it.isNotBlank() } ?: countryName(lang)
+        val sym = distinctSymbolOrNull()
+        return if (sym != null) "$country • $code • $sym" else "$country • $code"
     }
 
-    fun fullDisplay(lang: AppLanguage): String = "$flag $code ($symbol) • ${countryName(lang)}"
+    fun fullDisplay(lang: AppLanguage): String = "$flag ${pickerDisplayLabel(lang)}"
 
-    fun toMarketCurrency(): MarketCurrency = when (this) {
-        BDT -> MarketCurrency.BDT
-        KWD -> MarketCurrency.KWD
-        SAR -> MarketCurrency.SAR
-        AED -> MarketCurrency.AED
-        QAR -> MarketCurrency.QAR
-        MYR -> MarketCurrency.MYR
-        EUR -> MarketCurrency.EUR
-        GBP -> MarketCurrency.GBP
-        USD -> MarketCurrency.USD
-        INR -> MarketCurrency.INR
-    }
+    fun toMarketCurrency(): MarketCurrency =
+        MarketCurrency.entries.firstOrNull { it.code.equals(code, ignoreCase = true) } ?: MarketCurrency.USD
 
     companion object {
+        val entries: List<AppCurrency> = WorldCountryCatalog.currencySpecs.map { spec ->
+            AppCurrency(
+                code = spec.code,
+                symbol = spec.symbol,
+                flag = spec.flag,
+                countryEn = spec.countryEn,
+                countryBn = spec.countryBn,
+                nameEn = spec.nameEn,
+                nameBn = spec.nameBn,
+                usesIndianGrouping = spec.usesIndianGrouping,
+                decimalPlaces = spec.decimalPlaces,
+                defaultPerUsd = spec.defaultPerUsd
+            )
+        }
+
+        private val byCode: Map<String, AppCurrency> = entries.associateBy { it.code.uppercase() }
+
+        // Named constants preserving 100% compatibility with all existing callers and tests
+        val BDT: AppCurrency get() = byCode.getValue("BDT")
+        val INR: AppCurrency get() = byCode.getValue("INR")
+        val NPR: AppCurrency get() = byCode.getValue("NPR")
+        val LKR: AppCurrency get() = byCode.getValue("LKR")
+        val BTN: AppCurrency get() = byCode.getValue("BTN")
+        val MMK: AppCurrency get() = byCode.getValue("MMK")
+        val MVR: AppCurrency get() = byCode.getValue("MVR")
+        val SAR: AppCurrency get() = byCode.getValue("SAR")
+        val AED: AppCurrency get() = byCode.getValue("AED")
+        val KWD: AppCurrency get() = byCode.getValue("KWD")
+        val QAR: AppCurrency get() = byCode.getValue("QAR")
+        val OMR: AppCurrency get() = byCode.getValue("OMR")
+        val BHD: AppCurrency get() = byCode.getValue("BHD")
+        val MYR: AppCurrency get() = byCode.getValue("MYR")
+        val SGD: AppCurrency get() = byCode.getValue("SGD")
+        val KRW: AppCurrency get() = byCode.getValue("KRW")
+        val JPY: AppCurrency get() = byCode.getValue("JPY")
+        val AUD: AppCurrency get() = byCode.getValue("AUD")
+        val USD: AppCurrency get() = byCode.getValue("USD")
+        val GBP: AppCurrency get() = byCode.getValue("GBP")
+        val CAD: AppCurrency get() = byCode.getValue("CAD")
+        val EUR: AppCurrency get() = byCode.getValue("EUR")
+
         fun fromCode(code: String?): AppCurrency {
             if (code.isNullOrBlank()) return BDT
-            return entries.firstOrNull { it.code.equals(code.trim(), ignoreCase = true) } ?: BDT
+            return byCode[code.trim().uppercase()] ?: BDT
         }
 
         fun fromCodeOrNull(code: String?): AppCurrency? {
             if (code.isNullOrBlank()) return null
-            return entries.firstOrNull { it.code.equals(code.trim(), ignoreCase = true) }
+            return byCode[code.trim().uppercase()]
         }
     }
 }
 
 /**
- * Supported user countries/regions for the interactive Country selector in Profile Details.
+ * Regional groupings shared by Profile Details > Country, Main Currency, Second Currency,
+ * and the Card / New Account Wizard across all 195 UN-recognized countries.
  */
-enum class AppCountry(
+enum class CountryRegionGroup(val en: String, val bn: String) {
+    SOUTH_ASIA("South Asia & Neighboring Countries", "দক্ষিণ এশিয়া ও প্রতিবেশী দেশসমূহ"),
+    MIDDLE_EAST("Middle East", "মধ্যপ্রাচ্য"),
+    ASIA_PACIFIC_OCEANIA("Asia-Pacific & Oceania", "এশিয়া-প্যাসিফিক ও ওশেনিয়া"),
+    NORTH_AMERICA_UK("North America & UK", "উত্তর আমেরিকা ও যুক্তরাজ্য"),
+    EUROPE_CYPRUS("Italy, Cyprus & European Countries", "ইতালি, সাইপ্রাস ও ইউরোপীয় দেশসমূহ"),
+    LATIN_AMERICA_CARIBBEAN("Latin America & Caribbean", "লাতিন আমেরিকা ও ক্যারিবিয়ান"),
+    AFRICA("Africa", "আফ্রিকা");
+
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
+}
+
+/**
+ * Unified single source of truth for ALL 195 sovereign countries & currencies across:
+ * 1. Profile Details > Country
+ * 2. Profile Details > Main Currency
+ * 3. Profile Details > Second Currency
+ * 4. Card / New Account Wizard country & bank selection
+ *
+ * Backed directly by [WorldCountryCatalog.all195CountrySpecs] so every screen stays automatically synchronized.
+ */
+data class AppCountry(
     val code: String,
     val flag: String,
     val nameEn: String,
     val nameBn: String,
-    val suggestedCurrency: AppCurrency
+    val suggestedCurrency: AppCurrency,
+    val group: CountryRegionGroup
 ) {
-    BD("BD", "🇧🇩", "Bangladesh", "বাংলাদেশ", AppCurrency.BDT),
-    KW("KW", "🇰🇼", "Kuwait", "কুয়েত", AppCurrency.KWD),
-    SA("SA", "🇸🇦", "Saudi Arabia", "সৌদি আরব", AppCurrency.SAR),
-    AE("AE", "🇦🇪", "UAE (Dubai)", "সংযুক্ত আরব আমিরাত", AppCurrency.AED),
-    QA("QA", "🇶🇦", "Qatar", "কাতার", AppCurrency.QAR),
-    OM("OM", "🇴🇲", "Oman", "ওমান", AppCurrency.SAR),
-    BH("BH", "🇧🇭", "Bahrain", "বাহরাইন", AppCurrency.USD),
-    MY("MY", "🇲🇾", "Malaysia", "মালয়েশিয়া", AppCurrency.MYR),
-    SG("SG", "🇸🇬", "Singapore", "সিঙ্গাপুর", AppCurrency.USD),
-    IT("IT", "🇮🇹", "Italy", "ইতালি", AppCurrency.EUR),
-    DE("DE", "🇩🇪", "Germany", "জার্মানি", AppCurrency.EUR),
-    FR("FR", "🇫🇷", "France", "ফ্রান্স", AppCurrency.EUR),
-    GB("GB", "🇬🇧", "United Kingdom", "যুক্তরাজ্য", AppCurrency.GBP),
-    US("US", "🇺🇸", "United States", "যুক্তরাষ্ট্র", AppCurrency.USD),
-    CA("CA", "🇨🇦", "Canada", "কানাডা", AppCurrency.USD),
-    AU("AU", "🇦🇺", "Australia", "অস্ট্রেলিয়া", AppCurrency.USD),
-    IN("IN", "🇮🇳", "India", "ভারত", AppCurrency.INR),
-    JP("JP", "🇯🇵", "Japan", "জাপান", AppCurrency.USD);
+    /** Backward-compatible alias matching enum `.name`. */
+    val name: String get() = code
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) nameBn else nameEn
+    fun label(lang: AppLanguage): String = if (lang.isBangla) nameBn else nameEn
+
+    /**
+     * Dynamic localized heading displayed above the bank list in the Card / New Account Wizard.
+     */
+    fun bankSelectionHeading(lang: AppLanguage): String = when (code) {
+        "BD" -> if (lang.isBangla) "বাংলাদেশী ব্যাংক নির্বাচন করুন" else "Select Bangladeshi Bank"
+        "KW" -> if (lang.isBangla) "কুয়েত ব্যাংক নির্বাচন করুন" else "Select Kuwait Bank"
+        "SA" -> if (lang.isBangla) "সৌদি আরব ব্যাংক নির্বাচন করুন" else "Select Saudi Arabia Bank"
+        "AE" -> if (lang.isBangla) "সংযুক্ত আরব আমিরাত ব্যাংক নির্বাচন করুন" else "Select UAE Bank"
+        "QA" -> if (lang.isBangla) "কাতার ব্যাংক নির্বাচন করুন" else "Select Qatar Bank"
+        "OM" -> if (lang.isBangla) "ওমান ব্যাংক নির্বাচন করুন" else "Select Oman Bank"
+        "BH" -> if (lang.isBangla) "বাহরাইন ব্যাংক নির্বাচন করুন" else "Select Bahrain Bank"
+        "MY" -> if (lang.isBangla) "মালয়েশিয়া ব্যাংক নির্বাচন করুন" else "Select Malaysia Bank"
+        "SG" -> if (lang.isBangla) "সিঙ্গাপুর ব্যাংক নির্বাচন করুন" else "Select Singapore Bank"
+        "US" -> if (lang.isBangla) "যুক্তরাষ্ট্র ব্যাংক নির্বাচন করুন" else "Select USA Bank"
+        "GB" -> if (lang.isBangla) "যুক্তরাজ্য ব্যাংক নির্বাচন করুন" else "Select UK Bank"
+        "CA" -> if (lang.isBangla) "কানাডা ব্যাংক নির্বাচন করুন" else "Select Canada Bank"
+        "IT" -> if (lang.isBangla) "ইতালি ব্যাংক নির্বাচন করুন" else "Select Italy Bank"
+        "CY" -> if (lang.isBangla) "সাইপ্রাস ব্যাংক নির্বাচন করুন" else "Select Cyprus Bank"
+        "AU" -> if (lang.isBangla) "অস্ট্রেলিয়া ব্যাংক নির্বাচন করুন" else "Select Australia Bank"
+        "JP" -> if (lang.isBangla) "জাপান ব্যাংক নির্বাচন করুন" else "Select Japan Bank"
+        "KR" -> if (lang.isBangla) "দক্ষিণ কোরিয়া ব্যাংক নির্বাচন করুন" else "Select South Korea Bank"
+        "MV" -> if (lang.isBangla) "মালদ্বীপ ব্যাংক নির্বাচন করুন" else "Select Maldives Bank"
+        else -> if (lang.isBangla) "${label(lang)} ব্যাংক নির্বাচন করুন" else "Select ${label(lang)} Bank"
+    }
+
+    /** Formats the country + currency line cleanly, e.g. `Bangladesh • Bangladeshi Taka (BDT ৳)`. */
+    fun countryCurrencyDisplay(lang: AppLanguage): String {
+        val cur = suggestedCurrency
+        val symbolSuffix = if (cur.symbol.equals(cur.code, ignoreCase = true)) cur.code else "${cur.code} ${cur.symbol}"
+        return "${label(lang)} • ${cur.currencyName(lang)} ($symbolSuffix)"
+    }
 
     companion object {
+        val entries: List<AppCountry> = WorldCountryCatalog.all195CountrySpecs.map { spec ->
+            AppCountry(
+                code = spec.code,
+                flag = spec.flag,
+                nameEn = spec.nameEn,
+                nameBn = spec.nameBn,
+                suggestedCurrency = AppCurrency.fromCode(spec.currencyCode),
+                group = spec.group
+            )
+        }
+
+        private val byCode: Map<String, AppCountry> = entries.associateBy { it.code.uppercase() }
+
+        // Named constants for all key expatriate & neighboring countries
+        val BD: AppCountry get() = byCode.getValue("BD")
+        val IN: AppCountry get() = byCode.getValue("IN")
+        val NP: AppCountry get() = byCode.getValue("NP")
+        val LK: AppCountry get() = byCode.getValue("LK")
+        val BT: AppCountry get() = byCode.getValue("BT")
+        val MM: AppCountry get() = byCode.getValue("MM")
+        val MV: AppCountry get() = byCode.getValue("MV")
+        val SA: AppCountry get() = byCode.getValue("SA")
+        val AE: AppCountry get() = byCode.getValue("AE")
+        val KW: AppCountry get() = byCode.getValue("KW")
+        val QA: AppCountry get() = byCode.getValue("QA")
+        val OM: AppCountry get() = byCode.getValue("OM")
+        val BH: AppCountry get() = byCode.getValue("BH")
+        val MY: AppCountry get() = byCode.getValue("MY")
+        val SG: AppCountry get() = byCode.getValue("SG")
+        val KR: AppCountry get() = byCode.getValue("KR")
+        val JP: AppCountry get() = byCode.getValue("JP")
+        val AU: AppCountry get() = byCode.getValue("AU")
+        val US: AppCountry get() = byCode.getValue("US")
+        val GB: AppCountry get() = byCode.getValue("GB")
+        val CA: AppCountry get() = byCode.getValue("CA")
+        val IT: AppCountry get() = byCode.getValue("IT")
+        val ES: AppCountry get() = byCode.getValue("ES")
+        val PT: AppCountry get() = byCode.getValue("PT")
+        val GR: AppCountry get() = byCode.getValue("GR")
+        val DE: AppCountry get() = byCode.getValue("DE")
+        val FR: AppCountry get() = byCode.getValue("FR")
+        val CY: AppCountry get() = byCode.getValue("CY")
+
+        /**
+         * Prominently featured expatriate & neighboring countries shown as fast 1-tap quick chips
+         * in the Card / New Account Wizard while the full searchable 195-country picker sits right above.
+         */
+        val quickSelectCountries: List<AppCountry> by lazy {
+            listOf(
+                BD, SA, AE, KW, QA, OM, BH, MY, SG,
+                US, GB, CA, IT, DE, FR, ES, PT, GR, CY,
+                AU, JP, KR, IN, NP, LK, BT, MM, MV
+            )
+        }
+
         fun fromCode(code: String?): AppCountry {
             if (code.isNullOrBlank()) return BD
             val normalized = code.trim()
-            return entries.firstOrNull {
-                it.code.equals(normalized, ignoreCase = true) ||
-                    it.nameEn.equals(normalized, ignoreCase = true)
-            } ?: BD
+            return byCode[normalized.uppercase()]
+                ?: entries.firstOrNull {
+                    it.nameEn.equals(normalized, ignoreCase = true) ||
+                        it.nameBn.equals(normalized, ignoreCase = true)
+                }
+                ?: BD
         }
+
+        fun preferredForCurrency(currency: AppCurrency): AppCountry =
+            entries.firstOrNull { it.suggestedCurrency.code.equals(currency.code, ignoreCase = true) } ?: BD
+
+        fun grouped(): Map<CountryRegionGroup, List<AppCountry>> =
+            CountryRegionGroup.entries.associateWith { grp -> entries.filter { it.group == grp } }
     }
 }
 
 /**
- * Supported banking regions for Account & Card creation (Bangladesh + expat destinations).
+ * Legacy banking region enum kept for backward compatibility with older unit tests.
+ * New UI flows (Card / New Account Wizard) read directly from [AppCountry] and
+ * [InternationalBankCatalog.banksForCountry] so countries stay automatically synchronized.
  */
 enum class BankRegion(
     val flag: String,
     val en: String,
     val bn: String,
-    val defaultCurrency: AppCurrency
+    val defaultCurrency: AppCurrency,
+    val primaryCountry: AppCountry
 ) {
-    BANGLADESH("🇧🇩", "Bangladesh", "বাংলাদেশ", AppCurrency.BDT),
-    SAUDI_ARABIA("🇸🇦", "Saudi Arabia", "সৌদি আরব", AppCurrency.SAR),
-    QATAR("🇶🇦", "Qatar", "কাতার", AppCurrency.QAR),
-    KUWAIT("🇰🇼", "Kuwait", "কুয়েত", AppCurrency.KWD),
-    UAE("🇦🇪", "UAE (Dubai)", "দুবাই (আমিরাত)", AppCurrency.AED),
-    MALAYSIA("🇲🇾", "Malaysia", "মালয়েশিয়া", AppCurrency.MYR),
-    ITALY("🇮🇹", "Italy", "ইতালি", AppCurrency.EUR),
-    EUROPE("🇪🇺", "Europe", "ইউরোপ", AppCurrency.EUR),
-    UK("🇬🇧", "UK (England)", "যুক্তরাজ্য (ইংল্যান্ড)", AppCurrency.GBP);
+    BANGLADESH("🇧🇩", "Bangladesh", "বাংলাদেশ", AppCurrency.BDT, AppCountry.BD),
+    SAUDI_ARABIA("🇸🇦", "Saudi Arabia", "সৌদি আরব", AppCurrency.SAR, AppCountry.SA),
+    QATAR("🇶🇦", "Qatar", "কাতার", AppCurrency.QAR, AppCountry.QA),
+    KUWAIT("🇰🇼", "Kuwait", "কুয়েত", AppCurrency.KWD, AppCountry.KW),
+    UAE("🇦🇪", "UAE (Dubai)", "দুবাই (আমিরাত)", AppCurrency.AED, AppCountry.AE),
+    MALAYSIA("🇲🇾", "Malaysia", "মালয়েশিয়া", AppCurrency.MYR, AppCountry.MY),
+    ITALY("🇮🇹", "Italy", "ইতালি", AppCurrency.EUR, AppCountry.IT),
+    EUROPE("🇪🇺", "Europe", "ইউরোপ", AppCurrency.EUR, AppCountry.DE),
+    UK("🇬🇧", "UK (England)", "যুক্তরাজ্য (ইংল্যান্ড)", AppCurrency.GBP, AppCountry.GB);
 
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 
     companion object {
         fun preferredForCurrency(currency: AppCurrency): BankRegion = when (currency) {
@@ -235,104 +289,237 @@ enum class BankRegion(
             AppCurrency.MYR -> MALAYSIA
             AppCurrency.EUR -> ITALY
             AppCurrency.GBP -> UK
-            AppCurrency.USD, AppCurrency.INR -> BANGLADESH
+            else -> BANGLADESH
         }
     }
 }
 
 data class InternationalBank(
     val id: String,
-    val region: BankRegion,
+    val country: AppCountry,
     val en: String,
     val bn: String,
     val shortCode: String,
     val brandColor: Color,
-    val defaultCurrency: AppCurrency = region.defaultCurrency
+    val defaultCurrency: AppCurrency = country.suggestedCurrency
 ) {
-    fun label(lang: AppLanguage): String = if (lang == AppLanguage.BN) bn else en
+    fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
+}
+
+/**
+ * Curated bank-card colors available for manual/custom banks and card customization in Live Card Preview.
+ */
+object CardColorCatalog {
+    val swatches: List<Color> = listOf(
+        Color(0xFF0284C7), // Sapphire Ocean
+        Color(0xFF006A4E), // Emerald Vault
+        Color(0xFF1E3A8A), // Midnight Navy
+        Color(0xFFB91C1C), // Crimson Ruby
+        Color(0xFF4F46E5), // Royal Indigo
+        Color(0xFF0F766E), // Deep Teal
+        Color(0xFFD97706), // Sovereign Gold
+        Color(0xFF7C3AED), // Amethyst Violet
+        Color(0xFF1F2937), // Obsidian Charcoal
+        Color(0xFFBE185D)  // Rose Magenta
+    )
 }
 
 object InternationalBankCatalog {
-    val all: List<InternationalBank> = listOf(
-        // Bangladesh (BDT) - Existing 6 + 16 expanded Government & Private banks
-        InternationalBank("bd_city", BankRegion.BANGLADESH, "City Bank", "সিটি ব্যাংক", "CITY", BrandCityBank),
-        InternationalBank("bd_dbbl", BankRegion.BANGLADESH, "Dutch-Bangla Bank", "ডাচ-বাংলা ব্যাংক", "DBBL", BrandDbbl),
-        InternationalBank("bd_brac", BankRegion.BANGLADESH, "BRAC Bank", "ব্র্যাক ব্যাংক", "BRAC", BrandBracBank),
-        InternationalBank("bd_islami", BankRegion.BANGLADESH, "Islami Bank", "ইসলামী ব্যাংক", "IBBL", BrandIslamiBank),
-        InternationalBank("bd_trust", BankRegion.BANGLADESH, "Trust Bank", "ট্রাস্ট ব্যাংক", "TRUST", BrandTrustBank),
-        InternationalBank("bd_sonali", BankRegion.BANGLADESH, "Sonali Bank", "সোনালী ব্যাংক", "SONALI", BrandSonaliBank),
-        InternationalBank("bd_janata", BankRegion.BANGLADESH, "Janata Bank", "জনতা ব্যাংক", "JANATA", BangladeshiBank.JANATA_BANK.brandColor),
-        InternationalBank("bd_agrani", BankRegion.BANGLADESH, "Agrani Bank", "অগ্রণী ব্যাংক", "AGRANI", BangladeshiBank.AGRANI_BANK.brandColor),
-        InternationalBank("bd_rupali", BankRegion.BANGLADESH, "Rupali Bank", "রূপালী ব্যাংক", "RUPALI", BangladeshiBank.RUPALI_BANK.brandColor),
-        InternationalBank("bd_bkb", BankRegion.BANGLADESH, "Bangladesh Krishi Bank", "বাংলাদেশ কৃষি ব্যাংক", "BKB", BangladeshiBank.BKB.brandColor),
-        InternationalBank("bd_ebl", BankRegion.BANGLADESH, "Eastern Bank", "ইস্টার্ন ব্যাংক", "EBL", BangladeshiBank.EBL.brandColor),
-        InternationalBank("bd_prime", BankRegion.BANGLADESH, "Prime Bank", "প্রাইম ব্যাংক", "PRIME", BangladeshiBank.PRIME_BANK.brandColor),
-        InternationalBank("bd_mtb", BankRegion.BANGLADESH, "Mutual Trust Bank", "মিউচুয়াল ট্রাস্ট ব্যাংক", "MTB", BangladeshiBank.MTB.brandColor),
-        InternationalBank("bd_dhaka", BankRegion.BANGLADESH, "Dhaka Bank", "ঢাকা ব্যাংক", "DHAKA", BangladeshiBank.DHAKA_BANK.brandColor),
-        InternationalBank("bd_pubali", BankRegion.BANGLADESH, "Pubali Bank", "পূবালী ব্যাংক", "PUBALI", BangladeshiBank.PUBALI_BANK.brandColor),
-        InternationalBank("bd_bankasia", BankRegion.BANGLADESH, "Bank Asia", "ব্যাংক এশিয়া", "BANKASIA", BangladeshiBank.BANK_ASIA.brandColor),
-        InternationalBank("bd_sebl", BankRegion.BANGLADESH, "Southeast Bank", "সাউথইস্ট ব্যাংক", "SEBL", BangladeshiBank.SEBL.brandColor),
-        InternationalBank("bd_one", BankRegion.BANGLADESH, "One Bank", "ওয়ান ব্যাংক", "ONE", BangladeshiBank.ONE_BANK.brandColor),
-        InternationalBank("bd_uttara", BankRegion.BANGLADESH, "Uttara Bank", "উত্তরা ব্যাংক", "UTTARA", BangladeshiBank.UTTARA_BANK.brandColor),
-        InternationalBank("bd_jamuna", BankRegion.BANGLADESH, "Jamuna Bank", "যমুনা ব্যাংক", "JAMUNA", BangladeshiBank.JAMUNA_BANK.brandColor),
-        InternationalBank("bd_ucb", BankRegion.BANGLADESH, "United Commercial Bank", "ইউনাইটেড কমার্শিয়াল ব্যাংক", "UCB", BangladeshiBank.UCB.brandColor),
-        InternationalBank("bd_mbl", BankRegion.BANGLADESH, "Mercantile Bank", "মার্কেন্টাইল ব্যাংক", "MBL", BangladeshiBank.MBL.brandColor),
-
-        // Saudi Arabia (SAR)
-        InternationalBank("sa_alrajhi", BankRegion.SAUDI_ARABIA, "Al Rajhi Bank", "আল রাজি ব্যাংক", "RAJHI", Color(0xFF0052A5)),
-        InternationalBank("sa_snb", BankRegion.SAUDI_ARABIA, "Saudi National Bank (SNB)", "সৌদি ন্যাশনাল ব্যাংক (SNB)", "SNB", Color(0xFF006C35)),
-        InternationalBank("sa_riyad", BankRegion.SAUDI_ARABIA, "Riyad Bank", "রিয়াদ ব্যাংক", "RIYAD", Color(0xFF1D4ED8)),
-        InternationalBank("sa_alinma", BankRegion.SAUDI_ARABIA, "Alinma Bank", "আলইনমা ব্যাংক", "INMA", Color(0xFF6B4E3D)),
-        InternationalBank("sa_stcpay", BankRegion.SAUDI_ARABIA, "stc bank / stc pay", "এসটিসি ব্যাংক / stc pay", "STC", Color(0xFF4F008C)),
-
-        // Qatar (QAR)
-        InternationalBank("qa_qnb", BankRegion.QATAR, "Qatar National Bank (QNB)", "কাতার ন্যাশনাল ব্যাংক (QNB)", "QNB", Color(0xFF6B1D4A)),
-        InternationalBank("qa_cbq", BankRegion.QATAR, "Commercial Bank of Qatar", "কমার্শিয়াল ব্যাংক অফ কাতার", "CBQ", Color(0xFF0F4C81)),
-        InternationalBank("qa_dukhan", BankRegion.QATAR, "Dukhan Bank", "দুখান ব্যাংক", "DUKHAN", Color(0xFF0E7490)),
-        InternationalBank("qa_masraf", BankRegion.QATAR, "Masraf Al Rayan", "মাসরাফ আল রায়ান", "MAR", Color(0xFF047857)),
-
-        // Kuwait (KWD)
-        InternationalBank("kw_nbk", BankRegion.KUWAIT, "National Bank of Kuwait (NBK)", "ন্যাশনাল ব্যাংক অফ কুয়েত (NBK)", "NBK", Color(0xFF003B73)),
-        InternationalBank("kw_kfh", BankRegion.KUWAIT, "Kuwait Finance House (KFH)", "কুয়েত ফিন্যান্স হাউস (KFH)", "KFH", Color(0xFF007A3D)),
-        InternationalBank("kw_gulf", BankRegion.KUWAIT, "Gulf Bank Kuwait", "গালফ ব্যাংক কুয়েত", "GULF", Color(0xFFB91C1C)),
-        InternationalBank("kw_boubyan", BankRegion.KUWAIT, "Boubyan Bank", "বুবিয়ান ব্যাংক", "BOUBYAN", Color(0xFF991B1B)),
-
-        // UAE / Dubai (AED)
-        InternationalBank("ae_enbd", BankRegion.UAE, "Emirates NBD", "এমিরেটস এনবিডি", "ENBD", Color(0xFF00338D)),
-        InternationalBank("ae_fab", BankRegion.UAE, "First Abu Dhabi Bank (FAB)", "ফার্স্ট আবুধাবি ব্যাংক (FAB)", "FAB", Color(0xFF00205B)),
-        InternationalBank("ae_dib", BankRegion.UAE, "Dubai Islamic Bank (DIB)", "দুবাই ইসলামী ব্যাংক (DIB)", "DIB", Color(0xFF007A4D)),
-        InternationalBank("ae_mashreq", BankRegion.UAE, "Mashreq Bank", "মাশরেক ব্যাংক", "MASHREQ", Color(0xFFEA580C)),
-        InternationalBank("ae_adcb", BankRegion.UAE, "ADCB Bank", "এডিসিবি ব্যাংক", "ADCB", Color(0xFF9D174D)),
-
-        // Malaysia (MYR)
-        InternationalBank("my_maybank", BankRegion.MALAYSIA, "Maybank", "মেব্যাংক", "MAYBANK", Color(0xFFCA8A04)),
-        InternationalBank("my_cimb", BankRegion.MALAYSIA, "CIMB Bank", "সিআইএমবি ব্যাংক", "CIMB", Color(0xFFB91C1C)),
-        InternationalBank("my_public", BankRegion.MALAYSIA, "Public Bank", "পাবলিক ব্যাংক", "PBB", Color(0xFF991B1B)),
-        InternationalBank("my_rhb", BankRegion.MALAYSIA, "RHB Bank", "আরএইচবি ব্যাংক", "RHB", Color(0xFF0284C7)),
-        InternationalBank("my_hlb", BankRegion.MALAYSIA, "Hong Leong Bank", "হং লিওং ব্যাংক", "HLB", Color(0xFF1E3A8A)),
-
-        // Italy (EUR)
-        InternationalBank("it_intesa", BankRegion.ITALY, "Intesa Sanpaolo", "ইন্তেসা সানপাওলো", "INTESA", Color(0xFF15803D)),
-        InternationalBank("it_unicredit", BankRegion.ITALY, "UniCredit Italia", "ইউনিক্রেডিট ইতালি", "UNICR", Color(0xFFDC2626)),
-        InternationalBank("it_postepay", BankRegion.ITALY, "PostePay / BancoPosta", "পোস্টেপে / ব্যাংকোপোস্টা", "POSTE", Color(0xFF0369A1)),
-        InternationalBank("it_fineco", BankRegion.ITALY, "Fineco Bank", "ফাইনেকো ব্যাংক", "FINECO", Color(0xFF1D4ED8)),
-
-        // Europe (EUR)
-        InternationalBank("eu_revolut", BankRegion.EUROPE, "Revolut Europe", "রেভোলুট ইউরোপ", "REVOLUT", Color(0xFF111827)),
-        InternationalBank("eu_n26", BankRegion.EUROPE, "N26 Bank", "এন২৬ ব্যাংক", "N26", Color(0xFF0D9488)),
-        InternationalBank("eu_wise", BankRegion.EUROPE, "Wise Multi-Currency", "ওয়াইজ মাল্টি-কারেন্সি", "WISE", Color(0xFF16A34A)),
-        InternationalBank("eu_deutsche", BankRegion.EUROPE, "Deutsche Bank", "ডয়েচে ব্যাংক", "DB", Color(0xFF1E3A8A)),
-        InternationalBank("eu_bnp", BankRegion.EUROPE, "BNP Paribas", "বিএনপি পারিবাস", "BNP", Color(0xFF047857)),
-
-        // UK / England (GBP)
-        InternationalBank("uk_barclays", BankRegion.UK, "Barclays UK", "বার্কলেজ ইউকে", "BARCLAYS", Color(0xFF0284C7)),
-        InternationalBank("uk_hsbc", BankRegion.UK, "HSBC UK", "এইচএসবিসি ইউকে", "HSBC", Color(0xFFDC2626)),
-        InternationalBank("uk_lloyds", BankRegion.UK, "Lloyds Bank", "লয়েডস ব্যাংক", "LLOYDS", Color(0xFF047857)),
-        InternationalBank("uk_monzo", BankRegion.UK, "Monzo Bank", "মনজো ব্যাংক", "MONZO", Color(0xFFE11D48)),
-        InternationalBank("uk_natwest", BankRegion.UK, "NatWest UK", "ন্যাটওয়েস্ট ইউকে", "NATWEST", Color(0xFF5B21B6)),
-        InternationalBank("uk_starling", BankRegion.UK, "Starling Bank", "স্টারলিং ব্যাংক", "STARLING", Color(0xFF4F46E5))
+    private val sharedMajorEuropeanBanks: List<InternationalBank> = listOf(
+        InternationalBank("eu_deutsche", AppCountry.DE, "Deutsche Bank", "ডয়েচে ব্যাংক", "DB", Color(0xFF1E3A8A)),
+        InternationalBank("eu_bnp", AppCountry.FR, "BNP Paribas", "বিএনপি পারিবাস", "BNP", Color(0xFF047857)),
+        InternationalBank("eu_santander", AppCountry.ES, "Banco Santander", "ব্যাঙ্কো সান্তান্দের", "SAN", Color(0xFFDC2626)),
+        InternationalBank("eu_ing", AppCountry.DE, "ING", "আইএনজি ব্যাংক", "ING", Color(0xFFEA580C))
     )
 
+    val all: List<InternationalBank> = listOf(
+        // Bangladesh (BDT) - All 22 Government & Private Banks preserved intact
+        InternationalBank("bd_city", AppCountry.BD, "City Bank", "সিটি ব্যাংক", "CITY", BrandCityBank),
+        InternationalBank("bd_dbbl", AppCountry.BD, "Dutch-Bangla Bank", "ডাচ-বাংলা ব্যাংক", "DBBL", BrandDbbl),
+        InternationalBank("bd_brac", AppCountry.BD, "BRAC Bank", "ব্র্যাক ব্যাংক", "BRAC", BrandBracBank),
+        InternationalBank("bd_islami", AppCountry.BD, "Islami Bank", "ইসলামী ব্যাংক", "IBBL", BrandIslamiBank),
+        InternationalBank("bd_trust", AppCountry.BD, "Trust Bank", "ট্রাস্ট ব্যাংক", "TRUST", BrandTrustBank),
+        InternationalBank("bd_sonali", AppCountry.BD, "Sonali Bank", "সোনালী ব্যাংক", "SONALI", BrandSonaliBank),
+        InternationalBank("bd_janata", AppCountry.BD, "Janata Bank", "জনতা ব্যাংক", "JANATA", BangladeshiBank.JANATA_BANK.brandColor),
+        InternationalBank("bd_agrani", AppCountry.BD, "Agrani Bank", "অগ্রণী ব্যাংক", "AGRANI", BangladeshiBank.AGRANI_BANK.brandColor),
+        InternationalBank("bd_rupali", AppCountry.BD, "Rupali Bank", "রূপালী ব্যাংক", "RUPALI", BangladeshiBank.RUPALI_BANK.brandColor),
+        InternationalBank("bd_bkb", AppCountry.BD, "Bangladesh Krishi Bank", "বাংলাদেশ কৃষি ব্যাংক", "BKB", BangladeshiBank.BKB.brandColor),
+        InternationalBank("bd_ebl", AppCountry.BD, "Eastern Bank", "ইস্টার্ন ব্যাংক", "EBL", BangladeshiBank.EBL.brandColor),
+        InternationalBank("bd_prime", AppCountry.BD, "Prime Bank", "প্রাইম ব্যাংক", "PRIME", BangladeshiBank.PRIME_BANK.brandColor),
+        InternationalBank("bd_mtb", AppCountry.BD, "Mutual Trust Bank", "মিউচুয়াল ট্রাস্ট ব্যাংক", "MTB", BangladeshiBank.MTB.brandColor),
+        InternationalBank("bd_dhaka", AppCountry.BD, "Dhaka Bank", "ঢাকা ব্যাংক", "DHAKA", BangladeshiBank.DHAKA_BANK.brandColor),
+        InternationalBank("bd_pubali", AppCountry.BD, "Pubali Bank", "পূবালী ব্যাংক", "PUBALI", BangladeshiBank.PUBALI_BANK.brandColor),
+        InternationalBank("bd_bankasia", AppCountry.BD, "Bank Asia", "ব্যাংক এশিয়া", "BANKASIA", BangladeshiBank.BANK_ASIA.brandColor),
+        InternationalBank("bd_sebl", AppCountry.BD, "Southeast Bank", "সাউথইস্ট ব্যাংক", "SEBL", BangladeshiBank.SEBL.brandColor),
+        InternationalBank("bd_one", AppCountry.BD, "One Bank", "ওয়ান ব্যাংক", "ONE", BangladeshiBank.ONE_BANK.brandColor),
+        InternationalBank("bd_uttara", AppCountry.BD, "Uttara Bank", "উত্তরা ব্যাংক", "UTTARA", BangladeshiBank.UTTARA_BANK.brandColor),
+        InternationalBank("bd_jamuna", AppCountry.BD, "Jamuna Bank", "যমুনা ব্যাংক", "JAMUNA", BangladeshiBank.JAMUNA_BANK.brandColor),
+        InternationalBank("bd_ucb", AppCountry.BD, "United Commercial Bank", "ইউনাইটেড কমার্শিয়াল ব্যাংক", "UCB", BangladeshiBank.UCB.brandColor),
+        InternationalBank("bd_mbl", AppCountry.BD, "Mercantile Bank", "মার্কেন্টাইল ব্যাংক", "MBL", BangladeshiBank.MBL.brandColor),
+
+        // South Asia & Neighboring Countries
+        InternationalBank("in_sbi", AppCountry.IN, "State Bank of India (SBI)", "স্টেট ব্যাংক অফ ইন্ডিয়া (SBI)", "SBI", Color(0xFF0284C7)),
+        InternationalBank("in_hdfc", AppCountry.IN, "HDFC Bank", "এইচডিএফসি ব্যাংক", "HDFC", Color(0xFF1E3A8A)),
+        InternationalBank("in_icici", AppCountry.IN, "ICICI Bank", "আইসিআইসিআই ব্যাংক", "ICICI", Color(0xFFEA580C)),
+        InternationalBank("in_axis", AppCountry.IN, "Axis Bank", "অ্যাক্সিস ব্যাংক", "AXIS", Color(0xFF9D174D)),
+
+        InternationalBank("np_nabil", AppCountry.NP, "Nabil Bank", "নাবিল ব্যাংক", "NABIL", Color(0xFF15803D)),
+        InternationalBank("np_nimb", AppCountry.NP, "Nepal Investment Mega Bank", "নেপাল ইনভেস্টমেন্ট মেগা ব্যাংক", "NIMB", Color(0xFF1D4ED8)),
+        InternationalBank("np_globalime", AppCountry.NP, "Global IME Bank", "গ্লোবাল আইএমই ব্যাংক", "GIME", Color(0xFFB91C1C)),
+
+        InternationalBank("lk_boc", AppCountry.LK, "Bank of Ceylon (BOC)", "ব্যাংক অফ সিলন (BOC)", "BOC", Color(0xFFCA8A04)),
+        InternationalBank("lk_combank", AppCountry.LK, "Commercial Bank of Ceylon", "কমার্শিয়াল ব্যাংক অফ সিলন", "COM", Color(0xFF0369A1)),
+        InternationalBank("lk_sampath", AppCountry.LK, "Sampath Bank", "সম্পথ ব্যাংক", "SAMP", Color(0xFFEA580C)),
+
+        InternationalBank("bt_bob", AppCountry.BT, "Bank of Bhutan (BoB)", "ব্যাংক অফ ভুটান (BoB)", "BOB", Color(0xFF0284C7)),
+        InternationalBank("bt_bnb", AppCountry.BT, "Bhutan National Bank (BNB)", "ভুটান ন্যাশনাল ব্যাংক (BNB)", "BNB", Color(0xFF1E40AF)),
+
+        InternationalBank("mm_kbz", AppCountry.MM, "KBZ Bank", "কেবিজেড ব্যাংক", "KBZ", Color(0xFF1D4ED8)),
+        InternationalBank("mm_cb", AppCountry.MM, "CB Bank", "সিবি ব্যাংক", "CB", Color(0xFF0F766E)),
+        InternationalBank("mm_aya", AppCountry.MM, "AYA Bank", "আয়া ব্যাংক", "AYA", Color(0xFFB91C1C)),
+
+        InternationalBank("mv_bml", AppCountry.MV, "Bank of Maldives (BML)", "ব্যাংক অফ মালদ্বীপ (BML)", "BML", Color(0xFFDC2626)),
+
+        // Kuwait (KWD) - All 7 Major Banks
+        InternationalBank("kw_abk", AppCountry.KW, "Al Ahli Bank of Kuwait (ABK)", "আল আহলি ব্যাংক অফ কুয়েত (ABK)", "ABK", Color(0xFF0369A1)),
+        InternationalBank("kw_nbk", AppCountry.KW, "National Bank of Kuwait (NBK)", "ন্যাশনাল ব্যাংক অফ কুয়েত (NBK)", "NBK", Color(0xFF003B73)),
+        InternationalBank("kw_kfh", AppCountry.KW, "Kuwait Finance House (KFH)", "কুয়েত ফিন্যান্স হাউস (KFH)", "KFH", Color(0xFF007A3D)),
+        InternationalBank("kw_gulf", AppCountry.KW, "Gulf Bank Kuwait", "গালফ ব্যাংক কুয়েত", "GULF", Color(0xFFB91C1C)),
+        InternationalBank("kw_boubyan", AppCountry.KW, "Boubyan Bank", "বুবিয়ান ব্যাংক", "BOUBYAN", Color(0xFF991B1B)),
+        InternationalBank("kw_burgan", AppCountry.KW, "Burgan Bank", "বুরগান ব্যাংক", "BURGAN", Color(0xFF0284C7)),
+        InternationalBank("kw_cbk", AppCountry.KW, "Commercial Bank of Kuwait (Al Tijari)", "কমার্শিয়াল ব্যাংক অফ কুয়েত (আল তিজারি)", "CBK", Color(0xFF0F766E)),
+
+        // Saudi Arabia (SAR) - All 7 Major Banks
+        InternationalBank("sa_alrajhi", AppCountry.SA, "Al Rajhi Bank", "আল রাজি ব্যাংক", "RAJHI", Color(0xFF0052A5)),
+        InternationalBank("sa_snb", AppCountry.SA, "Saudi National Bank (SNB)", "সৌদি ন্যাশনাল ব্যাংক (SNB)", "SNB", Color(0xFF006C35)),
+        InternationalBank("sa_riyad", AppCountry.SA, "Riyad Bank", "রিয়াদ ব্যাংক", "RIYAD", Color(0xFF1D4ED8)),
+        InternationalBank("sa_alinma", AppCountry.SA, "Alinma Bank", "আলইনমা ব্যাংক", "INMA", Color(0xFF6B4E3D)),
+        InternationalBank("sa_anb", AppCountry.SA, "Arab National Bank (ANB)", "আরব ন্যাশনাল ব্যাংক (ANB)", "ANB", Color(0xFF0369A1)),
+        InternationalBank("sa_bsf", AppCountry.SA, "Banque Saudi Fransi (BSF)", "ব্যাংক সৌদি ফ্রান্সি (BSF)", "BSF", Color(0xFF0F766E)),
+        InternationalBank("sa_sab", AppCountry.SA, "Saudi British Bank (SAB)", "সৌদি ব্রিটিশ ব্যাংক (SAB)", "SAB", Color(0xFFDC2626)),
+
+        // UAE / Dubai (AED) - All 5 Major Banks
+        InternationalBank("ae_enbd", AppCountry.AE, "Emirates NBD", "এমিরেটস এনবিডি", "ENBD", Color(0xFF00338D)),
+        InternationalBank("ae_fab", AppCountry.AE, "First Abu Dhabi Bank (FAB)", "ফার্স্ট আবুধাবি ব্যাংক (FAB)", "FAB", Color(0xFF00205B)),
+        InternationalBank("ae_dib", AppCountry.AE, "Dubai Islamic Bank (DIB)", "দুবাই ইসলামী ব্যাংক (DIB)", "DIB", Color(0xFF007A4D)),
+        InternationalBank("ae_adcb", AppCountry.AE, "Abu Dhabi Commercial Bank (ADCB)", "আবুধাবি কমার্শিয়াল ব্যাংক (ADCB)", "ADCB", Color(0xFF9D174D)),
+        InternationalBank("ae_mashreq", AppCountry.AE, "Mashreq Bank", "মাশরেক ব্যাংক", "MASHREQ", Color(0xFFEA580C)),
+
+        // Qatar (QAR) - All 5 Major Banks
+        InternationalBank("qa_qnb", AppCountry.QA, "Qatar National Bank (QNB)", "কাতার ন্যাশনাল ব্যাংক (QNB)", "QNB", Color(0xFF6B1D4A)),
+        InternationalBank("qa_masraf", AppCountry.QA, "Masraf Al Rayan", "মাসরাফ আল রায়ান", "MAR", Color(0xFF047857)),
+        InternationalBank("qa_doha", AppCountry.QA, "Doha Bank", "দোহা ব্যাংক", "DOHA", Color(0xFF0E7490)),
+        InternationalBank("qa_cbq", AppCountry.QA, "Commercial Bank of Qatar", "কমার্শিয়াল ব্যাংক অফ কাতার", "CBQ", Color(0xFF0F4C81)),
+        InternationalBank("qa_qib", AppCountry.QA, "Qatar Islamic Bank (QIB)", "কাতার ইসলামী ব্যাংক (QIB)", "QIB", Color(0xFF0369A1)),
+
+        // Oman (OMR) - All 4 Major Banks
+        InternationalBank("om_muscat", AppCountry.OM, "Bank Muscat", "ব্যাংক মাস্কাট", "BMUSCAT", Color(0xFFB91C1C)),
+        InternationalBank("om_dhofar", AppCountry.OM, "Bank Dhofar", "ব্যাংক ধোফার", "DHOFAR", Color(0xFF15803D)),
+        InternationalBank("om_sohar", AppCountry.OM, "Sohar International", "সোহার ইন্টারন্যাশনাল", "SOHAR", Color(0xFF0284C7)),
+        InternationalBank("om_nbo", AppCountry.OM, "National Bank of Oman (NBO)", "ন্যাশনাল ব্যাংক অফ ওমান (NBO)", "NBO", Color(0xFF1E3A8A)),
+
+        // Bahrain (BHD) - All 3 Major Banks
+        InternationalBank("bh_nbb", AppCountry.BH, "National Bank of Bahrain (NBB)", "ন্যাশনাল ব্যাংক অফ বাহরাইন (NBB)", "NBB", Color(0xFF0284C7)),
+        InternationalBank("bh_bbk", AppCountry.BH, "BBK", "বিবিকে ব্যাংক", "BBK", Color(0xFF1E3A8A)),
+        InternationalBank("bh_aub", AppCountry.BH, "Ahli United Bank", "আহলি ইউনাইটেড ব্যাংক", "AUB", Color(0xFF0F766E)),
+
+        // Malaysia (MYR) - All 5 Major Banks
+        InternationalBank("my_maybank", AppCountry.MY, "Maybank", "মেব্যাংক", "MAYBANK", Color(0xFFCA8A04)),
+        InternationalBank("my_cimb", AppCountry.MY, "CIMB Bank", "সিআইএমবি ব্যাংক", "CIMB", Color(0xFFB91C1C)),
+        InternationalBank("my_public", AppCountry.MY, "Public Bank", "পাবলিক ব্যাংক", "PBB", Color(0xFF991B1B)),
+        InternationalBank("my_rhb", AppCountry.MY, "RHB Bank", "আরএইচবি ব্যাংক", "RHB", Color(0xFF0284C7)),
+        InternationalBank("my_hlb", AppCountry.MY, "Hong Leong Bank", "হং লিওং ব্যাংক", "HLB", Color(0xFF1E3A8A)),
+
+        // Singapore (SGD) - All 3 Major Banks
+        InternationalBank("sg_dbs", AppCountry.SG, "DBS Bank", "ডিবিএস ব্যাংক", "DBS", Color(0xFFDC2626)),
+        InternationalBank("sg_ocbc", AppCountry.SG, "OCBC Bank", "ওসিবিসি ব্যাংক", "OCBC", Color(0xFFB91C1C)),
+        InternationalBank("sg_uob", AppCountry.SG, "UOB", "ইউওবি ব্যাংক", "UOB", Color(0xFF1D4ED8)),
+
+        // South Korea (KRW) - All 3 Major Banks
+        InternationalBank("kr_kb", AppCountry.KR, "KB Kookmin Bank", "কেবি কুকমিন ব্যাংক", "KB", Color(0xFFD97706)),
+        InternationalBank("kr_shinhan", AppCountry.KR, "Shinhan Bank", "শিনহান ব্যাংক", "SHINHAN", Color(0xFF1D4ED8)),
+        InternationalBank("kr_hana", AppCountry.KR, "Hana Bank", "হানা ব্যাংক", "HANA", Color(0xFF0F766E)),
+
+        // Japan (JPY) - All 3 Major Banks
+        InternationalBank("jp_mufg", AppCountry.JP, "MUFG Bank", "এমইউএফজি ব্যাংক", "MUFG", Color(0xFFDC2626)),
+        InternationalBank("jp_smbc", AppCountry.JP, "SMBC", "এসএমবিসি ব্যাংক", "SMBC", Color(0xFF15803D)),
+        InternationalBank("jp_mizuho", AppCountry.JP, "Mizuho Bank", "মিজুহো ব্যাংক", "MIZUHO", Color(0xFF1E3A8A)),
+
+        // Australia (AUD) - All 4 Major Banks
+        InternationalBank("au_commbank", AppCountry.AU, "Commonwealth Bank (CommBank)", "কমনওয়েলথ ব্যাংক (CommBank)", "CBA", Color(0xFFCA8A04)),
+        InternationalBank("au_nab", AppCountry.AU, "NAB", "এনএবি ব্যাংক", "NAB", Color(0xFFDC2626)),
+        InternationalBank("au_westpac", AppCountry.AU, "Westpac", "ওয়েস্টপ্যাক ব্যাংক", "WBC", Color(0xFFB91C1C)),
+        InternationalBank("au_anz", AppCountry.AU, "ANZ", "এএনজেড ব্যাংক", "ANZ", Color(0xFF0284C7)),
+
+        // USA (USD) - All 4 Major Banks
+        InternationalBank("us_chase", AppCountry.US, "JPMorgan Chase", "জেপিমরগান চেজ", "CHASE", Color(0xFF1D4ED8)),
+        InternationalBank("us_bofa", AppCountry.US, "Bank of America", "ব্যাংক অফ আমেরিকা", "BOFA", Color(0xFFDC2626)),
+        InternationalBank("us_wells", AppCountry.US, "Wells Fargo", "ওয়েলস ফার্গো", "WELLS", Color(0xFFB91C1C)),
+        InternationalBank("us_citi", AppCountry.US, "Citibank", "সিটিব্যাংক", "CITI", Color(0xFF0369A1)),
+
+        // UK / England (GBP) - All 4 Major Banks
+        InternationalBank("uk_hsbc", AppCountry.GB, "HSBC UK", "এইচএসবিসি ইউকে", "HSBC", Color(0xFFDC2626)),
+        InternationalBank("uk_barclays", AppCountry.GB, "Barclays", "বার্কলেজ ব্যাংক", "BARCLAYS", Color(0xFF0284C7)),
+        InternationalBank("uk_lloyds", AppCountry.GB, "Lloyds Bank", "লয়েডস ব্যাংক", "LLOYDS", Color(0xFF047857)),
+        InternationalBank("uk_natwest", AppCountry.GB, "NatWest", "ন্যাটওয়েস্ট ব্যাংক", "NATWEST", Color(0xFF5B21B6)),
+
+        // Canada (CAD) - All 4 Major Banks
+        InternationalBank("ca_rbc", AppCountry.CA, "RBC", "আরবিসি ব্যাংক", "RBC", Color(0xFF1D4ED8)),
+        InternationalBank("ca_td", AppCountry.CA, "TD Canada Trust", "টিডি কানাডা ট্রাস্ট", "TD", Color(0xFF15803D)),
+        InternationalBank("ca_scotia", AppCountry.CA, "Scotiabank", "স্কোশিয়াব্যাংক", "BNS", Color(0xFFDC2626)),
+        InternationalBank("ca_bmo", AppCountry.CA, "BMO", "বিএমও ব্যাংক", "BMO", Color(0xFF0284C7)),
+
+        // Italy (EUR) - All 4 Major Banks
+        InternationalBank("it_intesa", AppCountry.IT, "Intesa Sanpaolo", "ইন্তেসা সানপাওলো", "INTESA", Color(0xFF15803D)),
+        InternationalBank("it_unicredit", AppCountry.IT, "UniCredit", "ইউনিক্রেডিট ব্যাংক", "UNICR", Color(0xFFDC2626)),
+        InternationalBank("it_bmps", AppCountry.IT, "Banca Monte dei Paschi di Siena (BMPS)", "ব্যাঙ্কা মন্তে দেই পাস্কি দি সিয়েনা (BMPS)", "BMPS", Color(0xFF7F1D1D)),
+        InternationalBank("it_bper", AppCountry.IT, "BPER Banca", "বিপিইআর ব্যাঙ্কা", "BPER", Color(0xFF0F766E)),
+
+        // Cyprus (EUR) - Both Major Banks
+        InternationalBank("cy_boc", AppCountry.CY, "Bank of Cyprus", "ব্যাংক অফ সাইপ্রাস", "BOCY", Color(0xFF0E7490)),
+        InternationalBank("cy_hellenic", AppCountry.CY, "Hellenic Bank", "হেলেনিক ব্যাংক", "HB", Color(0xFF0369A1)),
+
+        // Major European Countries (DE, FR, ES, PT, GR)
+        InternationalBank("de_deutsche", AppCountry.DE, "Deutsche Bank", "ডয়েচে ব্যাংক", "DB", Color(0xFF1E3A8A)),
+        InternationalBank("de_ing", AppCountry.DE, "ING", "আইএনজি ব্যাংক", "ING", Color(0xFFEA580C)),
+        InternationalBank("de_bnp", AppCountry.DE, "BNP Paribas", "বিএনপি পারিবাস", "BNP", Color(0xFF047857)),
+        InternationalBank("de_santander", AppCountry.DE, "Banco Santander", "ব্যাঙ্কো সান্তান্দের", "SAN", Color(0xFFDC2626)),
+
+        InternationalBank("fr_bnp", AppCountry.FR, "BNP Paribas", "বিএনপি পারিবাস", "BNP", Color(0xFF047857)),
+        InternationalBank("fr_deutsche", AppCountry.FR, "Deutsche Bank", "ডয়েচে ব্যাংক", "DB", Color(0xFF1E3A8A)),
+        InternationalBank("fr_santander", AppCountry.FR, "Banco Santander", "ব্যাঙ্কো সান্তান্দের", "SAN", Color(0xFFDC2626)),
+        InternationalBank("fr_ing", AppCountry.FR, "ING", "আইএনজি ব্যাংক", "ING", Color(0xFFEA580C)),
+
+        InternationalBank("es_santander", AppCountry.ES, "Banco Santander", "ব্যাঙ্কো সান্তান্দের", "SAN", Color(0xFFDC2626)),
+        InternationalBank("es_ing", AppCountry.ES, "ING", "আইএনজি ব্যাংক", "ING", Color(0xFFEA580C)),
+        InternationalBank("es_deutsche", AppCountry.ES, "Deutsche Bank", "ডয়েচে ব্যাংক", "DB", Color(0xFF1E3A8A)),
+        InternationalBank("es_bnp", AppCountry.ES, "BNP Paribas", "বিএনপি পারিবাস", "BNP", Color(0xFF047857)),
+
+        InternationalBank("pt_santander", AppCountry.PT, "Banco Santander", "ব্যাঙ্কো সান্তান্দের", "SAN", Color(0xFFDC2626)),
+        InternationalBank("pt_bnp", AppCountry.PT, "BNP Paribas", "বিএনপি পারিবাস", "BNP", Color(0xFF047857)),
+        InternationalBank("pt_deutsche", AppCountry.PT, "Deutsche Bank", "ডয়েচে ব্যাংক", "DB", Color(0xFF1E3A8A)),
+        InternationalBank("pt_ing", AppCountry.PT, "ING", "আইএনজি ব্যাংক", "ING", Color(0xFFEA580C)),
+
+        InternationalBank("gr_deutsche", AppCountry.GR, "Deutsche Bank", "ডয়েচে ব্যাংক", "DB", Color(0xFF1E3A8A)),
+        InternationalBank("gr_bnp", AppCountry.GR, "BNP Paribas", "বিএনপি পারিবাস", "BNP", Color(0xFF047857)),
+        InternationalBank("gr_santander", AppCountry.GR, "Banco Santander", "ব্যাঙ্কো সান্তান্দের", "SAN", Color(0xFFDC2626)),
+        InternationalBank("gr_ing", AppCountry.GR, "ING", "আইএনজি ব্যাংক", "ING", Color(0xFFEA580C))
+    )
+
+    /**
+     * Returns all major banks for any synchronized [AppCountry].
+     * Guarantees every country in [AppCountry.entries] has major banks available.
+     */
+    fun banksForCountry(country: AppCountry): List<InternationalBank> {
+        val direct = all.filter { it.country == country }
+        if (direct.isNotEmpty()) return direct
+        return if (country.group == CountryRegionGroup.EUROPE_CYPRUS) {
+            sharedMajorEuropeanBanks.map { it.copy(country = country, defaultCurrency = country.suggestedCurrency) }
+        } else {
+            emptyList()
+        }
+    }
+
     fun banksForRegion(region: BankRegion): List<InternationalBank> =
-        all.filter { it.region == region }
+        banksForCountry(region.primaryCountry)
 }

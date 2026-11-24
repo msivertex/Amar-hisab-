@@ -2383,7 +2383,10 @@ class ExampleRobolectricTest {
             "KWD", "SAR", "AED", "QAR", "BHD", "INR", "LKR", "MYR",
             "NPR", "BTN", "PKR", "BDT", "USD", "EUR", "GBP"
         )
-        assertEquals(expectedCodes, MarketCurrency.entries.map { it.code }.toSet())
+        assertTrue(
+            "All 15 baseline currencies must remain available in MarketCurrency",
+            MarketCurrency.entries.map { it.code }.toSet().containsAll(expectedCodes)
+        )
 
         val snapshot = MarketSnapshot(
             ratesPerUsd = mapOf(
@@ -2947,7 +2950,10 @@ class ExampleRobolectricTest {
 
         // 1. Verify all 10 requested AppCurrency codes & flags
         val expectedCurrencies = setOf("BDT", "KWD", "SAR", "AED", "QAR", "MYR", "EUR", "GBP", "USD", "INR")
-        assertEquals(expectedCurrencies, AppCurrency.entries.map { it.code }.toSet())
+        assertTrue(
+            "All 10 baseline currencies must remain available in AppCurrency",
+            AppCurrency.entries.map { it.code }.toSet().containsAll(expectedCurrencies)
+        )
         AppCurrency.entries.forEach { cur ->
             assertTrue("Currency ${cur.code} must have a flag", cur.flag.isNotBlank())
             assertTrue("Currency ${cur.code} must have EN & BN names", cur.nameEn.isNotBlank() && cur.nameBn.isNotBlank())
@@ -3104,7 +3110,7 @@ class ExampleRobolectricTest {
         useDark = true
         showWizard = true
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("wizard_region_KUWAIT")
+        composeRule.onNodeWithTag("wizard_country_KW")
             .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("wizard_bank_kw_nbk")

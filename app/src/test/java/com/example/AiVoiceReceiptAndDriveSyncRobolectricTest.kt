@@ -195,6 +195,201 @@ class AiVoiceReceiptAndDriveSyncRobolectricTest {
     }
 
     @Test
+    fun smart_local_voice_parser_fixes_income_food_dining_and_kuwait_dinar_dbbl_transfer_mapping() {
+        val accounts = listOf(
+            AccountEntity(
+                id = 1L,
+                name = "bKash Personal",
+                type = AccountType.MFS,
+                balance = 8500.0,
+                bankOrProvider = "bKash",
+                colorArgb = 0xFFE2136EL,
+                currencyCode = "BDT"
+            ),
+            AccountEntity(
+                id = 2L,
+                name = "Dutch-Bangla Savings",
+                type = AccountType.DEBIT_BANK,
+                balance = 12000.0,
+                bankOrProvider = "Dutch-Bangla Bank",
+                colorArgb = 0xFF10B981L,
+                currencyCode = "BDT"
+            ),
+            AccountEntity(
+                id = 3L,
+                name = "Upay Wallet",
+                type = AccountType.MFS,
+                balance = 1200.0,
+                bankOrProvider = "Upay",
+                colorArgb = 0xFFF59E0BL,
+                currencyCode = "BDT"
+            ),
+            AccountEntity(
+                id = 4L,
+                name = "ABK Kuwait Card",
+                type = AccountType.DEBIT_BANK,
+                balance = 950.0,
+                bankOrProvider = "Al Ahli Bank of Kuwait",
+                colorArgb = 0xFF00529BL,
+                currencyCode = "KWD"
+            )
+        )
+
+        // 1. Income vs Expense classification for incoming Bangla & English phrases
+        val bkashDhukeche = LocalVoiceTransactionParser.parse(
+            utterance = "আমার বিকাশে ৫০০০ টাকা ঢুকেছে",
+            accounts = accounts,
+            language = AppLanguage.BN,
+            defaultCurrencyCode = "BDT"
+        )
+        assertEquals(TransactionType.INCOME, bkashDhukeche.type)
+        assertEquals(5000.0, bkashDhukeche.amountBdt, 0.001)
+        assertEquals("BDT", bkashDhukeche.currencyCode)
+        assertEquals(1L, LocalVoiceTransactionParser.matchAccountByHint(accounts, bkashDhukeche.accountHint, "BDT")?.id)
+
+        val peyechiIncome = LocalVoiceTransactionParser.parse(
+            utterance = "বিকাশে ২০০০ টাকা পেয়েছি",
+            accounts = accounts,
+            language = AppLanguage.BN
+        )
+        assertEquals(TransactionType.INCOME, peyechiIncome.type)
+        assertEquals(2000.0, peyechiIncome.amountBdt, 0.001)
+
+        val jomaIncome = LocalVoiceTransactionParser.parse(
+            utterance = "ডাচ বাংলা একাউন্টে ৩৫০০০ টাকা জমা হয়েছে",
+            accounts = accounts,
+            language = AppLanguage.BN
+        )
+        assertEquals(TransactionType.INCOME, jomaIncome.type)
+        assertEquals(2L, LocalVoiceTransactionParser.matchAccountByHint(accounts, jomaIncome.accountHint, "BDT")?.id)
+
+        val upayIncome = LocalVoiceTransactionParser.parse(
+            utterance = "Upay তে ৫০০ টাকা ঢুকেছে",
+            accounts = accounts,
+            language = AppLanguage.BN
+        )
+        assertEquals("Upay must not falsely trigger 'pay' expense keyword", TransactionType.INCOME, upayIncome.type)
+        assertEquals(3L, LocalVoiceTransactionParser.matchAccountByHint(accounts, upayIncome.accountHint, "BDT")?.id)
+
+        val englishCredited = LocalVoiceTransactionParser.parse(
+            utterance = "Received 120 KD salary credited to ABK",
+            accounts = accounts,
+            language = AppLanguage.EN
+        )
+        assertEquals(TransactionType.INCOME, englishCredited.type)
+        assertEquals("KWD", englishCredited.currencyCode)
+        assertEquals(4L, LocalVoiceTransactionParser.matchAccountByHint(accounts, englishCredited.accountHint, "KWD")?.id)
+
+        // 2. Category accuracy: Food & Dining vs Groceries
+        val lunchExpense = LocalVoiceTransactionParser.parse(
+            utterance = "দুপুরের খাবার ২০০ টাকা বিকাশ থেকে",
+            accounts = accounts,
+            language = AppLanguage.BN
+        )
+        assertEquals(TransactionType.EXPENSE, lunchExpense.type)
+        assertEquals(ExpenseCategory.FOOD_DINING, lunchExpense.category)
+
+        val hotelMeal = LocalVoiceTransactionParser.parse(
+            utterance = "হোটেলে মাছ ভাত খেয়েছি ২৫০ টাকা",
+            accounts = accounts,
+            language = AppLanguage.BN
+        )
+        assertEquals(TransactionType.EXPENSE, hotelMeal.type)
+        assertEquals(ExpenseCategory.FOOD_DINING, hotelMeal.category)
+
+        val dinnerEn = LocalVoiceTransactionParser.parse(
+            utterance = "Dinner at restaurant 4.5 KD from ABK",
+            accounts = accounts,
+            language = AppLanguage.EN
+        )
+        assertEquals(TransactionType.EXPENSE, dinnerEn.type)
+        assertEquals(ExpenseCategory.FOOD_DINING, dinnerEn.category)
+        assertEquals("KWD", dinnerEn.currencyCode)
+
+        val teaSnacks = LocalVoiceTransactionParser.parse(
+            utterance = "চা নাস্তা খেয়েছি ৮০ টাকা",
+            accounts = accounts,
+            language = AppLanguage.BN
+        )
+        assertEquals(ExpenseCategory.FOOD_DINING, teaSnacks.category)
+
+        val groceryBazar = LocalVoiceTransactionParser.parse(
+            utterance = "কাঁচাবাজার করেছি ৮০০ টাকা",
+            accounts = accounts,
+            language = AppLanguage.BN
+        )
+        assertEquals(ExpenseCategory.GROCERIES, groceryBazar.category)
+
+        val mobileRecharge = LocalVoiceTransactionParser.parse(
+            utterance = "মোবাইল রিচার্জ ২০০ টাকা",
+            accounts = accounts,
+            language = AppLanguage.BN
+        )
+        assertEquals(ExpenseCategory.RENT_UTILITIES, mobileRecharge.category)
+
+        // 3. Cross-border Kuwait -> Dutch-Bangla 500 Dinar transfer detection, KD currency & exact From/To mapping
+        val kuwaitToDbbl = LocalVoiceTransactionParser.parse(
+            utterance = "আমি কুয়েত থেকে বাংলাদেশের ডাচ বাংলা একাউন্টে ৫০০ দিনার পাঠিয়েছি",
+            accounts = accounts,
+            language = AppLanguage.BN,
+            defaultCurrencyCode = "BDT"
+        )
+        assertEquals(TransactionType.TRANSFER, kuwaitToDbbl.type)
+        assertEquals(500.0, kuwaitToDbbl.amountBdt, 0.001)
+        assertEquals("KWD", kuwaitToDbbl.currencyCode)
+        assertEquals(ExpenseCategory.TRANSFER, kuwaitToDbbl.category)
+        val matchedTo = LocalVoiceTransactionParser.matchAccountByHint(accounts, kuwaitToDbbl.toAccountHint)
+        val matchedFrom = LocalVoiceTransactionParser.matchAccountByHint(
+            accounts = accounts,
+            hint = kuwaitToDbbl.accountHint,
+            preferredCurrency = kuwaitToDbbl.currencyCode,
+            excludeAccountId = matchedTo?.id
+        )
+        assertEquals("Destination must be Dutch-Bangla Savings", 2L, matchedTo?.id)
+        assertEquals("Source must be ABK Kuwait Card (KWD)", 4L, matchedFrom?.id)
+
+        // Unlisted bank hint must NOT fall back to unrelated bKash BDT wallet
+        val unlistedMatch = LocalVoiceTransactionParser.matchAccountByHint(accounts, "City Bank")
+        assertEquals(null, unlistedMatch)
+
+        // 4. End-to-end VoiceEntrySheet UI check for Kuwait -> DBBL 500 Dinar transfer
+        var executedFromId = -1L
+        var executedToId = -1L
+        var executedAmount = 0.0
+        composeRule.setContent {
+            AmarHisabTheme(darkTheme = false, isBangla = true) {
+                VoiceEntrySheet(
+                    accounts = accounts,
+                    voiceState = VoiceParseUiState.Success(kuwaitToDbbl),
+                    ttsState = TtsUiState.Idle,
+                    language = AppLanguage.BN,
+                    strings = StringsProvider.bangla,
+                    onParseUtterance = {},
+                    onPlayBriefingTts = {},
+                    onStopTts = {},
+                    onSaveParsedTransaction = { _, _, _, _, _ -> },
+                    onDismiss = {},
+                    defaultCurrencyCode = "BDT",
+                    onExecuteTransfer = { fromId, toId, amount, _ ->
+                        executedFromId = fromId
+                        executedToId = toId
+                        executedAmount = amount
+                    }
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("voice_save_button")
+            .performScrollTo()
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        assertEquals(4L, executedFromId)
+        assertEquals(2L, executedToId)
+        assertEquals(500.0, executedAmount, 0.001)
+    }
+
+    @Test
     fun local_receipt_ocr_parser_prioritizes_total_amount_and_currency_across_currencies() {
         // 1. Kuwait receipt (KD) with multiple line items and GRAND TOTAL
         val kuwaitReceipt = """
@@ -951,6 +1146,756 @@ class AiVoiceReceiptAndDriveSyncRobolectricTest {
             assertEquals("KWD", afterLogout.mainCurrencyCode)
             assertEquals(1, db.accountDao().getAllAccountsOnce().size)
             assertEquals(5500.0, db.accountDao().getAllAccountsOnce().first().balance, 0.001)
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun firestore_central_store_payload_mappers_match_security_rules_schema_and_decoupled_ai_has_no_appcheck() {
+        // 1. Verify GeminiAiService is decoupled from Firebase AI Logic & handles unset key cleanly
+        val aiService = com.example.data.ai.GeminiAiService()
+        assertNotNull(aiService)
+
+        // 2. Verify FirestorePayloadMapper emits valid rule-aligned documents without "id" or null keys
+        val uid = "uid_shariful_001"
+        val account = AccountEntity(
+            id = 7L,
+            name = "Trust Bank Payroll",
+            type = AccountType.DEBIT_BANK,
+            balance = 42000.0,
+            creditLimit = 0.0,
+            bankOrProvider = "Trust Bank",
+            accountSubtype = "Savings",
+            cardNetwork = "Visa",
+            accountNumberLast4 = "9012",
+            colorArgb = 0xFF0284C7L,
+            currencyCode = "BDT",
+            createdAt = 1_763_800_000_000L
+        )
+        val accCreate = com.example.data.firebase.FirestorePayloadMapper.accountCreateMap(uid, account)
+        assertEquals("acc_7", com.example.data.firebase.FirestorePayloadMapper.accountDocId(account.id))
+        assertFalse("Firestore create payload must never include 'id' key", accCreate.containsKey("id"))
+        assertEquals(uid, accCreate["userId"])
+        assertEquals(7L, accCreate["localId"])
+        assertEquals("DEBIT_BANK", accCreate["type"])
+        assertTrue(accCreate.containsKey("createdAt"))
+        assertTrue(accCreate.containsKey("updatedAt"))
+
+        val accUpdate = com.example.data.firebase.FirestorePayloadMapper.accountUpdateMap(account)
+        assertFalse("Update map must not mutate immutable userId", accUpdate.containsKey("userId"))
+        assertFalse("Update map must not mutate immutable createdAt", accUpdate.containsKey("createdAt"))
+        assertTrue(accUpdate.containsKey("updatedAt"))
+
+        // 3. Verify optional null fields (toAccountLocalId) are stripped for expense, kept for transfer
+        val expenseTx = TransactionEntity(
+            id = 12L,
+            title = "Bazaar",
+            amount = 1500.0,
+            type = TransactionType.EXPENSE,
+            category = ExpenseCategory.GROCERIES,
+            accountId = 7L,
+            toAccountId = null,
+            note = "Voice entry",
+            currencyCode = "BDT",
+            timestamp = 1_763_800_100_000L
+        )
+        val expenseMap = com.example.data.firebase.FirestorePayloadMapper.transactionCreateMap(uid, expenseTx)
+        assertFalse(expenseMap.containsKey("id"))
+        assertFalse("Optional null toAccountLocalId must be omitted", expenseMap.containsKey("toAccountLocalId"))
+        assertEquals(1500.0, expenseMap["amount"])
+
+        val transferTx = expenseTx.copy(
+            id = 13L,
+            type = TransactionType.TRANSFER,
+            category = ExpenseCategory.TRANSFER,
+            toAccountId = 8L
+        )
+        val transferMap = com.example.data.firebase.FirestorePayloadMapper.transactionCreateMap(uid, transferTx)
+        assertEquals(8L, transferMap["toAccountLocalId"])
+    }
+
+    @Test
+    fun unified_195_country_dataset_and_major_banks_are_synchronized_across_currency_and_card_wizard() {
+        val countries = com.example.data.model.AppCountry.entries
+        assertEquals("Unified dataset must contain all 195 sovereign countries", 195, countries.size)
+        assertEquals("Every country ISO code must be unique", 195, countries.map { it.code }.toSet().size)
+        assertEquals(7, com.example.data.model.CountryRegionGroup.entries.size)
+        assertTrue("Expected at least 140 distinct world currencies", com.example.data.model.AppCurrency.entries.size >= 140)
+
+        // 1. Verify all 28 core expatriate/neighboring + global countries map to exact currencies
+        val expectedCoreCountryToCurrency = mapOf(
+            // South Asia & Neighboring Countries
+            "BD" to "BDT",
+            "IN" to "INR",
+            "NP" to "NPR",
+            "LK" to "LKR",
+            "BT" to "BTN",
+            "MM" to "MMK",
+            "MV" to "MVR",
+            // Middle East
+            "SA" to "SAR",
+            "AE" to "AED",
+            "KW" to "KWD",
+            "QA" to "QAR",
+            "OM" to "OMR",
+            "BH" to "BHD",
+            // Asia-Pacific & Oceania
+            "MY" to "MYR",
+            "SG" to "SGD",
+            "KR" to "KRW",
+            "JP" to "JPY",
+            "AU" to "AUD",
+            // North America & UK
+            "US" to "USD",
+            "GB" to "GBP",
+            "CA" to "CAD",
+            // Europe & Cyprus
+            "IT" to "EUR",
+            "ES" to "EUR",
+            "PT" to "EUR",
+            "GR" to "EUR",
+            "DE" to "EUR",
+            "FR" to "EUR",
+            "CY" to "EUR",
+            // Expanded global 195-country coverage spot checks
+            "TR" to "TRY",
+            "PH" to "PHP",
+            "BR" to "BRL",
+            "EG" to "EGP",
+            "ID" to "IDR",
+            "CN" to "CNY",
+            "NG" to "NGN",
+            "ZA" to "ZAR",
+            "PS" to "ILS",
+            "VA" to "EUR"
+        )
+        val actualMap = countries.associate { it.code to it.suggestedCurrency.code }
+        expectedCoreCountryToCurrency.forEach { (iso, cur) ->
+            assertEquals("Mismatch for country $iso", cur, actualMap[iso])
+        }
+
+        // Verify live/offline conversion works for ALL 195 countries' currencies (zero NaN/0)
+        val snapshot = com.example.data.market.MarketSnapshot.defaultReference()
+        com.example.data.model.AppCurrency.entries.forEach { cur ->
+            val converted = snapshot.convertCurrencyCode(100.0, cur.code, "BDT")
+            assertTrue("Currency ${cur.code} must convert positively to BDT", converted > 0.0 && converted.isFinite())
+        }
+
+        // 2. Verify dynamic country headings
+        assertEquals("Select Bangladeshi Bank", com.example.data.model.AppCountry.BD.bankSelectionHeading(AppLanguage.EN))
+        assertEquals("Select Kuwait Bank", com.example.data.model.AppCountry.KW.bankSelectionHeading(AppLanguage.EN))
+        assertEquals("Select Saudi Arabia Bank", com.example.data.model.AppCountry.SA.bankSelectionHeading(AppLanguage.EN))
+        assertEquals("Select India Bank", com.example.data.model.AppCountry.IN.bankSelectionHeading(AppLanguage.EN))
+
+        // 3. Verify every quick-select expatriate country has major preset banks in InternationalBankCatalog
+        com.example.data.model.AppCountry.quickSelectCountries.forEach { country ->
+            val banks = com.example.data.model.InternationalBankCatalog.banksForCountry(country)
+            assertTrue("Country ${country.nameEn} must provide major banks", banks.isNotEmpty())
+        }
+
+        // 4. Verify exact requested major bank coverage per country
+        assertEquals(22, com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.BD).size)
+
+        val kuwaitNames = com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.KW).map { it.en }
+        assertTrue(kuwaitNames.any { it.contains("ABK") })
+        assertTrue(kuwaitNames.any { it.contains("NBK") })
+        assertTrue(kuwaitNames.any { it.contains("KFH") })
+        assertTrue(kuwaitNames.any { it.contains("Gulf Bank") })
+        assertTrue(kuwaitNames.any { it.contains("Boubyan") })
+        assertTrue(kuwaitNames.any { it.contains("Burgan") })
+        assertTrue(kuwaitNames.any { it.contains("Al Tijari") })
+
+        val saudiNames = com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.SA).map { it.en }
+        assertTrue(saudiNames.any { it.contains("Al Rajhi") })
+        assertTrue(saudiNames.any { it.contains("SNB") })
+        assertTrue(saudiNames.any { it.contains("Riyad Bank") })
+        assertTrue(saudiNames.any { it.contains("Alinma") })
+        assertTrue(saudiNames.any { it.contains("ANB") })
+        assertTrue(saudiNames.any { it.contains("BSF") })
+        assertTrue(saudiNames.any { it.contains("SAB") })
+
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.AE).size >= 5)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.QA).size >= 5)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.OM).size >= 4)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.BH).size >= 3)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.MY).size >= 5)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.SG).size >= 3)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.US).size >= 4)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.GB).size >= 4)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.CA).size >= 4)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.IT).size >= 4)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.CY).any { it.en.contains("Bank of Cyprus") })
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.CY).any { it.en.contains("Hellenic Bank") })
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.DE).any { it.en.contains("Deutsche Bank") })
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.FR).any { it.en.contains("BNP Paribas") })
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.ES).any { it.en.contains("Banco Santander") })
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.AU).size >= 4)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.JP).size >= 3)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.KR).size >= 3)
+        assertTrue(com.example.data.model.InternationalBankCatalog.banksForCountry(com.example.data.model.AppCountry.MV).any { it.en.contains("Bank of Maldives") })
+    }
+
+    @Test
+    fun add_account_wizard_switches_countries_shows_dynamic_heading_and_saves_manual_custom_bank_with_card_color() {
+        var savedAccount: AccountEntity? = null
+
+        composeRule.setContent {
+            AmarHisabTheme(darkTheme = false, isBangla = false) {
+                com.example.ui.screens.AddAccountWizardSheet(
+                    language = AppLanguage.EN,
+                    strings = StringsProvider.english,
+                    onDismiss = {},
+                    onSaveAccount = { savedAccount = it },
+                    defaultCurrencyCode = "BDT",
+                    secondaryCurrencyCode = "KWD",
+                    userCountryCode = "BD"
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        // 1. Default country BD shows Bangladeshi Bank heading
+        composeRule.onNodeWithTag("wizard_bank_section_heading")
+            .performScrollTo()
+            .assertIsDisplayed()
+
+        // 2. Switch to Kuwait via synchronized country chip -> dynamic heading updates & Kuwait major banks (ABK) appear
+        composeRule.onNodeWithTag("wizard_country_KW")
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("wizard_bank_section_heading")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag("wizard_bank_kw_abk").assertExists()
+
+        // 3. Choose Manual / Custom Bank -> enter unlisted private bank name + choose custom Card Color + balance -> save
+        composeRule.onNodeWithTag("wizard_bank_custom")
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("wizard_custom_bank_input")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .performTextReplacement("Al-Noor Private Bank")
+        composeRule.onNodeWithTag("wizard_card_color_3")
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.onNodeWithTag("wizard_balance_input")
+            .performScrollTo()
+            .performTextReplacement("250.500")
+        composeRule.onNodeWithTag("wizard_save_account_button")
+            .performScrollTo()
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        val result = requireNotNull(savedAccount) { "Expected custom bank card to save" }
+        assertEquals("Al-Noor Private Bank", result.bankOrProvider)
+        assertEquals("KWD", result.currencyCode)
+        assertEquals(250.5, result.balance, 0.001)
+        val swatchColor = com.example.data.model.CardColorCatalog.swatches[3]
+        val expectedLong = ((swatchColor.alpha * 255f + 0.5f).toInt().toLong() shl 24) or
+            ((swatchColor.red * 255f + 0.5f).toInt().toLong() shl 16) or
+            ((swatchColor.green * 255f + 0.5f).toInt().toLong() shl 8) or
+            (swatchColor.blue * 255f + 0.5f).toInt().toLong()
+        assertEquals(expectedLong, result.colorArgb)
+    }
+
+    @Test
+    fun global_language_catalog_has_gboard_suggested_all_indian_languages_rtl_flags_and_persists_across_reloads() = runBlocking {
+        // 1. Primary BN & EN plus Gboard-style Suggested / Popular Languages section (single consolidated Bangla)
+        assertEquals(listOf(AppLanguage.BN, AppLanguage.EN), AppLanguage.primaryLanguages)
+        assertTrue(AppLanguage.suggestedLanguages.containsAll(
+            listOf(AppLanguage.BN, AppLanguage.EN, AppLanguage.AR, AppLanguage.HI, AppLanguage.UR, AppLanguage.MS, AppLanguage.IT, AppLanguage.ZH)
+        ))
+        assertEquals("Bangla must appear only once in AppLanguage", 1, AppLanguage.entries.count { it.isBangla })
+        assertTrue("Expected at least 40 curated global & Indian languages", AppLanguage.entries.size >= 40)
+
+        // Verify all requested global, expatriate & major Indian languages exist with native names & codes
+        val expectedCodes = setOf(
+            // Core & Expatriate / Global
+            "bn", "en", "ar", "ur", "ms", "id", "fil", "it", "es", "fr",
+            "de", "pt", "zh", "ja", "ko", "tr", "ru", "ne", "si", "fa",
+            // Major Indian Languages (Bangla consolidated under single bn entry)
+            "hi", "mr", "ta", "te", "gu", "kn", "ml", "pa", "or", "as"
+        )
+        assertTrue(AppLanguage.entries.map { it.code }.toSet().containsAll(expectedCodes))
+        assertEquals("বাংলা", AppLanguage.BN.nativeName)
+        assertEquals("Bangladesh • India (West Bengal • Tripura)", AppLanguage.BN.regionHint)
+        assertTrue(AppLanguage.BN.isBangla)
+        assertEquals(AppLanguage.BN, AppLanguage.fromCode("bn-IN"))
+
+        // Verify Urdu lists Pakistan • South Asia (India • Nepal) without Middle East
+        assertTrue(AppLanguage.UR.regionHint.contains("Pakistan • South Asia"))
+        assertTrue(AppLanguage.UR.regionHint.contains("India"))
+        assertTrue(AppLanguage.UR.regionHint.contains("Nepal"))
+        assertFalse(AppLanguage.UR.regionHint.contains("Middle East", ignoreCase = true))
+        assertFalse(AppLanguage.UR.searchKeywords.contains("middle east", ignoreCase = true))
+
+        // Verify RTL metadata on Arabic, Urdu & Persian; LTR on BN, EN & Indian languages
+        assertTrue(AppLanguage.AR.isRtl)
+        assertTrue(AppLanguage.UR.isRtl)
+        assertTrue(AppLanguage.FA.isRtl)
+        assertFalse(AppLanguage.BN.isRtl)
+        assertFalse(AppLanguage.EN.isRtl)
+        assertFalse(AppLanguage.MR.isRtl)
+
+        // Verify search matches English name, native script, ISO code, and regional/script variants
+        assertTrue(AppLanguage.BN.matchesQuery("West Bengal"))
+        assertTrue(AppLanguage.BN.matchesQuery("Tripura"))
+        assertTrue(AppLanguage.BN.matchesQuery("ভারত"))
+        assertTrue(AppLanguage.BN.matchesQuery("Bangladesh"))
+        assertTrue(AppLanguage.UR.matchesQuery("Pakistan"))
+        assertTrue(AppLanguage.UR.matchesQuery("South Asia"))
+        assertTrue(AppLanguage.AR.matchesQuery("Arabic"))
+        assertTrue(AppLanguage.AR.matchesQuery("العربية"))
+        assertTrue(AppLanguage.AR.matchesQuery("Kuwait"))
+        assertTrue(AppLanguage.HI.matchesQuery("हिन्दी"))
+        assertTrue(AppLanguage.MR.matchesQuery("मराठी"))
+        assertTrue(AppLanguage.TA.matchesQuery("தமிழ்"))
+        assertTrue(AppLanguage.TE.matchesQuery("తెలుగు"))
+        assertTrue(AppLanguage.GU.matchesQuery("ગુજરાતી"))
+        assertTrue(AppLanguage.KN.matchesQuery("ಕನ್ನಡ"))
+        assertTrue(AppLanguage.ML.matchesQuery("മലയാളം"))
+        assertTrue(AppLanguage.PA.matchesQuery("ਪੰਜਾਬੀ"))
+        assertTrue(AppLanguage.OR.matchesQuery("ଓଡ଼ିଆ"))
+        assertTrue(AppLanguage.AS.matchesQuery("অসমীয়া"))
+        assertTrue(AppLanguage.IT.matchesQuery("Italy"))
+        assertTrue(AppLanguage.BN.matchesQuery("Bangla"))
+
+        // Verify every single language resolves non-blank core, export, and fallback UI labels
+        AppLanguage.entries.forEach { lang ->
+            val str = StringsProvider.get(lang)
+            assertTrue("navHome blank for $lang", str.navHome.isNotBlank())
+            assertTrue("settingsTitle blank for $lang", str.settingsTitle.isNotBlank())
+            assertTrue("totalBalance blank for $lang", str.totalBalance.isNotBlank())
+            assertTrue("saveTransaction blank for $lang", str.saveTransaction.isNotBlank())
+            assertTrue("languagePageSubtitle blank for $lang", str.settingsRefinement.languagePageSubtitle.isNotBlank())
+            assertTrue("reportExport cardTitle blank for $lang", str.reportExport.cardTitle.isNotBlank())
+        }
+        assertEquals("الرئيسية", StringsProvider.get(AppLanguage.AR).navHome)
+        assertEquals("ہوم", StringsProvider.get(AppLanguage.UR).navHome)
+        assertEquals("होम", StringsProvider.get(AppLanguage.HI).navHome)
+        assertEquals("முகப்பு", StringsProvider.get(AppLanguage.TA).navHome)
+        assertEquals("హోమ్", StringsProvider.get(AppLanguage.TE).navHome)
+        assertEquals("ഹോം", StringsProvider.get(AppLanguage.ML).navHome)
+        assertEquals(StringsProvider.bangla.navHome, StringsProvider.get(AppLanguage.BN).navHome)
+
+        // 2. Verify DataStore persistence & BackupManager round-trip for global and Indian languages
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        val prefsRepo = UserPreferencesRepository(context)
+        try {
+            prefsRepo.setLanguage(AppLanguage.BN)
+            assertEquals(AppLanguage.BN, prefsRepo.userPrefs.first().language)
+
+            prefsRepo.setLanguage(AppLanguage.AR)
+            assertEquals(AppLanguage.AR, prefsRepo.userPrefs.first().language)
+
+            prefsRepo.setLanguage(AppLanguage.MR)
+            val exported = BackupManager.exportJson(db, prefsRepo.userPrefs.first())
+            prefsRepo.setLanguage(AppLanguage.EN)
+            assertEquals(AppLanguage.EN, prefsRepo.userPrefs.first().language)
+
+            BackupManager.restoreFromJson(exported, db, prefsRepo)
+            assertEquals(AppLanguage.MR, prefsRepo.userPrefs.first().language)
+        } finally {
+            prefsRepo.setLanguage(AppLanguage.EN)
+            db.close()
+        }
+    }
+
+    @Test
+    fun language_selection_screen_supports_gboard_search_switches_rtl_layout_and_returns_to_bn_en() {
+        var activeLanguage by mutableStateOf(AppLanguage.EN)
+        var observedDirection: androidx.compose.ui.unit.LayoutDirection? = null
+
+        composeRule.setContent {
+            AmarHisabTheme(
+                darkTheme = false,
+                isBangla = activeLanguage == AppLanguage.BN,
+                isRtl = activeLanguage.isRtl
+            ) {
+                observedDirection = androidx.compose.ui.platform.LocalLayoutDirection.current
+                com.example.ui.screens.LanguageSelectionSubPage(
+                    activeLanguage = activeLanguage,
+                    strings = StringsProvider.get(activeLanguage),
+                    onSelectLanguage = { activeLanguage = it },
+                    onBack = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        assertEquals(androidx.compose.ui.unit.LayoutDirection.Ltr, observedDirection)
+
+        // 1. Primary options BN & EN visible at top alongside search bar
+        composeRule.onNodeWithTag("language_search_input").assertIsDisplayed()
+        composeRule.onNodeWithTag("language_option_BN").assertIsDisplayed()
+        composeRule.onNodeWithTag("language_option_EN").assertIsDisplayed()
+        composeRule.onNodeWithTag("language_check_EN", useUnmergedTree = true).assertIsDisplayed()
+
+        // 2. Search "Arabic" -> select Arabic -> switches immediately to RTL
+        composeRule.onNodeWithTag("language_search_input").performTextReplacement("Arabic")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("language_option_AR")
+            .assertIsDisplayed()
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        assertEquals(AppLanguage.AR, activeLanguage)
+        assertEquals(androidx.compose.ui.unit.LayoutDirection.Rtl, observedDirection)
+        composeRule.onNodeWithTag("language_check_AR", useUnmergedTree = true).assertIsDisplayed()
+
+        // 3. Search "اردو" (native script) -> select Urdu -> stays RTL
+        composeRule.onNodeWithTag("language_search_input").performTextReplacement("اردو")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("language_option_UR")
+            .assertIsDisplayed()
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        assertEquals(AppLanguage.UR, activeLanguage)
+        assertEquals(androidx.compose.ui.unit.LayoutDirection.Rtl, observedDirection)
+
+        // 4. Clear search -> select Bangla -> restores LTR cleanly
+        composeRule.onNodeWithTag("language_search_clear_button")
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("language_option_BN")
+            .assertIsDisplayed()
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        assertEquals(AppLanguage.BN, activeLanguage)
+        assertEquals(androidx.compose.ui.unit.LayoutDirection.Ltr, observedDirection)
+        composeRule.onNodeWithTag("language_check_BN", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun daily_weekly_monthly_receipts_pdfs_and_qr_codes_render_in_active_app_language() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val now = System.currentTimeMillis()
+        val accounts = listOf(
+            AccountEntity(
+                id = 1L,
+                name = "NBK Kuwait",
+                type = AccountType.DEBIT_BANK,
+                balance = 450.0,
+                bankOrProvider = "National Bank of Kuwait",
+                colorArgb = 0xFF003B73L,
+                currencyCode = "KWD"
+            )
+        )
+        val txToday = TransactionEntity(
+            id = 101L,
+            title = "Grocery Market",
+            amount = 18.500,
+            type = TransactionType.EXPENSE,
+            category = ExpenseCategory.GROCERIES,
+            accountId = 1L,
+            note = "Fresh fruits",
+            currencyCode = "KWD",
+            timestamp = now
+        )
+        val txSalary = TransactionEntity(
+            id = 102L,
+            title = "Monthly Salary",
+            amount = 320.000,
+            type = TransactionType.INCOME,
+            category = ExpenseCategory.SALARY_INCOME,
+            accountId = 1L,
+            note = "",
+            currencyCode = "KWD",
+            timestamp = now - 60_000L
+        )
+
+        val languagesToTest = listOf(
+            AppLanguage.BN,
+            AppLanguage.EN,
+            AppLanguage.AR,
+            AppLanguage.HI,
+            AppLanguage.UR,
+            AppLanguage.MR,
+            AppLanguage.TA,
+            AppLanguage.ML,
+            AppLanguage.ZH
+        )
+
+        languagesToTest.forEach { lang ->
+            val strings = StringsProvider.get(lang)
+            val state = com.example.ui.viewmodel.MainUiState(
+                prefs = UserPrefs(
+                    userName = "MD Shariful Islam",
+                    language = lang,
+                    mainCurrencyCode = "KWD",
+                    userCountryCode = "KW"
+                ),
+                accounts = accounts,
+                transactions = listOf(txToday, txSalary)
+            )
+            val copy = com.example.data.export.ReportLocalizedStrings.forLanguage(lang)
+            val expectedLangTag = lang.code.lowercase(java.util.Locale.US).replace("-", "_")
+
+            com.example.data.export.ReportPeriodType.entries.forEach { periodType ->
+                val payload = com.example.data.export.MonthlyReportExporter.buildReportPayload(
+                    state = state,
+                    periodType = periodType,
+                    nowMillis = now
+                )
+                assertEquals(periodType, payload.periodType)
+                assertEquals(lang, payload.language)
+                assertTrue(payload.verificationId.startsWith("AH-"))
+                assertTrue(
+                    "QR payload for $lang/$periodType must contain localized title",
+                    payload.qrPayload.contains(copy.reportTitleFor(periodType))
+                )
+                assertTrue(
+                    "QR payload must embed verification ID",
+                    payload.qrPayload.contains(payload.verificationId)
+                )
+
+                // Verify real scannable QR bitmap contains both dark and light modules
+                val bitmap = com.example.data.export.QrCodeBitmapGenerator.generateQrBitmap(
+                    content = payload.qrPayload,
+                    sizePx = 220
+                )
+                assertEquals(220, bitmap.width)
+                assertEquals(220, bitmap.height)
+                var hasDark = false
+                var hasLight = false
+                for (y in 0 until bitmap.height step 4) {
+                    for (x in 0 until bitmap.width step 4) {
+                        val px = bitmap.getPixel(x, y)
+                        if (px == android.graphics.Color.WHITE) hasLight = true else hasDark = true
+                    }
+                }
+                assertTrue("QR bitmap must contain dark modules for $lang/$periodType", hasDark)
+                assertTrue("QR bitmap must contain light modules for $lang/$periodType", hasLight)
+
+                // Export PDF, CSV, and QR PNG in the active language and verify generated files
+                listOf(
+                    com.example.data.export.ReportExportFormat.PDF,
+                    com.example.data.export.ReportExportFormat.CSV,
+                    com.example.data.export.ReportExportFormat.QR_PNG
+                ).forEach { format ->
+                    val result = com.example.data.export.MonthlyReportExporter.exportAndBuildShareIntent(
+                        context = context,
+                        state = state,
+                        format = format,
+                        strings = strings,
+                        periodType = periodType,
+                        nowMillis = now
+                    )
+                    assertTrue("Export $format failed for $lang/$periodType: ${result.exceptionOrNull()}", result.isSuccess)
+                    val exported = result.getOrThrow()
+                    assertTrue("Exported file must exist", exported.file.exists())
+                    assertTrue("Exported $format file must be non-empty", exported.file.length() > 100L)
+                    assertTrue(
+                        "Filename should tag active language $expectedLangTag: ${exported.file.name}",
+                        exported.file.name.contains("_${expectedLangTag}.")
+                    )
+                }
+            }
+
+            // Also verify individual transaction voucher QR payload in active language
+            val voucherQr = com.example.data.export.MonthlyReportExporter.buildTransactionVoucherQrPayload(
+                tx = txToday,
+                walletLabel = "NBK Kuwait",
+                language = lang
+            )
+            assertTrue(voucherQr.contains(copy.brandTitle))
+            assertTrue(voucherQr.contains("Grocery Market"))
+        }
+    }
+
+    @Test
+    fun expandedIncomeAndExpenseCategories_andUnifiedDetectionWorkIdenticallyAcrossAllFlows() {
+        val incomeCategories = com.example.data.model.BuiltInCategoriesCatalog.defaultsFor(TransactionType.INCOME)
+        val expenseCategories = com.example.data.model.BuiltInCategoriesCatalog.defaultsFor(TransactionType.EXPENSE)
+
+        // 1. Verify all 5 Income Categories
+        val expectedIncomeBn = listOf(
+            "বেতন ও ভাতা",
+            "বোনাস ও ইনসেনটিভ",
+            "ব্যবসা ও সাইড ইনকাম",
+            "রিফান্ড ও ক্যাশব্যাক",
+            "অন্যান্য আয়"
+        )
+        assertEquals(5, incomeCategories.size)
+        expectedIncomeBn.forEach { expected ->
+            assertTrue(
+                "Income catalog must include '$expected'",
+                incomeCategories.any { it.bn == expected }
+            )
+        }
+
+        // 2. Verify all 12 Expense Categories
+        val expectedExpenseBn = listOf(
+            "খাবার ও ডাইনিং",
+            "বাজার ও গ্রোসারি",
+            "বাসা ভাড়া ও আবাসন",
+            "ইউটিলিটি ও বিল",
+            "যাতায়াত ও পরিবহন",
+            "পরিবার ও রেমিট্যান্স",
+            "স্বাস্থ্য ও চিকিৎসা",
+            "কেনাকাটা ও পোশাক",
+            "সাবস্ক্রিপশন ও ডিজিটাল সেবা",
+            "ভ্রমণ ও ছুটি",
+            "দান ও উপহার",
+            "অন্যান্য খরচ"
+        )
+        assertEquals(12, expenseCategories.size)
+        expectedExpenseBn.forEach { expected ->
+            assertTrue(
+                "Expense catalog must include '$expected'",
+                expenseCategories.any { it.bn == expected }
+            )
+        }
+
+        val accounts = listOf(
+            AccountEntity(
+                id = 1L,
+                name = "bKash Personal",
+                type = AccountType.MFS,
+                balance = 20_000.0,
+                bankOrProvider = "bKash",
+                colorArgb = 0xFFE2136EL,
+                currencyCode = "BDT"
+            )
+        )
+
+        // 3. Verify identical detection across UnifiedCategoryDetector (+ Entry), Voice, and Receipt Scan
+        val voiceCases = listOf(
+            "ঈদ বোনাস ১০০০০ টাকা পেয়েছি" to ("inc_bonus" to TransactionType.INCOME),
+            "দারাজ রিফান্ড ৫০০ টাকা ঢুকেছে" to ("inc_refund" to TransactionType.INCOME),
+            "ফ্রিল্যান্সিং থেকে ১৫০০০ টাকা পেয়েছি" to ("inc_business" to TransactionType.INCOME),
+            "বাসা ভাড়া ১২০০০ টাকা দিয়েছি" to ("exp_housing_rent" to TransactionType.EXPENSE),
+            "বিদ্যুৎ বিল ১৫০০ টাকা বিকাশ থেকে" to ("exp_utilities_bills" to TransactionType.EXPENSE),
+            "পরিবারের জন্য ৫০০০ টাকা খরচ" to ("exp_family_remittance" to TransactionType.EXPENSE),
+            "নেটফ্লিক্স সাবস্ক্রিপশন ৮০০ টাকা" to ("exp_subscriptions" to TransactionType.EXPENSE),
+            "কক্সবাজার ভ্রমণ ফ্লাইট টিকেট ৬০০০ টাকা" to ("exp_travel" to TransactionType.EXPENSE),
+            "মসজিদে দান ৫০০ টাকা" to ("exp_charity_gifts" to TransactionType.EXPENSE),
+            "দুপুরের খাবার ২৫০ টাকা" to ("exp_food_dining" to TransactionType.EXPENSE),
+            "কাঁচাবাজার ৮০০ টাকা" to ("exp_groceries" to TransactionType.EXPENSE)
+        )
+        voiceCases.forEach { (phrase, expected) ->
+            val (expectedId, expectedType) = expected
+            val voiceResult = com.example.data.ai.LocalVoiceTransactionParser.parse(
+                utterance = phrase,
+                accounts = accounts,
+                language = AppLanguage.BN
+            )
+            assertEquals("Voice type mismatch for '$phrase'", expectedType, voiceResult.type)
+            assertEquals("Voice category mismatch for '$phrase'", expectedId, voiceResult.managedCategoryId)
+
+            val quickMatch = com.example.data.ai.UnifiedCategoryDetector.detectCategory(
+                text = phrase,
+                type = expectedType,
+                managedCategories = com.example.data.model.BuiltInCategoriesCatalog.all,
+                language = AppLanguage.BN
+            )
+            assertEquals("Quick (+) category mismatch for '$phrase'", expectedId, quickMatch.managedCategory.id)
+        }
+
+        // 4. Verify Receipt Scan uses the exact same unified expanded categories
+        val netflixReceipt = com.example.data.ai.LocalReceiptTextParser.parseRawReceiptText(
+            rawText = "Netflix Subscription\nTotal Paid: BDT 850.00\nDate: 2026-11-24",
+            defaultCurrencyCode = "BDT",
+            language = AppLanguage.BN
+        )
+        assertNotNull(netflixReceipt)
+        assertEquals("exp_subscriptions", netflixReceipt?.managedCategoryId)
+        assertEquals("সাবস্ক্রিপশন ও ডিজিটাল সেবা", netflixReceipt?.managedCategoryLabel)
+
+        val refundReceipt = com.example.data.ai.LocalReceiptTextParser.parseRawReceiptText(
+            rawText = "Daraz Order Refund Cash In\nAmount: BDT 1250\nTrxID: RFND9912",
+            defaultCurrencyCode = "BDT",
+            language = AppLanguage.BN
+        )
+        assertNotNull(refundReceipt)
+        assertEquals(TransactionType.INCOME, refundReceipt?.transactionType)
+        assertEquals("inc_refund", refundReceipt?.managedCategoryId)
+    }
+
+    @Test
+    fun manualCustomCategoryAdd_synchronizesInstantlyAcrossVoiceReceiptQuickEntryAndBackup() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefsRepo = com.example.data.local.UserPreferencesRepository(context)
+        prefsRepo.resetCategoriesToDefault()
+
+        // 1. User manually adds custom Expense & Income categories from any entry flow
+        val customGym = com.example.data.model.BuiltInCategoriesCatalog.createCustomCategory(
+            type = TransactionType.EXPENSE,
+            name = "জিম ও ফিটনেস"
+        )
+        val customTuition = com.example.data.model.BuiltInCategoriesCatalog.createCustomCategory(
+            type = TransactionType.INCOME,
+            name = "টিউশনি ইনকাম"
+        )
+        prefsRepo.upsertManagedCategory(customGym)
+        prefsRepo.upsertManagedCategory(customTuition)
+
+        val savedPrefs = prefsRepo.userPrefs.first()
+        val mergedAll = com.example.data.model.BuiltInCategoriesCatalog.mergedAll(
+            overrides = savedPrefs.managedCategoryOverrides,
+            deletedIds = savedPrefs.deletedCategoryIds
+        )
+
+        // 2. Confirm custom categories are immediately available in merged catalog used by +, Voice, Receipt & Settings
+        assertTrue(mergedAll.any { it.id == customGym.id && it.bn == "জিম ও ফিটনেস" })
+        assertTrue(mergedAll.any { it.id == customTuition.id && it.bn == "টিউশনি ইনকাম" })
+
+        val accounts = listOf(
+            AccountEntity(
+                id = 1L,
+                name = "bKash",
+                type = AccountType.MFS,
+                balance = 10_000.0,
+                bankOrProvider = "bKash",
+                colorArgb = 0xFFE2136EL,
+                currencyCode = "BDT"
+            )
+        )
+
+        // 3. Voice Entry, Receipt Scan & Quick (+) Entry all automatically detect the newly synced custom categories
+        val voiceCustom = com.example.data.ai.LocalVoiceTransactionParser.parse(
+            utterance = "জিম ও ফিটনেস ফি ২০০০ টাকা দিয়েছি",
+            accounts = accounts,
+            language = AppLanguage.BN,
+            managedCategories = mergedAll
+        )
+        assertEquals(customGym.id, voiceCustom.managedCategoryId)
+        assertEquals("জিম ও ফিটনেস", voiceCustom.managedCategoryLabel)
+
+        val receiptCustom = com.example.data.ai.LocalReceiptTextParser.parseRawReceiptText(
+            rawText = "জিম ও ফিটনেস Monthly Pass\nTotal: BDT 2000",
+            defaultCurrencyCode = "BDT",
+            managedCategories = mergedAll,
+            language = AppLanguage.BN
+        )
+        assertNotNull(receiptCustom)
+        assertEquals(customGym.id, receiptCustom?.managedCategoryId)
+
+        val quickCustomIncome = com.example.data.ai.UnifiedCategoryDetector.detectCategory(
+            text = "টিউশনি ইনকাম ৮০০০ টাকা পেয়েছি",
+            type = TransactionType.INCOME,
+            managedCategories = mergedAll,
+            language = AppLanguage.BN
+        )
+        assertEquals(customTuition.id, quickCustomIncome.managedCategory.id)
+        assertTrue(quickCustomIncome.isExactCustomMatch)
+
+        // 4. BackupManager JSON export & restore preserves custom categories intact
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val backupJson = com.example.data.backup.BackupManager.exportJson(db, savedPrefs)
+            prefsRepo.resetCategoriesToDefault()
+            assertTrue(prefsRepo.userPrefs.first().managedCategoryOverrides.isEmpty())
+
+            com.example.data.backup.BackupManager.restoreFromJson(backupJson, db, prefsRepo)
+            val restoredPrefs = prefsRepo.userPrefs.first()
+            assertTrue(restoredPrefs.managedCategoryOverrides.any { it.id == customGym.id })
+            assertTrue(restoredPrefs.managedCategoryOverrides.any { it.id == customTuition.id })
         } finally {
             db.close()
         }

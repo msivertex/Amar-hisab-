@@ -22,7 +22,10 @@ import com.example.data.ai.LocalReceiptTextParser
 import com.example.data.ai.LocalVoiceTransactionParser
 import com.example.data.ai.MarketErrorCategory
 import com.example.data.ai.ReceiptScanErrorCategory
+import com.example.data.ai.SpeechEngineSource
 import com.example.data.ai.TtsAudioPlayer
+import com.example.data.ai.VoiceSummaryPlaybackListener
+import com.example.data.ai.VoiceSummarySpeechEngine
 import com.example.data.backup.BackupManager
 import com.example.data.backup.DriveAuthErrorKind
 import com.example.data.backup.DriveAuthOutcome
@@ -34,6 +37,7 @@ import com.example.data.backup.DriveSyncUiState
 import com.example.data.backup.DriveUploadOutcome
 import com.example.data.backup.GoogleDriveAuthHelper
 import com.example.data.backup.GoogleDriveBackupService
+import com.example.data.firebase.FirestoreFinanceRepository
 import com.example.data.local.AccountEntity
 import com.example.data.local.AppDatabase
 import com.example.data.local.CategoryBudgetEntity
@@ -122,7 +126,8 @@ data class AnalyticsSnapshot(
     val expenseChangePercent: Int? = null,
     val savingsRatePercent: Int? = null,
     val topCategory: CategorySpend? = null,
-    val transactionCount: Int = 0
+    val transactionCount: Int = 0,
+    val incomeBreakdown: List<CategorySpend> = emptyList()
 )
 
 data class MainUiState(
@@ -186,11 +191,32 @@ sealed interface VoiceParseUiState {
 sealed interface TtsUiState {
     data object Idle : TtsUiState
     data object Generating : TtsUiState
-    data class Playing(val script: String, val progress: Float = 0f) : TtsUiState
-    data class Paused(val script: String, val progress: Float = 0f) : TtsUiState
+    data class Playing(
+        val script: String,
+        val progress: Float = 0f,
+        val currentChunkIndex: Int = 0,
+        val totalChunks: Int = 1,
+        val engineLabel: String = "",
+        val voiceLocaleLabel: String = ""
+    ) : TtsUiState
+    data class Paused(
+        val script: String,
+        val progress: Float = 0f,
+        val currentChunkIndex: Int = 0,
+        val totalChunks: Int = 1,
+        val engineLabel: String = "",
+        val voiceLocaleLabel: String = ""
+    ) : TtsUiState
+    data class Completed(
+        val script: String,
+        val totalChunks: Int = 1,
+        val engineLabel: String = "",
+        val voiceLocaleLabel: String = ""
+    ) : TtsUiState
     data class Error(
         val message: String,
-        val category: MarketErrorCategory = MarketErrorCategory.GENERAL
+        val category: MarketErrorCategory = MarketErrorCategory.GENERAL,
+        val script: String = ""
     ) : TtsUiState
 }
 
@@ -202,10 +228,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefsRepo = UserPreferencesRepository(application)
     private val aiService = GeminiAiService()
     private val ttsPlayer = TtsAudioPlayer(application)
+    private val voiceSummaryEngine = VoiceSummarySpeechEngine.createDefault(application, aiService, ttsPlayer)
     private val connectivityMonitor = NetworkConnectivityMonitor(application)
     private val systemClockMonitor = SystemClockMonitor(application)
     private val marketRepository = MarketDataRepository(application)
     private val driveSyncCoordinator = DriveSyncCoordinator()
+    private val firestoreRepo = FirestoreFinanceRepository(application)
+    private var firestoreSyncDebounceJob: Job? = null
+    @Volatile
+    private var hasPendingFirestoreSync: Boolean = false
 
     private val _selectedTab = MutableStateFlow(AppTab.HOME)
     private val _showAccountsScreen = MutableStateFlow(false)
@@ -383,6 +414,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (cached.isFreshSyncNeeded()) {
                         refreshMarketRates(force = false)
                     }
+                    if (hasPendingFirestoreSync && firestoreRepo.currentAuthenticatedUid() != null) {
+                        scheduleCentralFirestoreSync(debounceMillis = 600L)
+                    }
                 }
             }
         }
@@ -546,10 +580,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateProfileAndBudget(name: String, budget: Double) = viewModelScope.launch {
         prefsRepo.updateProfileAndBudget(name, budget)
+        scheduleCentralFirestoreSync()
     }
 
     fun updateDisplayName(name: String) = viewModelScope.launch {
         prefsRepo.updateDisplayName(name)
+        scheduleCentralFirestoreSync()
     }
 
     fun updateProfileAvatarFromUri(uri: Uri) = viewModelScope.launch {
@@ -653,14 +689,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             avatarUrl = profile.avatarUrl
         )
         hasCheckedStartupDriveSync = true
+        // Connect central data store to Firestore in the background (non-blocking).
+        // Hydrates cloud cards/entries onto an empty device or mirrors local entries up cleanly.
+        viewModelScope.launch(Dispatchers.IO) {
+            val latestPrefs = prefsRepo.userPrefs.first()
+            firestoreRepo.reconcileOnSignIn(
+                roomDb = db,
+                prefsRepo = prefsRepo,
+                currentPrefs = latestPrefs
+            ).onFailure { err ->
+                Log.w(TAG, "Central Firestore reconcile deferred (local store stays active)", err)
+                hasPendingFirestoreSync = true
+            }
+        }
     }
 
     fun unlinkGoogleAccount() = viewModelScope.launch {
         driveAutoSyncDebounceJob?.cancel()
         driveAutoSyncDebounceJob = null
+        firestoreSyncDebounceJob?.cancel()
+        firestoreSyncDebounceJob = null
+        hasPendingFirestoreSync = false
         cachedDriveAccessToken = null
         _pendingDriveConsent.value = null
         hasCheckedStartupDriveSync = false
+        // Detach Firestore listeners inside NonCancellable BEFORE signing out of Firebase Auth
+        firestoreRepo.detachAllListeners()
         GoogleAuthManager.signOut(getApplication())
         prefsRepo.unlinkGoogleAccount()
         _driveSyncState.value = DriveSyncUiState(status = DriveSyncStatus.SIGNED_OUT)
@@ -673,14 +727,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun logOut() = viewModelScope.launch {
         driveAutoSyncDebounceJob?.cancel()
         driveAutoSyncDebounceJob = null
+        firestoreSyncDebounceJob?.cancel()
+        firestoreSyncDebounceJob = null
+        hasPendingFirestoreSync = false
         cachedDriveAccessToken = null
         _pendingDriveConsent.value = null
         hasCheckedStartupDriveSync = false
+        firestoreRepo.detachAllListeners()
         runCatching { GoogleAuthManager.signOut(getApplication()) }
         prefsRepo.logOut()
         _driveSyncState.value = DriveSyncUiState(status = DriveSyncStatus.SIGNED_OUT)
         _showSettingsScreen.value = false
         _showAccountsScreen.value = false
+    }
+
+    /**
+     * Non-blocking central data store sync: persists accounts/cards, transactions (including
+     * Voice Entry & Receipt Scan entries), goals, loans, budgets, and profile prefs to Firebase
+     * Firestore in the background whenever signed in with Google.
+     */
+    private fun scheduleCentralFirestoreSync(debounceMillis: Long = 800L) {
+        if (firestoreRepo.currentAuthenticatedUid() == null) return
+        hasPendingFirestoreSync = true
+        firestoreSyncDebounceJob?.cancel()
+        firestoreSyncDebounceJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(debounceMillis)
+            if (firestoreRepo.currentAuthenticatedUid() == null) {
+                hasPendingFirestoreSync = false
+                return@launch
+            }
+            if (!connectivityMonitor.refreshNow()) return@launch
+            val latestPrefs = prefsRepo.userPrefs.first()
+            firestoreRepo.pushCentralStoreSnapshot(db, latestPrefs)
+                .onSuccess { hasPendingFirestoreSync = false }
+                .onFailure { err ->
+                    Log.w(TAG, "Background Firestore sync deferred; local data remains intact", err)
+                }
+        }
     }
 
     // --- Encrypted Google Drive Backup, Immediate Auto-Sync & Login Auto-Restore ---
@@ -1197,14 +1280,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setMainCurrency(currencyCode: String) = viewModelScope.launch {
         prefsRepo.setMainCurrency(currencyCode)
+        scheduleCentralFirestoreSync()
     }
 
     fun setSecondaryCurrency(currencyCode: String) = viewModelScope.launch {
         prefsRepo.setSecondaryCurrency(currencyCode)
+        scheduleCentralFirestoreSync()
     }
 
     fun setUserCountry(countryCode: String) = viewModelScope.launch {
         prefsRepo.setUserCountryCode(countryCode)
+        scheduleCentralFirestoreSync()
     }
 
     fun setHapticFeedback(enabled: Boolean) = viewModelScope.launch {
@@ -1301,22 +1387,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun upsertManagedCategory(item: ManagedCategoryItem) = viewModelScope.launch {
         prefsRepo.upsertManagedCategory(item)
+        scheduleCentralFirestoreSync()
     }
 
     fun deleteManagedCategory(categoryId: String, isBuiltIn: Boolean) = viewModelScope.launch {
         prefsRepo.deleteManagedCategory(categoryId, isBuiltIn)
+        scheduleCentralFirestoreSync()
     }
 
     fun resetCategoriesToDefault() = viewModelScope.launch {
         prefsRepo.resetCategoriesToDefault()
+        scheduleCentralFirestoreSync()
     }
 
     fun addAccount(account: AccountEntity) = viewModelScope.launch {
         repository.addAccount(account)
+        scheduleCentralFirestoreSync()
     }
 
     fun deleteAccount(accountId: Long) = viewModelScope.launch {
         repository.deleteAccount(accountId)
+        viewModelScope.launch(Dispatchers.IO) { firestoreRepo.deleteAccountDoc(accountId) }
     }
 
     fun addTransaction(
@@ -1330,6 +1421,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         timestamp: Long = System.currentTimeMillis()
     ) = viewModelScope.launch {
         repository.addTransaction(title, amount, type, category, subcategory, accountId, note, timestamp)
+        scheduleCentralFirestoreSync()
         if (type == TransactionType.EXPENSE) {
             evaluateImmediateThresholdAlerts()
         }
@@ -1417,24 +1509,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             timestamp = timestamp,
             conversionRate = conversionRate
         )
+        scheduleCentralFirestoreSync()
     }
 
     fun deleteTransaction(id: Long) = viewModelScope.launch {
         repository.deleteTransaction(id)
+        viewModelScope.launch(Dispatchers.IO) { firestoreRepo.deleteTransactionDoc(id) }
+        scheduleCentralFirestoreSync()
     }
 
     fun addSavingsGoal(name: String, target: Double, dueDateMillis: Long?, colorArgb: Long) =
         viewModelScope.launch {
             repository.addSavingsGoal(name, target, dueDateMillis, colorArgb)
+            scheduleCentralFirestoreSync()
         }
 
     fun fundGoalFromWallet(goal: SavingsGoalEntity, amount: Double, walletId: Long) =
         viewModelScope.launch {
             repository.fundGoalFromWallet(goal, amount, walletId)
+            scheduleCentralFirestoreSync()
         }
 
     fun deleteGoal(goalId: Long) = viewModelScope.launch {
         repository.deleteGoal(goalId)
+        viewModelScope.launch(Dispatchers.IO) { firestoreRepo.deleteGoalDoc(goalId) }
     }
 
     fun addLoan(
@@ -1448,30 +1546,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     ) = viewModelScope.launch {
         repository.addLoan(personName, loanType, totalAmount, note, dueDateMillis, currencyCode)
+        scheduleCentralFirestoreSync()
     }
 
     fun updateLoan(loan: LoanEntity) = viewModelScope.launch {
         repository.updateLoan(loan)
+        scheduleCentralFirestoreSync()
     }
 
     fun settleLoan(loan: LoanEntity, amount: Double, walletId: Long?) = viewModelScope.launch {
         val targetAcc = walletId?.let { id -> uiState.value.accounts.firstOrNull { it.id == id } }
         val rate = if (targetAcc != null && !targetAcc.currencyCode.equals(loan.currencyCode, ignoreCase = true)) {
-            val fromCur = AppCurrency.fromCode(loan.currencyCode).toMarketCurrency()
-            val toCur = AppCurrency.fromCode(targetAcc.currencyCode).toMarketCurrency()
-            marketSyncState.value.snapshot.convert(1.0, fromCur, toCur)
+            marketSyncState.value.snapshot.convertCurrencyCode(1.0, loan.currencyCode, targetAcc.currencyCode)
         } else {
             1.0
         }
         repository.settleLoan(loan, amount, walletId, conversionRate = rate)
+        scheduleCentralFirestoreSync()
     }
 
     fun deleteLoan(loanId: Long) = viewModelScope.launch {
         repository.deleteLoan(loanId)
+        viewModelScope.launch(Dispatchers.IO) { firestoreRepo.deleteLoanDoc(loanId) }
     }
 
     fun upsertCategoryBudget(category: ExpenseCategory, limitAmount: Double) = viewModelScope.launch {
         repository.upsertCategoryBudget(category, limitAmount)
+        scheduleCentralFirestoreSync()
     }
 
     // --- Offline Backup & Restore ---
@@ -1548,6 +1649,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 _pendingDashboardLayout.value = null
                 _backupStatus.value = BackupMessage(successMessage)
+                scheduleCentralFirestoreSync()
             } catch (e: Exception) {
                 Log.e(TAG, "JSON Restore failed", e)
                 val isBn = uiState.value.prefs.language == AppLanguage.BN
@@ -1617,6 +1719,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 withContext(Dispatchers.IO) {
                     BackupManager.clearAllFinancialData(db)
+                    firestoreRepo.clearAllUserSubcollections()
                 }
                 _backupStatus.value = BackupMessage(successMessage)
             } catch (e: Exception) {
@@ -1661,6 +1764,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
+            val mergedCategories = com.example.data.model.BuiltInCategoriesCatalog.mergedAll(
+                overrides = snapshot.prefs.managedCategoryOverrides,
+                deletedIds = snapshot.prefs.deletedCategoryIds
+            )
+
             // 1. Try cloud Gemini Vision AI first (when online)
             val aiResult = if (connectivityMonitor.refreshNow()) {
                 try {
@@ -1676,13 +1784,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (aiResult != null && aiResult.amountBdt > 0.0) {
-                _receiptState.value = ReceiptScanUiState.Success(aiResult)
+                val unified = com.example.data.ai.UnifiedCategoryDetector.detectCategory(
+                    text = "${aiResult.merchantName} ${aiResult.itemsSummary} ${aiResult.detectedDirectionKeyword}",
+                    type = aiResult.transactionType,
+                    managedCategories = mergedCategories,
+                    language = lang
+                )
+                val resolvedManaged = if (unified.isExactCustomMatch ||
+                    (unified.managedCategory.id != "exp_other" && unified.managedCategory.id != "inc_other")
+                ) {
+                    unified.managedCategory
+                } else {
+                    com.example.data.model.BuiltInCategoriesCatalog.resolveForLegacy(
+                        type = aiResult.transactionType,
+                        legacyCategory = aiResult.category,
+                        mergedItems = mergedCategories
+                    ) ?: unified.managedCategory
+                }
+                val enriched = aiResult.copy(
+                    category = resolvedManaged.legacyCategory ?: aiResult.category,
+                    managedCategoryId = resolvedManaged.id,
+                    managedCategoryLabel = resolvedManaged.label(lang)
+                )
+                _receiptState.value = ReceiptScanUiState.Success(enriched)
                 return@launch
             }
 
             // 2. Seamless on-device ML Kit OCR fallback focusing on Total Amount & Currency
             val localResult = try {
-                LocalReceiptTextParser.scanBitmapLocally(bitmap, defaultCurrency)
+                LocalReceiptTextParser.scanBitmapLocally(
+                    bitmap = bitmap,
+                    defaultCurrencyCode = defaultCurrency,
+                    managedCategories = mergedCategories,
+                    language = lang
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1777,6 +1912,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _voiceState.value = VoiceParseUiState.Loading
 
+            val mergedCategories = com.example.data.model.BuiltInCategoriesCatalog.mergedAll(
+                overrides = snapshot.prefs.managedCategoryOverrides,
+                deletedIds = snapshot.prefs.deletedCategoryIds
+            )
+
             // 1. Try cloud Gemini AI first when online
             val aiParsed = if (connectivityMonitor.refreshNow()) {
                 try {
@@ -1797,7 +1937,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (aiParsed != null && aiParsed.amountBdt > 0.0) {
-                _voiceState.value = VoiceParseUiState.Success(aiParsed)
+                val unified = com.example.data.ai.UnifiedCategoryDetector.detectCategory(
+                    text = "$trimmed ${aiParsed.title}",
+                    type = aiParsed.type,
+                    managedCategories = mergedCategories,
+                    language = lang
+                )
+                val resolvedManaged = if (unified.isExactCustomMatch ||
+                    (unified.managedCategory.id != "exp_other" && unified.managedCategory.id != "inc_other")
+                ) {
+                    unified.managedCategory
+                } else {
+                    com.example.data.model.BuiltInCategoriesCatalog.resolveForLegacy(
+                        type = aiParsed.type,
+                        legacyCategory = aiParsed.category,
+                        mergedItems = mergedCategories
+                    ) ?: unified.managedCategory
+                }
+                val enriched = aiParsed.copy(
+                    category = resolvedManaged.legacyCategory ?: aiParsed.category,
+                    managedCategoryId = resolvedManaged.id,
+                    managedCategoryLabel = resolvedManaged.label(lang)
+                )
+                _voiceState.value = VoiceParseUiState.Success(enriched)
                 return@launch
             }
 
@@ -1806,9 +1968,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 utterance = trimmed,
                 accounts = accounts,
                 language = lang,
-                defaultCurrencyCode = defaultCurrency
+                defaultCurrencyCode = defaultCurrency,
+                managedCategories = mergedCategories
             )
-            if (localParsed != null && localParsed.amountBdt > 0.0) {
+            if (localParsed.amountBdt > 0.0) {
                 _voiceState.value = VoiceParseUiState.Success(localParsed)
                 return@launch
             }
@@ -1829,80 +1992,114 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _voiceState.value = VoiceParseUiState.Idle
     }
 
-    // --- Gemini TTS Briefing (gemini-3.1-flash-tts-preview) ---
+    // --- Full Detailed Voice Financial Summary (Chunked Native TTS + Built-In Audio Fallback) ---
     fun playFinancialBriefingTts() {
         val snapshot = uiState.value
         val lang = snapshot.prefs.language
-        val script = InsightsSummaryHelper.buildPeriodSummary(snapshot)
+        val currencyCode = snapshot.prefs.mainCurrencyCode
+        val fullSummaryScript = InsightsSummaryHelper.buildPeriodSummary(snapshot)
 
-        viewModelScope.launch {
-            _ttsState.value = TtsUiState.Generating
-            try {
-                val payload = aiService.generateBriefingTts(script)
-                _ttsState.value = TtsUiState.Playing(payload.spokenScript, progress = 0f)
-                ttsPlayer.playAudio(
-                    audioBytes = payload.audioBytes,
-                    mimeType = payload.mimeType,
-                    onProgress = { pct ->
-                        when (val curr = _ttsState.value) {
-                            is TtsUiState.Playing -> _ttsState.value = curr.copy(progress = pct)
-                            is TtsUiState.Paused -> _ttsState.value = curr.copy(progress = pct)
-                            else -> Unit
-                        }
-                    },
-                    onComplete = { _ttsState.value = TtsUiState.Idle },
-                    onError = { msg ->
-                        Log.e(TAG, "TTS playback error: $msg")
-                        val sanitized = InsightsSummaryHelper.sanitizeAiError(
-                            rawMessage = msg,
-                            language = lang,
-                            isVoice = true
-                        )
-                        _ttsState.value = TtsUiState.Error(sanitized.message, sanitized.category)
-                    }
-                )
-            } catch (e: TimeoutCancellationException) {
-                Log.e(TAG, "TTS timed out", e)
-                val sanitized = InsightsSummaryHelper.sanitizeAiError(
-                    rawMessage = "timeout",
-                    throwable = e,
-                    language = lang,
-                    isVoice = true
-                )
-                _ttsState.value = TtsUiState.Error(sanitized.message, sanitized.category)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "TTS failed", e)
-                val sanitized = InsightsSummaryHelper.sanitizeAiError(
-                    rawMessage = e.localizedMessage,
-                    throwable = e,
-                    language = lang,
-                    isVoice = true
-                )
-                _ttsState.value = TtsUiState.Error(sanitized.message, sanitized.category)
+        val engineLabelFor: (SpeechEngineSource) -> String = { source ->
+            when (source) {
+                SpeechEngineSource.NATIVE_TTS -> if (lang == AppLanguage.BN) "ডিভাইস ভয়েস" else "Device Voice"
+                SpeechEngineSource.BUILT_IN_AUDIO -> if (lang == AppLanguage.BN) "বিল্ট-ইন অডিও" else "Built-in Audio"
             }
         }
+
+        voiceSummaryEngine.play(
+            displayScript = fullSummaryScript,
+            language = lang,
+            currencyCode = currencyCode,
+            listener = object : VoiceSummaryPlaybackListener {
+                override fun onPreparing(script: String) {
+                    _ttsState.value = TtsUiState.Generating
+                }
+
+                override fun onPlaying(
+                    script: String,
+                    progress: Float,
+                    currentChunkIndex: Int,
+                    totalChunks: Int,
+                    engineSource: SpeechEngineSource,
+                    voiceLabel: String
+                ) {
+                    _ttsState.value = TtsUiState.Playing(
+                        script = script,
+                        progress = progress,
+                        currentChunkIndex = currentChunkIndex,
+                        totalChunks = totalChunks,
+                        engineLabel = engineLabelFor(engineSource),
+                        voiceLocaleLabel = voiceLabel
+                    )
+                }
+
+                override fun onPaused(
+                    script: String,
+                    progress: Float,
+                    currentChunkIndex: Int,
+                    totalChunks: Int,
+                    engineSource: SpeechEngineSource,
+                    voiceLabel: String
+                ) {
+                    _ttsState.value = TtsUiState.Paused(
+                        script = script,
+                        progress = progress,
+                        currentChunkIndex = currentChunkIndex,
+                        totalChunks = totalChunks,
+                        engineLabel = engineLabelFor(engineSource),
+                        voiceLocaleLabel = voiceLabel
+                    )
+                }
+
+                override fun onCompleted(
+                    script: String,
+                    totalChunks: Int,
+                    engineSource: SpeechEngineSource,
+                    voiceLabel: String
+                ) {
+                    _ttsState.value = TtsUiState.Completed(
+                        script = script,
+                        totalChunks = totalChunks,
+                        engineLabel = engineLabelFor(engineSource),
+                        voiceLocaleLabel = voiceLabel
+                    )
+                }
+
+                override fun onStopped() {
+                    _ttsState.value = TtsUiState.Idle
+                }
+
+                override fun onUnavailable(script: String, reason: String) {
+                    Log.w(TAG, "Voice summary playback fallback notice: $reason")
+                    val sanitized = InsightsSummaryHelper.sanitizeAiError(
+                        rawMessage = reason,
+                        language = lang,
+                        isVoice = true
+                    )
+                    _ttsState.value = TtsUiState.Error(
+                        message = sanitized.message,
+                        category = sanitized.category,
+                        script = script
+                    )
+                }
+            }
+        )
     }
 
     fun pauseTtsPlayback() {
-        val current = _ttsState.value
-        if (current is TtsUiState.Playing) {
-            ttsPlayer.pause()
-            _ttsState.value = TtsUiState.Paused(current.script, current.progress)
+        if (_ttsState.value is TtsUiState.Playing) {
+            voiceSummaryEngine.pause()
         }
     }
 
     fun resumeTtsPlayback() {
-        val current = _ttsState.value
-        if (current is TtsUiState.Paused) {
-            ttsPlayer.resume()
-            _ttsState.value = TtsUiState.Playing(current.script, current.progress)
+        if (_ttsState.value is TtsUiState.Paused) {
+            voiceSummaryEngine.resume()
         }
     }
 
     fun stopTtsPlayback() {
-        ttsPlayer.stop()
+        voiceSummaryEngine.stop()
         _ttsState.value = TtsUiState.Idle
     }
 
@@ -2178,6 +2375,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        voiceSummaryEngine.shutdown()
         ttsPlayer.stop()
         connectivityMonitor.stop()
         systemClockMonitor.stop()
@@ -2457,6 +2655,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             .sortedByDescending { it.amount }
 
+        val incomeBreakdown = periodTx
+            .filter { it.type == TransactionType.INCOME }
+            .groupBy { it.category }
+            .map { (cat, list) ->
+                val sum = list.sumOf { toMain(it) }
+                CategorySpend(cat, sum, if (totalIncome > 0) (sum / totalIncome).toFloat() else 0f)
+            }
+            .sortedByDescending { it.amount }
+
         // Build trend buckets (up to 10 buckets or daily buckets for week/month) in active local timezone
         val dayFormat = SimpleDateFormat("dd", Locale.getDefault()).apply { timeZone = activeTz }
         val expenseByDayKey = periodTx
@@ -2517,7 +2724,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             expenseChangePercent = expenseChangePercent,
             savingsRatePercent = savingsRatePercent,
             topCategory = breakdown.firstOrNull(),
-            transactionCount = periodTx.size
+            transactionCount = periodTx.size,
+            incomeBreakdown = incomeBreakdown
         )
     }
 

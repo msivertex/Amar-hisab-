@@ -36,7 +36,7 @@ enum class MarketDataStatus {
 }
 
 /**
- * 15 supported multi-region currencies for flexible any-to-any conversion.
+ * Multi-region currencies synchronized with the unified 28-country dataset for flexible any-to-any conversion.
  */
 enum class MarketCurrency(
     val code: String,
@@ -48,21 +48,29 @@ enum class MarketCurrency(
     val countryBn: String,
     val defaultPerUsd: Double
 ) {
-    BDT("BDT", "৳", "🇧🇩", "Bangladeshi Taka", "বাংলাদেশি টাকা", "Bangladesh", "বাংলাদেশ", 121.50),
-    USD("USD", "$", "🇺🇸", "US Dollar", "ইউএস ডলার", "USA", "যুক্তরাষ্ট্র", 1.0),
+    BDT("BDT", "৳", "🇧🇩", "Bangladeshi Taka", "বাংলাদেশী টাকা", "Bangladesh", "বাংলাদেশ", 121.50),
+    USD("USD", "$", "🇺🇸", "US Dollar", "মার্কিন ডলার", "USA", "যুক্তরাষ্ট্র", 1.0),
     EUR("EUR", "€", "🇪🇺", "Euro", "ইউরো", "Italy / Europe", "ইতালি / ইউরোপ", 0.92),
-    GBP("GBP", "£", "🇬🇧", "British Pound", "ব্রিটিশ পাউন্ড", "United Kingdom", "যুক্তরাজ্য", 0.785),
-    KWD("KWD", "KD", "🇰🇼", "Kuwaiti Dinar", "কুয়েতি দিনার", "Kuwait", "কুয়েত", 0.307),
-    SAR("SAR", "SR", "🇸🇦", "Saudi Riyal", "সৌদি রিয়াল", "Saudi Arabia", "সৌদি আরব", 3.75),
-    AED("AED", "AED", "🇦🇪", "UAE Dirham", "ইউএই দিরহাম", "UAE / Dubai", "সংযুক্ত আরব আমিরাত", 3.6725),
-    QAR("QAR", "QR", "🇶🇦", "Qatari Riyal", "কাতারি রিয়াল", "Qatar", "কাতার", 3.64),
-    BHD("BHD", "BD", "🇧🇭", "Bahraini Dinar", "বাহরাইনি দিনার", "Bahrain", "বাহরাইন", 0.376),
-    MYR("MYR", "RM", "🇲🇾", "Malaysian Ringgit", "মালয়েশিয়ান রিঙ্গিত", "Malaysia", "মালয়েশিয়া", 4.42),
+    GBP("GBP", "£", "🇬🇧", "British Pound", "ব্রিটিশ পাউন্ড", "UK / England", "যুক্তরাজ্য / ইংল্যান্ড", 0.785),
+    KWD("KWD", "د.ك", "🇰🇼", "Kuwaiti Dinar", "কুয়েতি দিনার", "Kuwait", "কুয়েত", 0.307),
+    SAR("SAR", "SAR", "🇸🇦", "Saudi Riyal", "সৌদি রিয়াল", "Saudi Arabia", "সৌদি আরব", 3.75),
+    AED("AED", "AED", "🇦🇪", "UAE Dirham", "ইউএই দিরহাম", "UAE (Dubai)", "সংযুক্ত আরব আমিরাত", 3.6725),
+    QAR("QAR", "QAR", "🇶🇦", "Qatari Riyal", "কাতারি রিয়াল", "Qatar", "কাতার", 3.64),
+    OMR("OMR", "OMR", "🇴🇲", "Omani Rial", "ওমানি রিয়াল", "Oman", "ওমান", 0.3845),
+    BHD("BHD", "BHD", "🇧🇭", "Bahraini Dinar", "বাহরাইনি দিনার", "Bahrain", "বাহরাইন", 0.376),
+    MYR("MYR", "MYR", "🇲🇾", "Malaysian Ringgit", "মালয়েশিয়ান রিঙ্গিত", "Malaysia", "মালয়েশিয়া", 4.42),
+    SGD("SGD", "S$", "🇸🇬", "Singapore Dollar", "সিঙ্গাপুর ডলার", "Singapore", "সিঙ্গাপুর", 1.34),
+    KRW("KRW", "₩", "🇰🇷", "South Korean Won", "দক্ষিণ কোরিয়ান ওন", "South Korea", "দক্ষিণ কোরিয়া", 1395.0),
+    JPY("JPY", "¥", "🇯🇵", "Japanese Yen", "জাপানি ইয়েন", "Japan", "জাপান", 154.0),
+    AUD("AUD", "A$", "🇦🇺", "Australian Dollar", "অস্ট্রেলিয়ান ডলার", "Australia", "অস্ট্রেলিয়া", 1.54),
+    CAD("CAD", "C$", "🇨🇦", "Canadian Dollar", "কানাডিয়ান ডলার", "Canada", "কানাডা", 1.40),
     INR("INR", "₹", "🇮🇳", "Indian Rupee", "ভারতীয় রুপি", "India", "ভারত", 84.40),
     PKR("PKR", "Rs", "🇵🇰", "Pakistani Rupee", "পাকিস্তানি রুপি", "Pakistan", "পাকিস্তান", 278.00),
     LKR("LKR", "Rs", "🇱🇰", "Sri Lankan Rupee", "শ্রীলঙ্কান রুপি", "Sri Lanka", "শ্রীলঙ্কা", 292.50),
-    NPR("NPR", "Rs", "🇳🇵", "Nepalese Rupee", "নেপালি রুপি", "Nepal", "নেপাল", 135.04),
-    BTN("BTN", "Nu", "🇧🇹", "Bhutanese Ngultrum", "ভুটানি গুলট্রাম", "Bhutan", "ভুটান", 84.40);
+    NPR("NPR", "₨", "🇳🇵", "Nepalese Rupee", "নেপালি রুপি", "Nepal", "নেপাল", 135.04),
+    BTN("BTN", "Nu.", "🇧🇹", "Bhutanese Ngultrum", "ভুটানি গুলট্রাম", "Bhutan", "ভুটান", 84.40),
+    MMK("MMK", "K", "🇲🇲", "Burmese Kyat", "বার্মিজ কিয়াত", "Myanmar", "মায়ানমার", 2100.0),
+    MVR("MVR", "Rf", "🇲🇻", "Maldivian Rufiyaa", "মালদ্বীভিয়ান রুফিয়া", "Maldives", "মালদ্বীপ", 15.42);
 
     fun displayName(language: AppLanguage): String = if (language == AppLanguage.BN) nameBn else nameEn
     fun countryName(language: AppLanguage): String = if (language == AppLanguage.BN) countryBn else countryEn
@@ -163,6 +171,13 @@ data class MarketSnapshot(
     fun ratePerUsd(currency: MarketCurrency): Double =
         ratesPerUsd[currency.code]?.takeIf { it > 0.0 } ?: currency.defaultPerUsd
 
+    fun ratePerUsd(currencyCode: String): Double {
+        val normalized = currencyCode.trim().uppercase()
+        return ratesPerUsd[normalized]?.takeIf { it > 0.0 }
+            ?: MarketCurrency.fromCode(normalized)?.defaultPerUsd
+            ?: com.example.data.model.WorldCountryCatalog.defaultPerUsd(normalized)
+    }
+
     /**
      * Converts [amount] from any supported [from] currency to any supported [to] currency
      * using USD cross-rates. Works both online (live synced) and offline (cached/reference).
@@ -176,16 +191,26 @@ data class MarketSnapshot(
     }
 
     /**
-     * Sign-safe currency conversion using ISO currency codes (e.g. "SAR" -> "BDT").
+     * Sign-safe currency conversion using ISO currency codes across all 195 countries' currencies
+     * (e.g. "SAR" -> "BDT", "TRY" -> "BDT", "PHP" -> "USD", "KWD" -> "EUR").
      * Returns [amount] unchanged when codes match or either code is unrecognized.
      */
     fun convertCurrencyCode(amount: Double, fromCode: String, toCode: String): Double {
         if (amount == 0.0 || fromCode.equals(toCode, ignoreCase = true)) return amount
-        val from = MarketCurrency.fromCode(fromCode) ?: return amount
-        val to = MarketCurrency.fromCode(toCode) ?: return amount
-        if (from == to) return amount
+        val fromNorm = fromCode.trim().uppercase()
+        val toNorm = toCode.trim().uppercase()
+        val fromKnown = ratesPerUsd.containsKey(fromNorm) ||
+            MarketCurrency.fromCode(fromNorm) != null ||
+            com.example.data.model.WorldCountryCatalog.isKnownCurrencyCode(fromNorm)
+        val toKnown = ratesPerUsd.containsKey(toNorm) ||
+            MarketCurrency.fromCode(toNorm) != null ||
+            com.example.data.model.WorldCountryCatalog.isKnownCurrencyCode(toNorm)
+        if (!fromKnown || !toKnown) return amount
+        val fromRate = ratePerUsd(fromNorm)
+        val toRate = ratePerUsd(toNorm)
+        if (fromRate <= 0.0 || toRate <= 0.0) return amount
         val sign = if (amount < 0.0) -1.0 else 1.0
-        return sign * convert(kotlin.math.abs(amount), from, to)
+        return sign * ((kotlin.math.abs(amount) / fromRate) * toRate)
     }
 
     fun goldPricePerVoriBdt(carat: GoldCarat): Double = when (carat) {
@@ -240,8 +265,10 @@ data class MarketSnapshot(
         const val DAILY_SYNC_INTERVAL_MS = 24L * 60L * 60L * 1000L
         const val FRESH_SYNC_INTERVAL_MS = 15L * 60L * 1000L
 
-        fun defaultRatesPerUsd(): Map<String, Double> =
-            MarketCurrency.entries.associate { it.code to it.defaultPerUsd }
+        fun defaultRatesPerUsd(): Map<String, Double> = buildMap {
+            putAll(com.example.data.model.WorldCountryCatalog.defaultPerUsdMap)
+            MarketCurrency.entries.forEach { put(it.code, it.defaultPerUsd) }
+        }
 
         fun defaultReference(): MarketSnapshot = MarketSnapshot()
     }

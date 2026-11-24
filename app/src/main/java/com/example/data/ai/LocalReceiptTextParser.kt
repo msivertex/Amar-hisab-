@@ -3,9 +3,12 @@ package com.example.data.ai
 import android.graphics.Bitmap
 import android.util.Log
 import com.example.data.model.AppCurrency
+import com.example.data.model.BuiltInCategoriesCatalog
 import com.example.data.model.ExpenseCategory
+import com.example.data.model.ManagedCategoryItem
 import com.example.data.model.ReceiptScanResult
 import com.example.data.model.TransactionType
+import com.example.localization.AppLanguage
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
@@ -46,11 +49,18 @@ object LocalReceiptTextParser {
      */
     suspend fun scanBitmapLocally(
         bitmap: Bitmap,
-        defaultCurrencyCode: String = "BDT"
+        defaultCurrencyCode: String = "BDT",
+        managedCategories: List<ManagedCategoryItem> = BuiltInCategoriesCatalog.all,
+        language: AppLanguage = AppLanguage.BN
     ): ReceiptScanResult? {
         val rawText = recognizeTextOnDevice(bitmap)
         if (rawText.isNullOrBlank()) return null
-        return parseRawReceiptText(rawText, defaultCurrencyCode)
+        return parseRawReceiptText(
+            rawText = rawText,
+            defaultCurrencyCode = defaultCurrencyCode,
+            managedCategories = managedCategories,
+            language = language
+        )
     }
 
     private suspend fun recognizeTextOnDevice(bitmap: Bitmap): String? =
@@ -80,7 +90,9 @@ object LocalReceiptTextParser {
      */
     fun parseRawReceiptText(
         rawText: String,
-        defaultCurrencyCode: String = "BDT"
+        defaultCurrencyCode: String = "BDT",
+        managedCategories: List<ManagedCategoryItem> = BuiltInCategoriesCatalog.all,
+        language: AppLanguage = AppLanguage.BN
     ): ReceiptScanResult? {
         val asciiText = ReceiptVoucherMatcher.toAsciiDigits(rawText)
         val lines = asciiText.lines().map { it.trim() }.filter { it.isNotBlank() }
@@ -117,12 +129,17 @@ object LocalReceiptTextParser {
         val dateLabel = extractDateLabel(asciiText) ?: "Today"
         val parsedTimestamp = ReceiptVoucherMatcher.parseReceiptTimestamp(dateLabel)
 
-        val category = inferReceiptCategory(lowerAll, merchant, txType)
+        val detectedCat = UnifiedCategoryDetector.detectCategory(
+            text = "$merchant $rawText",
+            type = txType,
+            managedCategories = managedCategories,
+            language = language
+        )
 
         return ReceiptScanResult(
             merchantName = merchant,
             amountBdt = totalAmount,
-            category = category,
+            category = detectedCat.legacyCategory,
             dateLabel = dateLabel,
             itemsSummary = buildSummary(merchant, providerHint, refId),
             transactionType = txType,
@@ -133,7 +150,9 @@ object LocalReceiptTextParser {
             referenceId = refId,
             timestampMillis = parsedTimestamp,
             detectedDirectionKeyword = detectedKeyword,
-            isLocalFallback = true
+            isLocalFallback = true,
+            managedCategoryId = detectedCat.managedCategory.id,
+            managedCategoryLabel = detectedCat.managedCategory.label(language)
         )
     }
 
@@ -322,30 +341,6 @@ object LocalReceiptTextParser {
             if (!found.isNullOrBlank()) return found
         }
         return null
-    }
-
-    private fun inferReceiptCategory(
-        lowerAll: String,
-        merchant: String,
-        txType: TransactionType
-    ): ExpenseCategory {
-        if (txType == TransactionType.INCOME) return ExpenseCategory.SALARY_INCOME
-        val combined = "$lowerAll ${merchant.lowercase(Locale.US)}"
-        return when {
-            listOf("supermarket", "hypermarket", "lulu", "carrefour", "sultan", "shwapno", "agora", "meena", "grocery", "mart", "market", "bazar")
-                .any { combined.contains(it) } -> ExpenseCategory.GROCERIES
-            listOf("restaurant", "cafe", "coffee", "bakery", "kabab", "burger", "pizza", "kitchen", "food", "dining")
-                .any { combined.contains(it) } -> ExpenseCategory.FOOD_DINING
-            listOf("pharmacy", "medical", "hospital", "clinic", "health", "med")
-                .any { combined.contains(it) } -> ExpenseCategory.HEALTH
-            listOf("electric", "desco", "dpdc", "water", "gas", "internet", "telecom", "zain", "ooredoo", "stc", "grameenphone", "robi", "utility", "bill")
-                .any { combined.contains(it) } -> ExpenseCategory.RENT_UTILITIES
-            listOf("fuel", "petrol", "station", "uber", "careem", "pathao", "airline", "metro", "bus", "taxi")
-                .any { combined.contains(it) } -> ExpenseCategory.TRANSPORT
-            listOf("fashion", "apparel", "mall", "store", "electronics", "daraz", "amazon", "shop")
-                .any { combined.contains(it) } -> ExpenseCategory.SHOPPING
-            else -> ExpenseCategory.OTHER
-        }
     }
 
     private fun buildSummary(merchant: String, providerHint: String, refId: String): String = buildString {

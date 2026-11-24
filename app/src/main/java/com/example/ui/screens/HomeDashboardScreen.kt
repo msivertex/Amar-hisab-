@@ -1475,12 +1475,7 @@ private fun formatBalanceForBadge(
     currency: AppCurrency,
     language: AppLanguage
 ): String {
-    val label = currency.cleanBadgeLabel()
-    return if (currency.symbol.equals(label, ignoreCase = true)) {
-        BdtFormatter.formatAmountOnly(amount, currency.code, language)
-    } else {
-        BdtFormatter.formatCurrency(amount, currency.code, language)
-    }
+    return BdtFormatter.formatSymbolAndAmount(amount, currency.code, language)
 }
 
 @Composable
@@ -1702,9 +1697,8 @@ private fun HeroBalanceSummaryCard(
                 ?: CurrencyBalanceEntry(AppCurrency.fromCode(mainCurrencyCode), 0.0)
             val extraEntries = currencyBalances.drop(1)
 
-            // Primary Currency Actual Balance Row
+            // Primary Currency Actual Balance Row (Uniform ISO Badge + Symbol + Formatted Amount across all countries)
             val primaryLabel = primaryEntry.currency.cleanBadgeLabel()
-            val primaryIsSymbolCode = primaryEntry.currency.symbol.equals(primaryLabel, ignoreCase = true)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1717,21 +1711,12 @@ private fun HeroBalanceSummaryCard(
                     }
                     .testTag("hero_balance_currency_${primaryEntry.currency.code}"),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(if (primaryIsSymbolCode) 6.dp else 10.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                if (primaryIsSymbolCode) {
-                    Text(
-                        text = primaryLabel,
-                        style = NumericHeroBalanceStyle,
-                        color = crystal.numericInk,
-                        maxLines = 1
-                    )
-                } else {
-                    CleanCurrencyBadge(
-                        label = primaryLabel,
-                        primaryColor = primaryColor
-                    )
-                }
+                CleanCurrencyBadge(
+                    label = primaryLabel,
+                    primaryColor = primaryColor
+                )
                 Text(
                     text = formatBalanceForBadge(primaryEntry.amount, primaryEntry.currency, language),
                     style = NumericHeroBalanceStyle,
@@ -1742,7 +1727,7 @@ private fun HeroBalanceSummaryCard(
                 )
             }
 
-            // Secondary / Additional Active Currencies (Clean borderless bold symbol + tabular digits, e.g. KD 5,500)
+            // Secondary / Additional Active Currencies (Same uniform ISO Badge + Symbol + Formatted Amount style)
             if (extraEntries.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(6.dp))
                 FlowRow(
@@ -1754,7 +1739,6 @@ private fun HeroBalanceSummaryCard(
                 ) {
                     extraEntries.forEach { entry ->
                         val entryLabel = entry.currency.cleanBadgeLabel()
-                        val entryIsSymbolCode = entry.currency.symbol.equals(entryLabel, ignoreCase = true)
                         Row(
                             modifier = Modifier
                                 .semantics(mergeDescendants = true) {
@@ -1766,22 +1750,13 @@ private fun HeroBalanceSummaryCard(
                                 }
                                 .testTag("hero_balance_currency_${entry.currency.code}"),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            if (entryIsSymbolCode) {
-                                Text(
-                                    text = entryLabel,
-                                    style = NumericSummarySecondaryStyle.copy(fontSize = 17.sp),
-                                    color = crystal.numericInk,
-                                    maxLines = 1
-                                )
-                            } else {
-                                CleanCurrencyBadge(
-                                    label = entryLabel,
-                                    primaryColor = primaryColor,
-                                    compact = true
-                                )
-                            }
+                            CleanCurrencyBadge(
+                                label = entryLabel,
+                                primaryColor = primaryColor,
+                                compact = true
+                            )
                             Text(
                                 text = formatBalanceForBadge(entry.amount, entry.currency, language),
                                 style = NumericSummarySecondaryStyle.copy(fontSize = 17.sp),

@@ -1,0 +1,261 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isValidTimestamp(val) {
+      return val is timestamp && val <= request.time;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasOnly([
+          'userId', 'displayName', 'userCountryCode', 'mainCurrencyCode',
+          'secondaryCurrencyCode', 'monthlyBudget', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'userId', 'displayName', 'userCountryCode', 'mainCurrencyCode',
+          'secondaryCurrencyCode', 'monthlyBudget', 'createdAt', 'updatedAt'
+        ])
+        && data.userId == userId
+        && isValidString(data.displayName, 0, 120)
+        && isValidString(data.userCountryCode, 2, 8)
+        && isValidString(data.mainCurrencyCode, 3, 8)
+        && isValidString(data.secondaryCurrencyCode, 0, 8)
+        && data.monthlyBudget is number && data.monthlyBudget >= 0
+        && isValidTimestamp(data.createdAt)
+        && isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidAccount(data, userId) {
+      return data.keys().hasOnly([
+          'userId', 'localId', 'name', 'type', 'balance', 'creditLimit',
+          'bankOrProvider', 'accountSubtype', 'cardNetwork', 'accountNumberLast4',
+          'colorArgb', 'currencyCode', 'localCreatedAtMillis', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'userId', 'localId', 'name', 'type', 'balance', 'creditLimit',
+          'bankOrProvider', 'accountSubtype', 'cardNetwork', 'accountNumberLast4',
+          'colorArgb', 'currencyCode', 'localCreatedAtMillis', 'createdAt', 'updatedAt'
+        ])
+        && data.userId == userId
+        && data.localId is int && data.localId >= 1
+        && isValidString(data.name, 1, 120)
+        && data.type in ['CASH', 'MFS', 'DEBIT_BANK', 'CREDIT_CARD']
+        && data.balance is number
+        && data.creditLimit is number && data.creditLimit >= 0
+        && isValidString(data.bankOrProvider, 0, 120)
+        && isValidString(data.accountSubtype, 0, 80)
+        && isValidString(data.cardNetwork, 0, 60)
+        && isValidString(data.accountNumberLast4, 0, 8)
+        && data.colorArgb is int
+        && isValidString(data.currencyCode, 3, 8)
+        && data.localCreatedAtMillis is int && data.localCreatedAtMillis >= 0
+        && isValidTimestamp(data.createdAt)
+        && isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidTransaction(data, userId) {
+      return data.keys().hasOnly([
+          'userId', 'localId', 'title', 'amount', 'type', 'category',
+          'subcategory', 'accountLocalId', 'toAccountLocalId', 'note',
+          'currencyCode', 'timestampMillis', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'userId', 'localId', 'title', 'amount', 'type', 'category',
+          'subcategory', 'accountLocalId', 'note',
+          'currencyCode', 'timestampMillis', 'createdAt', 'updatedAt'
+        ])
+        && data.userId == userId
+        && data.localId is int && data.localId >= 1
+        && isValidString(data.title, 1, 160)
+        && data.amount is number && data.amount > 0
+        && data.type in ['EXPENSE', 'INCOME', 'TRANSFER']
+        && isValidString(data.category, 1, 60)
+        && isValidString(data.subcategory, 0, 80)
+        && data.accountLocalId is int && data.accountLocalId >= 1
+        && (!('toAccountLocalId' in data) || (data.toAccountLocalId is int && data.toAccountLocalId >= 1))
+        && isValidString(data.note, 0, 500)
+        && isValidString(data.currencyCode, 3, 8)
+        && data.timestampMillis is int && data.timestampMillis >= 0
+        && isValidTimestamp(data.createdAt)
+        && isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidGoal(data, userId) {
+      return data.keys().hasOnly([
+          'userId', 'localId', 'name', 'targetAmount', 'savedAmount',
+          'dueDateMillis', 'colorArgb', 'localCreatedAtMillis', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'userId', 'localId', 'name', 'targetAmount', 'savedAmount',
+          'colorArgb', 'localCreatedAtMillis', 'createdAt', 'updatedAt'
+        ])
+        && data.userId == userId
+        && data.localId is int && data.localId >= 1
+        && isValidString(data.name, 1, 120)
+        && data.targetAmount is number && data.targetAmount > 0
+        && data.savedAmount is number && data.savedAmount >= 0
+        && (!('dueDateMillis' in data) || (data.dueDateMillis is int && data.dueDateMillis >= 0))
+        && data.colorArgb is int
+        && data.localCreatedAtMillis is int && data.localCreatedAtMillis >= 0
+        && isValidTimestamp(data.createdAt)
+        && isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidLoan(data, userId) {
+      return data.keys().hasOnly([
+          'userId', 'localId', 'personName', 'loanType', 'totalAmount',
+          'paidAmount', 'note', 'dueDateMillis', 'currencyCode',
+          'localCreatedAtMillis', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'userId', 'localId', 'personName', 'loanType', 'totalAmount',
+          'paidAmount', 'note', 'currencyCode',
+          'localCreatedAtMillis', 'createdAt', 'updatedAt'
+        ])
+        && data.userId == userId
+        && data.localId is int && data.localId >= 1
+        && isValidString(data.personName, 1, 120)
+        && data.loanType in ['I_OWE', 'OWED_TO_ME']
+        && data.totalAmount is number && data.totalAmount > 0
+        && data.paidAmount is number && data.paidAmount >= 0
+        && isValidString(data.note, 0, 500)
+        && (!('dueDateMillis' in data) || (data.dueDateMillis is int && data.dueDateMillis >= 0))
+        && isValidString(data.currencyCode, 3, 8)
+        && data.localCreatedAtMillis is int && data.localCreatedAtMillis >= 0
+        && isValidTimestamp(data.createdAt)
+        && isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidBudget(data, userId) {
+      return data.keys().hasOnly([
+          'userId', 'categoryName', 'limitAmount', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'userId', 'categoryName', 'limitAmount', 'createdAt', 'updatedAt'
+        ])
+        && data.userId == userId
+        && isValidString(data.categoryName, 1, 60)
+        && data.limitAmount is number && data.limitAmount > 0
+        && isValidTimestamp(data.createdAt)
+        && isValidTimestamp(data.updatedAt);
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create: if isOwner(userId) && isValidId(userId)
+        && isValidUserProfile(request.resource.data, userId);
+      allow update: if isOwner(userId) && isValidId(userId)
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'displayName', 'userCountryCode', 'mainCurrencyCode',
+          'secondaryCurrencyCode', 'monthlyBudget', 'updatedAt'
+        ])
+        && isValidUserProfile(request.resource.data, userId);
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      match /accounts/{accountId} {
+        allow get: if isOwner(userId) && isValidId(accountId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(accountId)
+          && isValidAccount(request.resource.data, userId);
+        allow update: if isOwner(userId) && isValidId(accountId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'localId', 'name', 'type', 'balance', 'creditLimit',
+            'bankOrProvider', 'accountSubtype', 'cardNetwork', 'accountNumberLast4',
+            'colorArgb', 'currencyCode', 'localCreatedAtMillis', 'updatedAt'
+          ])
+          && isValidAccount(request.resource.data, userId);
+        allow delete: if isOwner(userId) && isValidId(accountId);
+      }
+
+      match /transactions/{transactionId} {
+        allow get: if isOwner(userId) && isValidId(transactionId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(transactionId)
+          && isValidTransaction(request.resource.data, userId);
+        allow update: if isOwner(userId) && isValidId(transactionId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'localId', 'title', 'amount', 'type', 'category',
+            'subcategory', 'accountLocalId', 'toAccountLocalId', 'note',
+            'currencyCode', 'timestampMillis', 'updatedAt'
+          ])
+          && isValidTransaction(request.resource.data, userId);
+        allow delete: if isOwner(userId) && isValidId(transactionId);
+      }
+
+      match /goals/{goalId} {
+        allow get: if isOwner(userId) && isValidId(goalId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(goalId)
+          && isValidGoal(request.resource.data, userId);
+        allow update: if isOwner(userId) && isValidId(goalId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'localId', 'name', 'targetAmount', 'savedAmount',
+            'dueDateMillis', 'colorArgb', 'localCreatedAtMillis', 'updatedAt'
+          ])
+          && isValidGoal(request.resource.data, userId);
+        allow delete: if isOwner(userId) && isValidId(goalId);
+      }
+
+      match /loans/{loanId} {
+        allow get: if isOwner(userId) && isValidId(loanId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(loanId)
+          && isValidLoan(request.resource.data, userId);
+        allow update: if isOwner(userId) && isValidId(loanId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'localId', 'personName', 'loanType', 'totalAmount',
+            'paidAmount', 'note', 'dueDateMillis', 'currencyCode',
+            'localCreatedAtMillis', 'updatedAt'
+          ])
+          && isValidLoan(request.resource.data, userId);
+        allow delete: if isOwner(userId) && isValidId(loanId);
+      }
+
+      match /budgets/{budgetId} {
+        allow get: if isOwner(userId) && isValidId(budgetId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(budgetId)
+          && isValidBudget(request.resource.data, userId);
+        allow update: if isOwner(userId) && isValidId(budgetId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'categoryName', 'limitAmount', 'updatedAt'
+          ])
+          && isValidBudget(request.resource.data, userId);
+        allow delete: if isOwner(userId) && isValidId(budgetId);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

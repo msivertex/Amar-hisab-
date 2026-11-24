@@ -638,7 +638,7 @@ fun DetailedProfileSubPage(
                     ProfileInfoDetailRow(
                         icon = Icons.Filled.Payments,
                         label = strings.mainCurrencyLabel,
-                        value = "${activeMainCurrency.flag} ${activeMainCurrency.code} (${activeMainCurrency.symbol})",
+                        value = activeMainCurrency.fullDisplay(lang),
                         isHighlighted = true,
                         testTag = "detailed_profile_main_currency_row",
                         onClick = { showMainCurrencyPicker = true }
@@ -650,9 +650,7 @@ fun DetailedProfileSubPage(
                     ProfileInfoDetailRow(
                         icon = Icons.Filled.CurrencyExchange,
                         label = strings.secondaryCurrencyLabel,
-                        value = activeSecondaryCurrency?.let {
-                            "${it.flag} ${it.code} (${it.symbol})"
-                        } ?: strings.secondaryCurrencyNotSet,
+                        value = activeSecondaryCurrency?.fullDisplay(lang) ?: strings.secondaryCurrencyNotSet,
                         isHighlighted = activeSecondaryCurrency != null,
                         testTag = "detailed_profile_secondary_currency_row",
                         onClick = { showSecondaryCurrencyPicker = true }

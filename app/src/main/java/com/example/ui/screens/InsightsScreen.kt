@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.export.ExportSharePayload
 import com.example.data.export.MonthlyReportExporter
 import com.example.data.export.ReportExportFormat
+import com.example.data.export.ReportPeriodType
 import com.example.data.market.MarketSyncUiState
 import com.example.data.market.MarketToolTab
 import com.example.data.model.CategorySpend
@@ -101,6 +102,7 @@ fun InsightsScreen(
     val analytics = state.analytics
 
     var showExportSheet by remember { mutableStateOf(false) }
+    var selectedExportPeriod by remember { mutableStateOf(ReportPeriodType.MONTHLY) }
     var exportingFormat by remember { mutableStateOf<ReportExportFormat?>(null) }
     var exportStatusMessage by remember { mutableStateOf<String?>(null) }
     var exportStatusIsError by remember { mutableStateOf(false) }
@@ -114,10 +116,13 @@ fun InsightsScreen(
         state.prefs.userName,
         state.prefs.monthlyBudget,
         state.prefs.mainCurrencyCode,
-        marketSyncState.snapshot
+        state.prefs.startOfWeek,
+        marketSyncState.snapshot,
+        selectedExportPeriod
     ) {
-        MonthlyReportExporter.buildMonthlyPayload(
+        MonthlyReportExporter.buildReportPayload(
             state = state,
+            periodType = selectedExportPeriod,
             marketSnapshot = marketSyncState.snapshot
         )
     }
@@ -134,6 +139,7 @@ fun InsightsScreen(
                     state = state,
                     format = format,
                     strings = strings,
+                    periodType = selectedExportPeriod,
                     marketSnapshot = marketSyncState.snapshot
                 )
             }
@@ -366,7 +372,7 @@ fun InsightsScreen(
                 )
             }
 
-            // Monthly Financial Summary Export (PDF / CSV via Share Intent)
+            // Daily / Weekly / Monthly Financial Receipt Export (PDF / CSV / QR via Share Intent)
             item {
                 MonthlyReportExportCard(
                     payload = monthlyReportPayload,
@@ -375,7 +381,9 @@ fun InsightsScreen(
                     statusMessage = exportStatusMessage,
                     isError = exportStatusIsError,
                     onQuickExport = { format -> triggerExport(format) },
-                    onOpenExportSheet = { showExportSheet = true }
+                    onOpenExportSheet = { showExportSheet = true },
+                    selectedPeriodType = selectedExportPeriod,
+                    onSelectPeriodType = { selectedExportPeriod = it }
                 )
             }
 
@@ -400,7 +408,9 @@ fun InsightsScreen(
             strings = strings,
             exportingFormat = exportingFormat,
             onExport = { format -> triggerExport(format) },
-            onDismiss = { if (exportingFormat == null) showExportSheet = false }
+            onDismiss = { if (exportingFormat == null) showExportSheet = false },
+            selectedPeriodType = selectedExportPeriod,
+            onSelectPeriodType = { selectedExportPeriod = it }
         )
     }
 }

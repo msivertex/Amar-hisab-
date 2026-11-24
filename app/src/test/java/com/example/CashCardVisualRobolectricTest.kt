@@ -53,7 +53,7 @@ class CashCardVisualRobolectricTest {
 
         composeRule.onNodeWithTag("cash_wallet_visual_card_101").assertIsDisplayed()
         composeRule.onNodeWithTag("cash_banknote_coin_graphic_101").assertIsDisplayed()
-        composeRule.onNodeWithText("KD").assertIsDisplayed()
+        composeRule.onNodeWithText("KWD").assertIsDisplayed()
         // Must NOT have plastic bank-card elements (no contactless icon, no •••• digits)
         assertEquals(
             0,

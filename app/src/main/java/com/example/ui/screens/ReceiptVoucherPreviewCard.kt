@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -74,15 +75,29 @@ fun ReceiptVoucherPreviewCard(
     referenceId: String,
     isAiDetected: Boolean,
     language: AppLanguage,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showTransferOption: Boolean = false
 ) {
     val crystal = LocalCrystalColors.current
-    val isBn = language == AppLanguage.BN
+    val isBn = language.isBangla
     val isIncome = transactionType == TransactionType.INCOME
+    val isTransfer = transactionType == TransactionType.TRANSFER
 
-    val accentColor = if (isIncome) crystal.assetGreen else crystal.liabilityRed
-    val accentBg = if (isIncome) crystal.assetGreenBg else crystal.liabilityRedBg
-    val signPrefix = if (isIncome) "+" else "-"
+    val accentColor = when (transactionType) {
+        TransactionType.INCOME -> crystal.assetGreen
+        TransactionType.TRANSFER -> MaterialTheme.colorScheme.primary
+        TransactionType.EXPENSE -> crystal.liabilityRed
+    }
+    val accentBg = when (transactionType) {
+        TransactionType.INCOME -> crystal.assetGreenBg
+        TransactionType.TRANSFER -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+        TransactionType.EXPENSE -> crystal.liabilityRedBg
+    }
+    val signPrefix = when (transactionType) {
+        TransactionType.INCOME -> "+"
+        TransactionType.TRANSFER -> "↔"
+        TransactionType.EXPENSE -> "-"
+    }
     val shape = RoundedCornerShape(20.dp)
 
     val cardBrush = if (crystal.isDark) {
@@ -181,7 +196,7 @@ fun ReceiptVoucherPreviewCard(
             }
         }
 
-        // Direction Selector Toggle: + Add to Card (Income) vs - Deduct from Card (Expense)
+        // Direction Selector Toggle: + Add to Card (Income), - Deduct from Card (Expense), and optional Transfer
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -197,7 +212,7 @@ fun ReceiptVoucherPreviewCard(
                 onClick = { onSelectTransactionType(TransactionType.INCOME) }
             )
             DirectionToggleChip(
-                selected = !isIncome,
+                selected = transactionType == TransactionType.EXPENSE,
                 label = if (isBn) "- টাকা খরচ (ব্যয়)" else "- Money Out (Deduct)",
                 icon = Icons.Filled.ArrowUpward,
                 activeColor = crystal.liabilityRed,
@@ -205,6 +220,18 @@ fun ReceiptVoucherPreviewCard(
                 testTag = "receipt_type_expense",
                 modifier = Modifier.weight(1f),
                 onClick = { onSelectTransactionType(TransactionType.EXPENSE) }
+            )
+        }
+        if (showTransferOption) {
+            DirectionToggleChip(
+                selected = isTransfer,
+                label = if (isBn) "↔ অ্যাকাউন্ট ট্রান্সফার" else "↔ Account Transfer",
+                icon = Icons.Filled.SwapHoriz,
+                activeColor = MaterialTheme.colorScheme.primary,
+                activeBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                testTag = "receipt_type_transfer",
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { onSelectTransactionType(TransactionType.TRANSFER) }
             )
         }
 
@@ -460,7 +487,7 @@ internal fun formatVoucherAmount(
         val frac = formattedUs.substring(dot + 1)
         val wholeFormatted = BdtFormatter.formatAmountOnly(whole.toDouble(), "BDT", language, includeSign = false)
         val fracLocalized = if (language == AppLanguage.BN) BdtFormatter.toBanglaDigits(frac) else frac
-        return "$sign${currency.symbol} $wholeFormatted.$fracLocalized"
+        return "$sign${currency.code} ${currency.symbol} $wholeFormatted.$fracLocalized"
     }
     return BdtFormatter.formatCurrency(amount, currencyCode, language)
 }

@@ -6,9 +6,475 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
-enum class AppLanguage(val code: String, val label: String) {
-    EN("en", "EN"),
-    BN("bn", "বাং")
+enum class AppLanguage(
+    val code: String,
+    val label: String,
+    val nativeName: String,
+    val englishName: String,
+    val regionHint: String,
+    val scriptGlyph: String,
+    val localeTag: String,
+    val isRtl: Boolean = false,
+    val isPrimary: Boolean = false,
+    val isSuggested: Boolean = false,
+    val searchKeywords: String = ""
+) {
+    BN(
+        code = "bn",
+        label = "বাং",
+        nativeName = "বাংলা",
+        englishName = "Bangla",
+        regionHint = "Bangladesh • India (West Bengal • Tripura)",
+        scriptGlyph = "অ",
+        localeTag = "bn-BD",
+        isRtl = false,
+        isPrimary = true,
+        isSuggested = true,
+        searchKeywords = "bangla bengali bangladesh india west bengal kolkata tripura dhaka chattogram sylhet bharat বাংলা বাংলাদেশ ভারত পশ্চিমবঙ্গ"
+    ),
+    EN(
+        code = "en",
+        label = "EN",
+        nativeName = "English",
+        englishName = "English (International)",
+        regionHint = "Global • US • UK • CA • AU",
+        scriptGlyph = "Aa",
+        localeTag = "en-US",
+        isRtl = false,
+        isPrimary = true,
+        isSuggested = true,
+        searchKeywords = "english usa uk england canada australia international global"
+    ),
+    AR(
+        code = "ar",
+        label = "AR",
+        nativeName = "العربية",
+        englishName = "Arabic",
+        regionHint = "Saudi Arabia • UAE • Kuwait • Qatar • Oman • Bahrain",
+        scriptGlyph = "ع",
+        localeTag = "ar-SA",
+        isRtl = true,
+        isSuggested = true,
+        searchKeywords = "arabic saudi uae dubai kuwait qatar oman bahrain middle east rtl عربية"
+    ),
+    HI(
+        code = "hi",
+        label = "HI",
+        nativeName = "हिन्दी",
+        englishName = "Hindi",
+        regionHint = "India • भारत",
+        scriptGlyph = "अ",
+        localeTag = "hi-IN",
+        isSuggested = true,
+        searchKeywords = "hindi india bharat devanagari हिन्दी भारत"
+    ),
+    UR(
+        code = "ur",
+        label = "UR",
+        nativeName = "اردو",
+        englishName = "Urdu",
+        regionHint = "Pakistan • South Asia (India • Nepal)",
+        scriptGlyph = "ا",
+        localeTag = "ur-PK",
+        isRtl = true,
+        isSuggested = true,
+        searchKeywords = "urdu pakistan india nepal south asia rtl اردو"
+    ),
+    MS(
+        code = "ms",
+        label = "MS",
+        nativeName = "Bahasa Melayu",
+        englishName = "Malay",
+        regionHint = "Malaysia • Singapore • Brunei",
+        scriptGlyph = "Ms",
+        localeTag = "ms-MY",
+        isSuggested = true,
+        searchKeywords = "malay malaysia singapore brunei melayu"
+    ),
+    IT(
+        code = "it",
+        label = "IT",
+        nativeName = "Italiano",
+        englishName = "Italian",
+        regionHint = "Italy • Europe",
+        scriptGlyph = "It",
+        localeTag = "it-IT",
+        isSuggested = true,
+        searchKeywords = "italian italy italia europe"
+    ),
+    ES(
+        code = "es",
+        label = "ES",
+        nativeName = "Español",
+        englishName = "Spanish",
+        regionHint = "Spain • Latin America",
+        scriptGlyph = "Es",
+        localeTag = "es-ES",
+        searchKeywords = "spanish spain espana latin america mexico europe"
+    ),
+    FR(
+        code = "fr",
+        label = "FR",
+        nativeName = "Français",
+        englishName = "French",
+        regionHint = "France • Canada • Europe",
+        scriptGlyph = "Fr",
+        localeTag = "fr-FR",
+        searchKeywords = "french france canada quebec europe francais"
+    ),
+    DE(
+        code = "de",
+        label = "DE",
+        nativeName = "Deutsch",
+        englishName = "German",
+        regionHint = "Germany • Austria • Switzerland",
+        scriptGlyph = "De",
+        localeTag = "de-DE",
+        searchKeywords = "german germany deutschland austria switzerland europe"
+    ),
+    PT(
+        code = "pt",
+        label = "PT",
+        nativeName = "Português",
+        englishName = "Portuguese",
+        regionHint = "Portugal • Brazil",
+        scriptGlyph = "Pt",
+        localeTag = "pt-PT",
+        searchKeywords = "portuguese portugal brazil brasil europe"
+    ),
+    JA(
+        code = "ja",
+        label = "JA",
+        nativeName = "日本語",
+        englishName = "Japanese",
+        regionHint = "Japan",
+        scriptGlyph = "あ",
+        localeTag = "ja-JP",
+        searchKeywords = "japanese japan nihongo tokyo asia"
+    ),
+    KO(
+        code = "ko",
+        label = "KO",
+        nativeName = "한국어",
+        englishName = "Korean",
+        regionHint = "South Korea",
+        scriptGlyph = "한",
+        localeTag = "ko-KR",
+        searchKeywords = "korean south korea hangul seoul asia"
+    ),
+    TR(
+        code = "tr",
+        label = "TR",
+        nativeName = "Türkçe",
+        englishName = "Turkish",
+        regionHint = "Turkey • Cyprus",
+        scriptGlyph = "Tr",
+        localeTag = "tr-TR",
+        searchKeywords = "turkish turkey turkiye cyprus"
+    ),
+    ID(
+        code = "id",
+        label = "ID",
+        nativeName = "Bahasa Indonesia",
+        englishName = "Indonesian",
+        regionHint = "Indonesia",
+        scriptGlyph = "Id",
+        localeTag = "id-ID",
+        searchKeywords = "indonesian indonesia jakarta bahasa"
+    ),
+    FIL(
+        code = "fil",
+        label = "FIL",
+        nativeName = "Filipino",
+        englishName = "Filipino (Tagalog)",
+        regionHint = "Philippines",
+        scriptGlyph = "Ph",
+        localeTag = "fil-PH",
+        searchKeywords = "filipino tagalog philippines manila"
+    ),
+    ZH(
+        code = "zh",
+        label = "ZH",
+        nativeName = "中文 (简体)",
+        englishName = "Chinese (Simplified)",
+        regionHint = "China • Singapore",
+        scriptGlyph = "中",
+        localeTag = "zh-CN",
+        isSuggested = true,
+        searchKeywords = "chinese mandarin simplified china singapore 中文"
+    ),
+    RU(
+        code = "ru",
+        label = "RU",
+        nativeName = "Русский",
+        englishName = "Russian",
+        regionHint = "Russia • Eastern Europe",
+        scriptGlyph = "Я",
+        localeTag = "ru-RU",
+        searchKeywords = "russian russia europe"
+    ),
+    NE(
+        code = "ne",
+        label = "NE",
+        nativeName = "नेपाली",
+        englishName = "Nepali",
+        regionHint = "Nepal",
+        scriptGlyph = "ने",
+        localeTag = "ne-NP",
+        searchKeywords = "nepali nepal kathmandu south asia"
+    ),
+    SI(
+        code = "si",
+        label = "SI",
+        nativeName = "සිංහල",
+        englishName = "Sinhala",
+        regionHint = "Sri Lanka",
+        scriptGlyph = "සි",
+        localeTag = "si-LK",
+        searchKeywords = "sinhala sri lanka colombo south asia"
+    ),
+    TA(
+        code = "ta",
+        label = "TA",
+        nativeName = "தமிழ்",
+        englishName = "Tamil",
+        regionHint = "India • Sri Lanka • Singapore",
+        scriptGlyph = "த",
+        localeTag = "ta-IN",
+        searchKeywords = "tamil india tamil nadu chennai sri lanka singapore malaysia தமிழ்"
+    ),
+    MR(
+        code = "mr",
+        label = "MR",
+        nativeName = "मराठी",
+        englishName = "Marathi",
+        regionHint = "Maharashtra • India",
+        scriptGlyph = "म",
+        localeTag = "mr-IN",
+        searchKeywords = "marathi india maharashtra mumbai pune devanagari मराठी"
+    ),
+    TE(
+        code = "te",
+        label = "TE",
+        nativeName = "తెలుగు",
+        englishName = "Telugu",
+        regionHint = "Andhra Pradesh • Telangana • India",
+        scriptGlyph = "తె",
+        localeTag = "te-IN",
+        searchKeywords = "telugu india hyderabad andhra pradesh telangana తెలుగు"
+    ),
+    GU(
+        code = "gu",
+        label = "GU",
+        nativeName = "ગુજરાતી",
+        englishName = "Gujarati",
+        regionHint = "Gujarat • India",
+        scriptGlyph = "ગુ",
+        localeTag = "gu-IN",
+        searchKeywords = "gujarati india gujarat ahmedabad surat ગુજરાતી"
+    ),
+    KN(
+        code = "kn",
+        label = "KN",
+        nativeName = "ಕನ್ನಡ",
+        englishName = "Kannada",
+        regionHint = "Karnataka • India",
+        scriptGlyph = "ಕ",
+        localeTag = "kn-IN",
+        searchKeywords = "kannada india karnataka bengaluru bangalore ಕನ್ನಡ"
+    ),
+    ML(
+        code = "ml",
+        label = "ML",
+        nativeName = "മലയാളം",
+        englishName = "Malayalam",
+        regionHint = "Kerala • India • GCC",
+        scriptGlyph = "മ",
+        localeTag = "ml-IN",
+        searchKeywords = "malayalam india kerala kochi gcc dubai uae kuwait മലയാളം"
+    ),
+    PA(
+        code = "pa",
+        label = "PA",
+        nativeName = "ਪੰਜਾਬੀ",
+        englishName = "Punjabi",
+        regionHint = "Punjab • India • Canada • UK",
+        scriptGlyph = "ਪ",
+        localeTag = "pa-IN",
+        searchKeywords = "punjabi gurmukhi india punjab chandigarh canada uk ਪੰਜਾਬੀ"
+    ),
+    OR(
+        code = "or",
+        label = "OR",
+        nativeName = "ଓଡ଼ିଆ",
+        englishName = "Odia",
+        regionHint = "Odisha • India",
+        scriptGlyph = "ଓ",
+        localeTag = "or-IN",
+        searchKeywords = "odia oriya india odisha bhubaneswar ଓଡ଼ିଆ"
+    ),
+    AS(
+        code = "as",
+        label = "AS",
+        nativeName = "অসমীয়া",
+        englishName = "Assamese",
+        regionHint = "Assam • India",
+        scriptGlyph = "অ",
+        localeTag = "as-IN",
+        searchKeywords = "assamese india assam guwahati অসমীয়া"
+    ),
+    MY(
+        code = "my",
+        label = "MY",
+        nativeName = "မြန်မာဘာသာ",
+        englishName = "Burmese (Myanmar)",
+        regionHint = "Myanmar",
+        scriptGlyph = "မြ",
+        localeTag = "my-MM",
+        searchKeywords = "burmese myanmar yangon"
+    ),
+    DV(
+        code = "dv",
+        label = "DV",
+        nativeName = "ދިވެހި",
+        englishName = "Dhivehi",
+        regionHint = "Maldives",
+        scriptGlyph = "ދ",
+        localeTag = "dv-MV",
+        isRtl = true,
+        searchKeywords = "dhivehi maldives male rtl"
+    ),
+    EL(
+        code = "el",
+        label = "EL",
+        nativeName = "Ελληνικά",
+        englishName = "Greek",
+        regionHint = "Greece • Cyprus",
+        scriptGlyph = "Ω",
+        localeTag = "el-GR",
+        searchKeywords = "greek greece cyprus europe"
+    ),
+    FA(
+        code = "fa",
+        label = "FA",
+        nativeName = "فارسی",
+        englishName = "Persian (Farsi)",
+        regionHint = "Iran • Middle East",
+        scriptGlyph = "ف",
+        localeTag = "fa-IR",
+        isRtl = true,
+        searchKeywords = "persian farsi iran middle east rtl"
+    ),
+    NL(
+        code = "nl",
+        label = "NL",
+        nativeName = "Nederlands",
+        englishName = "Dutch",
+        regionHint = "Netherlands • Belgium",
+        scriptGlyph = "Nl",
+        localeTag = "nl-NL",
+        searchKeywords = "dutch netherlands holland belgium europe"
+    ),
+    PL(
+        code = "pl",
+        label = "PL",
+        nativeName = "Polski",
+        englishName = "Polish",
+        regionHint = "Poland • Europe",
+        scriptGlyph = "Pl",
+        localeTag = "pl-PL",
+        searchKeywords = "polish poland europe"
+    ),
+    TH(
+        code = "th",
+        label = "TH",
+        nativeName = "ไทย",
+        englishName = "Thai",
+        regionHint = "Thailand",
+        scriptGlyph = "ไ",
+        localeTag = "th-TH",
+        searchKeywords = "thai thailand bangkok asia"
+    ),
+    VI(
+        code = "vi",
+        label = "VI",
+        nativeName = "Tiếng Việt",
+        englishName = "Vietnamese",
+        regionHint = "Vietnam",
+        scriptGlyph = "Vi",
+        localeTag = "vi-VN",
+        searchKeywords = "vietnamese vietnam asia"
+    ),
+    SW(
+        code = "sw",
+        label = "SW",
+        nativeName = "Kiswahili",
+        englishName = "Swahili",
+        regionHint = "East Africa",
+        scriptGlyph = "Sw",
+        localeTag = "sw-KE",
+        searchKeywords = "swahili kiswahili kenya tanzania africa"
+    ),
+    SV(
+        code = "sv",
+        label = "SV",
+        nativeName = "Svenska",
+        englishName = "Swedish",
+        regionHint = "Sweden • Europe",
+        scriptGlyph = "Sv",
+        localeTag = "sv-SE",
+        searchKeywords = "swedish sweden nordic europe"
+    ),
+    UK(
+        code = "uk",
+        label = "UK",
+        nativeName = "Українська",
+        englishName = "Ukrainian",
+        regionHint = "Ukraine • Europe",
+        scriptGlyph = "Ук",
+        localeTag = "uk-UA",
+        searchKeywords = "ukrainian ukraine europe"
+    );
+
+    val isBangla: Boolean
+        get() = this == BN
+
+    fun matchesQuery(query: String): Boolean {
+        val q = query.trim()
+        if (q.isEmpty()) return true
+        return nativeName.contains(q, ignoreCase = true) ||
+            englishName.contains(q, ignoreCase = true) ||
+            code.contains(q, ignoreCase = true) ||
+            localeTag.contains(q, ignoreCase = true) ||
+            regionHint.contains(q, ignoreCase = true) ||
+            searchKeywords.contains(q, ignoreCase = true)
+    }
+
+    fun displaySummary(): String = when (this) {
+        BN -> "বাংলা"
+        EN -> "English"
+        else -> "$nativeName ($englishName)"
+    }
+
+    companion object {
+        val primaryLanguages: List<AppLanguage> = entries.filter { it.isPrimary }
+        val suggestedLanguages: List<AppLanguage> = entries.filter { it.isSuggested }
+        val allOtherLanguages: List<AppLanguage> = entries.filterNot { it.isSuggested }
+        val internationalLanguages: List<AppLanguage> = entries.filterNot { it.isPrimary }
+
+        fun fromCode(code: String?): AppLanguage {
+            if (code.isNullOrBlank()) return EN
+            val normalized = code.trim()
+            if (normalized.equals("bn-IN", ignoreCase = true) || normalized.equals("BN_IN", ignoreCase = true)) {
+                return BN
+            }
+            return entries.firstOrNull {
+                it.code.equals(normalized, ignoreCase = true) ||
+                    it.name.equals(normalized, ignoreCase = true) ||
+                    it.localeTag.equals(normalized, ignoreCase = true)
+            } ?: EN
+        }
+    }
 }
 
 object BdtFormatter {
@@ -30,7 +496,33 @@ object BdtFormatter {
             else -> ""
         }
         val numeric = formatAmountOnly(abs(amount), currencyCode, language, includeSign = false)
-        return "${sign}${currency.symbol} $numeric"
+        val sym = currency.distinctSymbolOrNull()
+        return if (sym != null) {
+            "${sign}${currency.code} $sym $numeric"
+        } else {
+            "${sign}${currency.code} $numeric"
+        }
+    }
+
+    /**
+     * Formats the symbol + numeric portion without repeating the ISO code (for balance rows
+     * where the ISO code is rendered inside a uniform leading badge pill, e.g., "[KWD] د.ك 244.000").
+     */
+    fun formatSymbolAndAmount(
+        amount: Double,
+        currencyCode: String,
+        language: AppLanguage,
+        includeSign: Boolean = false
+    ): String {
+        val currency = AppCurrency.fromCode(currencyCode)
+        val sign = when {
+            amount < 0 -> "-"
+            includeSign && amount > 0 -> "+"
+            else -> ""
+        }
+        val numeric = formatAmountOnly(abs(amount), currencyCode, language, includeSign = false)
+        val sym = currency.distinctSymbolOrNull()
+        return if (sym != null) "${sign}$sym $numeric" else "${sign}$numeric"
     }
 
     fun formatAmountOnly(
@@ -42,9 +534,15 @@ object BdtFormatter {
         val currency = AppCurrency.fromCode(currencyCode)
         val isNegative = amount < 0
         val absVal = abs(amount)
-        val hasFractional = currency.decimalPlaces > 0 && abs(absVal - absVal.roundToLong()) >= 0.005
+        val forceFixedThreeDecimals = currency.code.equals("KWD", ignoreCase = true)
+        val hasFractional = forceFixedThreeDecimals ||
+            (currency.decimalPlaces > 0 && abs(absVal - absVal.roundToLong()) >= 0.0005)
         val raw = if (hasFractional) {
-            val decimals = if (currency == AppCurrency.KWD && abs(absVal * 100 - (absVal * 100).roundToLong()) >= 0.05) 3 else 2
+            val decimals = when {
+                forceFixedThreeDecimals -> 3
+                currency.decimalPlaces == 3 -> 3
+                else -> 2
+            }
             val formattedUs = String.format(Locale.US, "%.${decimals}f", absVal)
             val dotIdx = formattedUs.indexOf('.')
             val wholeLong = formattedUs.substring(0, dotIdx).toLongOrNull() ?: absVal.toLong()
@@ -59,7 +557,7 @@ object BdtFormatter {
             val rounded = absVal.roundToLong()
             if (currency.usesIndianGrouping) formatIndianGrouping(rounded) else formatInternationalGrouping(rounded)
         }
-        val localized = if (language == AppLanguage.BN) toBanglaDigits(raw) else raw
+        val localized = if (language.isBangla) toBanglaDigits(raw) else raw
         val sign = when {
             isNegative -> "-"
             includeSign && amount > 0 -> "+"
@@ -83,12 +581,12 @@ object BdtFormatter {
 
     fun formatNumber(value: Int, language: AppLanguage): String {
         val s = value.toString()
-        return if (language == AppLanguage.BN) toBanglaDigits(s) else s
+        return if (language.isBangla) toBanglaDigits(s) else s
     }
 
     fun formatPercent(value: Int, language: AppLanguage): String {
         val s = "${value.coerceIn(0, 999)}%"
-        return if (language == AppLanguage.BN) toBanglaDigits(s) else s
+        return if (language.isBangla) toBanglaDigits(s) else s
     }
 
     fun toBanglaDigits(input: String): String {
@@ -2102,6 +2600,9 @@ object StringsProvider {
         )
     )
 
-    fun get(language: AppLanguage): AppStrings =
-        if (language == AppLanguage.BN) bangla else english
+    fun get(language: AppLanguage): AppStrings = when (language) {
+        AppLanguage.BN -> bangla
+        AppLanguage.EN -> english
+        else -> GlobalLanguageStrings.forLanguage(language, english)
+    }
 }

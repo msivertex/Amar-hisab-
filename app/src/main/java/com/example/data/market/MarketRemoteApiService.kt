@@ -341,10 +341,24 @@ class MarketRemoteApiService(
 
         private fun extractSupportedRates(obj: JSONObject, lowercaseKeys: Boolean): Map<String, Double> {
             val parsed = mutableMapOf<String, Double>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val rawKey = keys.next() ?: continue
+                val normalized = rawKey.trim().uppercase(Locale.ROOT)
+                if (normalized.length == 3 && normalized.all { it in 'A'..'Z' }) {
+                    val v = readPositiveDouble(obj, rawKey)
+                    if (v != null) {
+                        parsed[normalized] = v
+                    }
+                }
+            }
+            // Also guarantee core MarketCurrency keys are probed explicitly
             MarketCurrency.entries.forEach { cur ->
-                val key = if (lowercaseKeys) cur.code.lowercase(Locale.ROOT) else cur.code
-                val v = readPositiveDouble(obj, key)
-                if (v != null) parsed[cur.code] = v
+                if (!parsed.containsKey(cur.code)) {
+                    val key = if (lowercaseKeys) cur.code.lowercase(Locale.ROOT) else cur.code
+                    val v = readPositiveDouble(obj, key)
+                    if (v != null) parsed[cur.code] = v
+                }
             }
             parsed["USD"] = 1.0
             return parsed
