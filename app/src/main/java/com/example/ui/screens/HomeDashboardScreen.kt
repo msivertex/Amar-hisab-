@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -140,6 +141,7 @@ import com.example.ui.components.CardNetworkOrProviderBadge
 import com.example.ui.components.CashWalletCompactCard
 import com.example.ui.components.CategoryIconBadge
 import com.example.ui.components.CrystalCard
+import com.example.ui.components.CurrencyAmountText
 import com.example.ui.components.GoogleGLogo
 import com.example.ui.components.UserProfileAvatar
 import com.example.ui.components.resolveAccountCardGradient
@@ -288,8 +290,11 @@ fun HomeDashboardScreen(
             ) { section ->
                 when (section) {
                     HomeSectionId.SUMMARY -> {
-                        key(state.prefs.homeLayoutStyle) {
-                            if (state.prefs.homeLayoutStyle == HomeLayoutStyle.BALANCE_CARD) {
+                        val useUnifiedSummaryCard =
+                            state.prefs.homeLayoutStyle == HomeLayoutStyle.BALANCE_CARD ||
+                                homeCurrencyBalances.size > 2
+                        key(state.prefs.homeLayoutStyle, useUnifiedSummaryCard) {
+                            if (useUnifiedSummaryCard) {
                                 HeroBalanceSummaryCard(
                                     currencyBalances = homeCurrencyBalances,
                                     incomeThisMonth = state.incomeThisMonth,
@@ -310,164 +315,196 @@ fun HomeDashboardScreen(
                                     }
                                 )
                             } else {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("summary_dual_cards"),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                CrystalCard(
-                                    modifier = Modifier.weight(1f),
-                                    elevated = true,
-                                    onClick = {
-                                        triggerHaptic()
-                                        onOpenAllAccounts()
-                                    }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(IntrinsicSize.Max)
+                                        .testTag("summary_dual_cards"),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(28.dp)
-                                                .clip(RoundedCornerShape(9.dp))
-                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Filled.AccountBalanceWallet,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(16.dp)
-                                            )
+                                    CrystalCard(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .testTag("summary_dual_balance_card"),
+                                        elevated = true,
+                                        onClick = {
+                                            triggerHaptic()
+                                            onOpenAllAccounts()
                                         }
-                                        Text(
-                                            text = strings.totalBalance,
-                                            style = MaterialTheme.typography.labelMedium.copy(
-                                                fontWeight = FontWeight.Medium
-                                            ),
-                                            color = crystal.mutedText,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    val mainEntry = homeCurrencyBalances.first()
-                                    val secondaryEntries = homeCurrencyBalances.drop(1)
-                                    Text(
-                                        text = BdtFormatter.formatCurrency(mainEntry.amount, mainEntry.currency.code, lang),
-                                        style = NumericSummaryPrimaryStyle,
-                                        color = crystal.numericInk,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.testTag("home_total_balance_primary_amount")
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    if (secondaryEntries.isNotEmpty()) {
-                                        val firstExtra = secondaryEntries.first()
-                                        Text(
-                                            text = BdtFormatter.formatCurrency(
-                                                firstExtra.amount,
-                                                firstExtra.currency.code,
-                                                lang
-                                            ),
-                                            style = NumericSummarySecondaryStyle,
-                                            color = crystal.numericInk,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.testTag("dual_balance_currency_${firstExtra.currency.code}")
-                                        )
-                                    } else {
-                                        Text(
-                                            text = strings.liquidAssetsHint,
-                                            style = MaterialTheme.typography.bodySmall.copy(
-                                                fontWeight = FontWeight.Medium
-                                            ),
-                                            color = crystal.assetGreen,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-
-                                CrystalCard(
-                                    modifier = Modifier.weight(1f),
-                                    elevated = true,
-                                    onClick = {
-                                        triggerHaptic()
-                                        onSeeAllActivity()
-                                    }
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(28.dp)
-                                                .clip(RoundedCornerShape(9.dp))
-                                                .background(crystal.liabilityRed.copy(alpha = 0.14f)),
-                                            contentAlignment = Alignment.Center
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Filled.TrendingDown,
-                                                contentDescription = null,
-                                                tint = crystal.liabilityRed,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                        Text(
-                                            text = strings.spentThisMonth,
-                                            style = MaterialTheme.typography.labelMedium.copy(
-                                                fontWeight = FontWeight.Medium
-                                            ),
-                                            color = crystal.mutedText,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    Text(
-                                        text = BdtFormatter.formatCurrency(state.spentThisMonth, mainCurCode, lang),
-                                        style = NumericSummaryPrimaryStyle,
-                                        color = crystal.numericInk,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.testTag("home_spent_month_amount")
-                                    )
-                                    Spacer(modifier = Modifier.height(5.dp))
-                                    val dailyAvgFormatted = BdtFormatter.formatCurrency(state.dailyAverageSpend, mainCurCode, lang)
-                                    Text(
-                                        text = buildAnnotatedString {
-                                            withStyle(
-                                                SpanStyle(
-                                                    color = crystal.mutedText,
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(28.dp)
+                                                    .clip(RoundedCornerShape(9.dp))
+                                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.AccountBalanceWallet,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                            Text(
+                                                text = strings.totalBalance,
+                                                style = MaterialTheme.typography.labelMedium.copy(
                                                     fontWeight = FontWeight.Normal
-                                                )
+                                                ),
+                                                color = crystal.mutedText,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        val mainEntry = homeCurrencyBalances.first()
+                                        val secondaryEntries = homeCurrencyBalances.drop(1)
+                                        CurrencyAmountText(
+                                            amount = mainEntry.amount,
+                                            currencyCode = mainEntry.currency.code,
+                                            language = lang,
+                                            style = NumericSummaryPrimaryStyle.copy(
+                                                fontSize = 18.5.sp,
+                                                fontWeight = FontWeight.ExtraBold
+                                            ),
+                                            isBalance = true,
+                                            colorOverride = crystal.bdtNumericInk,
+                                            bdtFontScale = 0.82f,
+                                            minFontSize = 11.sp,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("home_total_balance_primary_amount")
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        if (secondaryEntries.isNotEmpty()) {
+                                            val firstExtra = secondaryEntries.first()
+                                            CurrencyAmountText(
+                                                amount = firstExtra.amount,
+                                                currencyCode = firstExtra.currency.code,
+                                                language = lang,
+                                                style = NumericSummarySecondaryStyle.copy(
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                ),
+                                                isBalance = true,
+                                                colorOverride = crystal.kwdNumericInk,
+                                                bdtFontScale = 0.86f,
+                                                minFontSize = 10.5.sp,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .testTag("dual_balance_currency_${firstExtra.currency.code}")
+                                            )
+                                        } else {
+                                            Text(
+                                                text = strings.liquidAssetsHint,
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    fontWeight = FontWeight.Normal
+                                                ),
+                                                color = crystal.mutedText,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+
+                                    CrystalCard(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .testTag("summary_dual_spent_card"),
+                                        elevated = true,
+                                        onClick = {
+                                            triggerHaptic()
+                                            onSeeAllActivity()
+                                        }
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(28.dp)
+                                                    .clip(RoundedCornerShape(9.dp))
+                                                    .background(crystal.liabilityRed.copy(alpha = 0.14f)),
+                                                contentAlignment = Alignment.Center
                                             ) {
-                                                append("${strings.dailyAverageLabel}: ")
-                                            }
-                                            withStyle(
-                                                SpanStyle(
-                                                    fontFamily = NumericDisplayFontFamily,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontFeatureSettings = "tnum",
-                                                    letterSpacing = (-0.2).sp,
-                                                    color = crystal.numericInk
+                                                Icon(
+                                                    imageVector = Icons.Filled.TrendingDown,
+                                                    contentDescription = null,
+                                                    tint = crystal.liabilityRed,
+                                                    modifier = Modifier.size(16.dp)
                                                 )
-                                            ) {
-                                                append(dailyAvgFormatted)
                                             }
-                                        },
-                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.testTag("home_daily_avg_text")
-                                    )
+                                            Text(
+                                                text = strings.spentThisMonth,
+                                                style = MaterialTheme.typography.labelMedium.copy(
+                                                    fontWeight = FontWeight.Normal
+                                                ),
+                                                color = crystal.mutedText,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        CurrencyAmountText(
+                                            amount = state.spentThisMonth,
+                                            currencyCode = mainCurCode,
+                                            language = lang,
+                                            style = NumericSummaryPrimaryStyle.copy(
+                                                fontSize = 18.5.sp,
+                                                fontWeight = FontWeight.ExtraBold
+                                            ),
+                                            isBalance = true,
+                                            colorOverride = crystal.bdtNumericInk,
+                                            bdtFontScale = 0.82f,
+                                            minFontSize = 11.sp,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("home_spent_month_amount")
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .semantics(mergeDescendants = true) {}
+                                                .testTag("home_daily_avg_text"),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Text(
+                                                text = "${strings.dailyAverageLabel}:",
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Normal
+                                                ),
+                                                color = crystal.mutedText,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                            CurrencyAmountText(
+                                                amount = state.dailyAverageSpend,
+                                                currencyCode = mainCurCode,
+                                                language = lang,
+                                                style = NumericInlineMetricStyle.copy(
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                ),
+                                                isBalance = true,
+                                                colorOverride = crystal.mutedText.copy(alpha = 0.92f),
+                                                bdtFontScale = 0.90f,
+                                                minFontSize = 9.5.sp,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
+                                    }
                                 }
                             }
-                        }
                         }
                     }
 
@@ -935,13 +972,17 @@ fun HomeDashboardScreen(
                                             style = MaterialTheme.typography.labelSmall,
                                             color = crystal.mutedText
                                         )
-                                        Text(
-                                            text = BdtFormatter.formatCurrency(state.netWorth.netWorth, mainCurCode, lang),
+                                        CurrencyAmountText(
+                                            amount = state.netWorth.netWorth,
+                                            currencyCode = mainCurCode,
+                                            language = lang,
                                             style = MaterialTheme.typography.titleMedium.copy(
-                                                fontFamily = JetBrainsMonoFamily,
+                                                fontFamily = NumericDisplayFontFamily,
                                                 fontWeight = FontWeight.Bold
                                             ),
-                                            color = MaterialTheme.colorScheme.onSurface
+                                            isBalance = true,
+                                            bdtFontScale = 0.90f,
+                                            minFontSize = 12.sp
                                         )
                                     }
                                     Column(horizontalAlignment = Alignment.End) {
@@ -1475,7 +1516,7 @@ private fun formatBalanceForBadge(
     currency: AppCurrency,
     language: AppLanguage
 ): String {
-    return BdtFormatter.formatSymbolAndAmount(amount, currency.code, language)
+    return BdtFormatter.formatSymbolAndBalance(amount, currency.code, language)
 }
 
 @Composable
@@ -1616,10 +1657,11 @@ private fun HeroBalanceSummaryCard(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -1649,16 +1691,20 @@ private fun HeroBalanceSummaryCard(
                             modifier = Modifier.size(19.dp)
                         )
                     }
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = strings.totalBalance,
-                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
-                            color = crystal.mutedText
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Normal),
+                            color = crystal.mutedText,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = strings.liquidAssetsHint,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = crystal.mutedText.copy(alpha = 0.85f)
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
+                            color = crystal.mutedText.copy(alpha = 0.82f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -1670,40 +1716,47 @@ private fun HeroBalanceSummaryCard(
                 ) {
                     Text(
                         text = buildAnnotatedString {
-                            withStyle(SpanStyle(fontWeight = FontWeight.Medium)) {
+                            withStyle(SpanStyle(fontWeight = FontWeight.Normal)) {
                                 append("${strings.netWorth}: ")
                             }
                             withStyle(
                                 SpanStyle(
                                     fontFamily = NumericDisplayFontFamily,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                     fontFeatureSettings = "tnum",
                                     letterSpacing = (-0.15).sp
                                 )
                             ) {
-                                append(BdtFormatter.formatCurrency(netWorth, mainCurrencyCode, language))
+                                append(BdtFormatter.formatBalance(netWorth, mainCurrencyCode, language))
                             }
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = primaryColor,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             val primaryEntry = currencyBalances.firstOrNull()
                 ?: CurrencyBalanceEntry(AppCurrency.fromCode(mainCurrencyCode), 0.0)
             val extraEntries = currencyBalances.drop(1)
 
-            // Primary Currency Actual Balance Row (Uniform ISO Badge + Symbol + Formatted Amount across all countries)
+            // Primary Currency Actual Balance Row (Boldest hero typography in dark tone)
             val primaryLabel = primaryEntry.currency.cleanBadgeLabel()
+            val primaryBadgeColor = if (primaryEntry.currency == AppCurrency.KWD) {
+                crystal.kwdNumericInk
+            } else {
+                primaryColor
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics(mergeDescendants = true) {
-                        contentDescription = BdtFormatter.formatCurrency(
+                        contentDescription = BdtFormatter.formatBalance(
                             primaryEntry.amount,
                             primaryEntry.currency.code,
                             language
@@ -1711,38 +1764,55 @@ private fun HeroBalanceSummaryCard(
                     }
                     .testTag("hero_balance_currency_${primaryEntry.currency.code}"),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 CleanCurrencyBadge(
                     label = primaryLabel,
-                    primaryColor = primaryColor
+                    primaryColor = primaryBadgeColor
                 )
-                Text(
-                    text = formatBalanceForBadge(primaryEntry.amount, primaryEntry.currency, language),
-                    style = NumericHeroBalanceStyle,
-                    color = crystal.numericInk,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                CurrencyAmountText(
+                    amount = primaryEntry.amount,
+                    currencyCode = primaryEntry.currency.code,
+                    language = language,
+                    style = NumericHeroBalanceStyle.copy(
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    ),
+                    includeIsoCode = false,
+                    isBalance = true,
+                    colorOverride = if (primaryEntry.currency == AppCurrency.KWD) {
+                        crystal.kwdNumericInk
+                    } else {
+                        crystal.bdtNumericInk
+                    },
+                    bdtFontScale = 0.85f,
+                    minFontSize = 14.sp,
                     modifier = Modifier.weight(1f)
                 )
             }
 
-            // Secondary / Additional Active Currencies (Same uniform ISO Badge + Symbol + Formatted Amount style)
+            // Secondary / Additional Active Currencies (All 2..N currencies cleanly wrapped with zero clipping)
             if (extraEntries.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 FlowRow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("hero_secondary_currency_balances"),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    extraEntries.forEach { entry ->
+                    extraEntries.forEachIndexed { idx, entry ->
                         val entryLabel = entry.currency.cleanBadgeLabel()
+                        val useDarkBlue = idx == 0 || entry.currency == AppCurrency.KWD
+                        val entryBadgeColor = if (useDarkBlue) {
+                            crystal.kwdNumericInk
+                        } else {
+                            primaryColor
+                        }
                         Row(
                             modifier = Modifier
                                 .semantics(mergeDescendants = true) {
-                                    contentDescription = BdtFormatter.formatCurrency(
+                                    contentDescription = BdtFormatter.formatBalance(
                                         entry.amount,
                                         entry.currency.code,
                                         language
@@ -1754,25 +1824,38 @@ private fun HeroBalanceSummaryCard(
                         ) {
                             CleanCurrencyBadge(
                                 label = entryLabel,
-                                primaryColor = primaryColor,
+                                primaryColor = entryBadgeColor,
                                 compact = true
                             )
-                            Text(
-                                text = formatBalanceForBadge(entry.amount, entry.currency, language),
-                                style = NumericSummarySecondaryStyle.copy(fontSize = 17.sp),
-                                color = crystal.numericInk,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                            CurrencyAmountText(
+                                amount = entry.amount,
+                                currencyCode = entry.currency.code,
+                                language = language,
+                                style = NumericSummarySecondaryStyle.copy(
+                                    fontSize = 15.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                includeIsoCode = false,
+                                isBalance = true,
+                                colorOverride = if (useDarkBlue) {
+                                    crystal.kwdNumericInk
+                                } else {
+                                    crystal.bdtNumericInk
+                                },
+                                bdtFontScale = 0.88f,
+                                minFontSize = 11.5.sp
                             )
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Max),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Surface(
@@ -1781,11 +1864,13 @@ private fun HeroBalanceSummaryCard(
                     border = BorderStroke(0.8.dp, crystal.assetGreen.copy(alpha = 0.25f)),
                     modifier = Modifier
                         .weight(1f)
+                        .fillMaxHeight()
                         .clip(RoundedCornerShape(14.dp))
                         .clickable(onClick = onOpenActivity)
+                        .testTag("hero_income_box")
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -1803,19 +1888,27 @@ private fun HeroBalanceSummaryCard(
                                 modifier = Modifier.size(15.dp)
                             )
                         }
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = strings.dashboard.incomePillLabel,
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Normal),
                                 color = crystal.mutedText,
-                                maxLines = 1
-                            )
-                            Text(
-                                text = BdtFormatter.formatCurrency(incomeThisMonth, mainCurrencyCode, language),
-                                style = NumericInlineMetricStyle.copy(fontSize = 14.5.sp),
-                                color = crystal.assetGreen,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
+                            )
+                            CurrencyAmountText(
+                                amount = incomeThisMonth,
+                                currencyCode = mainCurrencyCode,
+                                language = language,
+                                style = NumericInlineMetricStyle.copy(
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                isBalance = true,
+                                colorOverride = crystal.assetGreen,
+                                bdtFontScale = 0.86f,
+                                minFontSize = 10.sp,
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
                     }
@@ -1827,11 +1920,13 @@ private fun HeroBalanceSummaryCard(
                     border = BorderStroke(0.8.dp, crystal.liabilityRed.copy(alpha = 0.25f)),
                     modifier = Modifier
                         .weight(1f)
+                        .fillMaxHeight()
                         .clip(RoundedCornerShape(14.dp))
                         .clickable(onClick = onOpenActivity)
+                        .testTag("hero_spent_box")
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -1849,19 +1944,33 @@ private fun HeroBalanceSummaryCard(
                                 modifier = Modifier.size(15.dp)
                             )
                         }
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = strings.spentThisMonth,
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Normal),
                                 color = crystal.mutedText,
-                                maxLines = 1
-                            )
-                            Text(
-                                text = BdtFormatter.formatCurrency(spentThisMonth, mainCurrencyCode, language),
-                                style = NumericInlineMetricStyle.copy(fontSize = 14.5.sp),
-                                color = crystal.liabilityRed,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
+                            )
+                            CurrencyAmountText(
+                                amount = spentThisMonth,
+                                currencyCode = mainCurrencyCode,
+                                language = language,
+                                style = NumericInlineMetricStyle.copy(
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                isBalance = true,
+                                colorOverride = if (mainCurrencyCode.equals("BDT", ignoreCase = true)) {
+                                    crystal.bdtNumericInk
+                                } else if (mainCurrencyCode.equals("KWD", ignoreCase = true)) {
+                                    crystal.kwdNumericInk
+                                } else {
+                                    crystal.liabilityRed
+                                },
+                                bdtFontScale = 0.86f,
+                                minFontSize = 10.sp,
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
                     }
@@ -1883,7 +1992,7 @@ private fun HeroBalanceSummaryCard(
                     ) {
                         Text(
                             text = "${strings.monthlyBudget}: ${BdtFormatter.formatCurrency(monthlyBudget, mainCurrencyCode, language)}",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Normal),
                             color = crystal.mutedText,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -1891,7 +2000,10 @@ private fun HeroBalanceSummaryCard(
                         )
                         Text(
                             text = "${BdtFormatter.formatNumber(budgetPercent, language)}%",
-                            style = NumericInlineMetricStyle.copy(fontSize = 11.5.sp),
+                            style = NumericInlineMetricStyle.copy(
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
                             color = if (isOverBudget) crystal.liabilityRed else primaryColor
                         )
                     }
@@ -1922,7 +2034,7 @@ private fun HeroBalanceSummaryCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = buildAnnotatedString {
                     withStyle(
@@ -1936,16 +2048,19 @@ private fun HeroBalanceSummaryCard(
                     withStyle(
                         SpanStyle(
                             fontFamily = NumericDisplayFontFamily,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Medium,
                             fontFeatureSettings = "tnum",
-                            letterSpacing = (-0.2).sp,
-                            color = crystal.numericInk
+                            letterSpacing = (-0.15).sp,
+                            color = crystal.mutedText.copy(alpha = 0.92f)
                         )
                     ) {
-                        append(BdtFormatter.formatCurrency(dailyAverage, mainCurrencyCode, language))
+                        append(BdtFormatter.formatBalance(dailyAverage, mainCurrencyCode, language))
                     }
                 },
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp)
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("hero_daily_avg_text")
             )
         }
     }
@@ -2306,12 +2421,16 @@ private fun CompactWalletStrip(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Text(
-                                    text = BdtFormatter.formatCurrency(account.balance, account.currencyCode, language),
+                                CurrencyAmountText(
+                                    amount = account.balance,
+                                    currencyCode = account.currencyCode,
+                                    language = language,
                                     style = NumericCompactCardBalanceStyle,
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    isBalance = true,
+                                    colorOverride = Color.White,
+                                    bdtFontScale = 0.86f,
+                                    minFontSize = 14.sp,
+                                    modifier = Modifier.fillMaxWidth()
                                 )
                             }
 
@@ -2933,13 +3052,31 @@ fun TransactionRowItem(
         }
 
         Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = amountText,
+        val txPrefix = when (tx.type) {
+            TransactionType.EXPENSE -> "-"
+            TransactionType.INCOME -> "+"
+            TransactionType.TRANSFER -> "⇄ "
+        }
+        val effectiveTxAmountColor = if (
+            tx.currencyCode.equals("KWD", ignoreCase = true) && tx.type == TransactionType.TRANSFER
+        ) {
+            crystal.kwdNumericInk
+        } else {
+            amountColor
+        }
+        CurrencyAmountText(
+            amount = tx.amount,
+            currencyCode = tx.currencyCode,
+            language = language,
             style = MaterialTheme.typography.titleSmall.copy(
-                fontFamily = JetBrainsMonoFamily,
+                fontFamily = NumericDisplayFontFamily,
                 fontWeight = FontWeight.SemiBold
             ),
-            color = amountColor
+            isBalance = false,
+            prefix = txPrefix,
+            colorOverride = effectiveTxAmountColor,
+            bdtFontScale = 0.92f,
+            minFontSize = 11.sp
         )
     }
 }

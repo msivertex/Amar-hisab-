@@ -95,8 +95,17 @@ object GoogleAuthManager {
             )
             when (val parsed = parseCredentialResponse(response)) {
                 is GoogleSignInOutcome.Success -> {
-                    val firebaseUid = authenticateWithFirebase(context, parsed.profile.idToken)
-                    GoogleSignInOutcome.Success(parsed.profile.copy(firebaseUid = firebaseUid))
+                    val (firebaseUid, firebasePhotoUrl) = authenticateWithFirebase(context, parsed.profile.idToken)
+                    val resolvedAvatar = ProfilePhotoUrlNormalizer.mergePreservingHighRes(
+                        incomingUrl = parsed.profile.avatarUrl,
+                        existingUrl = firebasePhotoUrl
+                    )
+                    GoogleSignInOutcome.Success(
+                        parsed.profile.copy(
+                            avatarUrl = resolvedAvatar,
+                            firebaseUid = firebaseUid
+                        )
+                    )
                 }
                 else -> parsed
             }
@@ -146,20 +155,22 @@ object GoogleAuthManager {
      * Never falls back to anonymous auth; if Firebase Auth is unreachable offline, returns ""
      * so local usage continues cleanly without blocking the user.
      */
-    private suspend fun authenticateWithFirebase(context: Context, idToken: String): String {
-        if (idToken.isBlank()) return ""
+    private suspend fun authenticateWithFirebase(context: Context, idToken: String): Pair<String, String> {
+        if (idToken.isBlank()) return "" to ""
         return try {
             if (FirebaseApp.getApps(context.applicationContext).isEmpty()) {
                 FirebaseApp.initializeApp(context.applicationContext)
             }
             val credential = GoogleAuthProvider.getCredential(idToken, null)
             val result = Firebase.auth.signInWithCredential(credential).awaitTask()
-            result.user?.uid.orEmpty()
+            val uid = result.user?.uid.orEmpty()
+            val photoUrl = ProfilePhotoUrlNormalizer.toHighResUrl(result.user?.photoUrl?.toString())
+            uid to photoUrl
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "Firebase Auth credential exchange deferred; continuing with local store", e)
-            ""
+            "" to ""
         }
     }
 
@@ -169,6 +180,15 @@ object GoogleAuthManager {
             Firebase.auth.currentUser?.uid?.takeIf { it.isNotBlank() }
         } catch (_: Exception) {
             null
+        }
+    }
+
+    fun currentFirebasePhotoUrl(context: Context): String {
+        return try {
+            if (FirebaseApp.getApps(context.applicationContext).isEmpty()) return ""
+            ProfilePhotoUrlNormalizer.toHighResUrl(Firebase.auth.currentUser?.photoUrl?.toString())
+        } catch (_: Exception) {
+            ""
         }
     }
 
@@ -272,7 +292,7 @@ object GoogleAuthManager {
                         displayName = googleId.displayName?.takeIf { it.isNotBlank() }
                             ?: googleId.id.substringBefore("@"),
                         email = googleId.id.trim(),
-                        avatarUrl = googleId.profilePictureUri?.toString().orEmpty(),
+                        avatarUrl = ProfilePhotoUrlNormalizer.toHighResUrl(googleId.profilePictureUri?.toString()),
                         idToken = googleId.idToken
                     )
                 )

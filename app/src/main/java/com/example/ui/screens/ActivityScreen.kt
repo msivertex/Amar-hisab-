@@ -1,15 +1,23 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -31,7 +39,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,11 +49,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.ui.unit.sp
 import com.example.data.local.TransactionEntity
 import com.example.data.market.MarketSnapshot
 import com.example.data.model.AccountNameResolver
@@ -179,27 +189,79 @@ fun ActivityScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
+                val receiptScanInteractionSource = remember { MutableInteractionSource() }
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("activity_header_row"),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = strings.activityTitle,
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.onBackground
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("activity_header_title")
                     )
-                    OutlinedButton(
-                        onClick = onOpenReceiptScan,
-                        shape = RoundedCornerShape(14.dp)
+
+                    Box(
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .clickable(
+                                interactionSource = receiptScanInteractionSource,
+                                indication = null,
+                                role = Role.Button,
+                                onClick = onOpenReceiptScan
+                            )
+                            .testTag("activity_receipt_scan_button"),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.DocumentScanner,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.size(6.dp))
-                        Text(strings.actionReceiptScan)
+                        Surface(
+                            shape = RoundedCornerShape(11.dp),
+                            color = crystal.glassSurface.copy(alpha = if (crystal.isDark) 0.55f else 0.72f),
+                            contentColor = MaterialTheme.colorScheme.primary,
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
+                            ),
+                            modifier = Modifier
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(11.dp))
+                                .indication(receiptScanInteractionSource, LocalIndication.current)
+                                .testTag("activity_receipt_scan_pill")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.DocumentScanner,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = strings.actionReceiptScan,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        lineHeight = 14.sp,
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false)
+                                    ),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Clip,
+                                    modifier = Modifier.testTag("activity_receipt_scan_label")
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -345,18 +407,19 @@ fun ActivityScreen(
                                     verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     group.netDeltasByCurrency.forEach { (curCode, deltaVal) ->
+                                        val clampedDelta = deltaVal.coerceAtLeast(0.0)
                                         Surface(
-                                            color = if (deltaVal >= 0) crystal.assetGreenBg else crystal.liabilityRedBg,
+                                            color = crystal.assetGreenBg,
                                             shape = CircleShape,
                                             modifier = Modifier.testTag("activity_delta_pill_${group.dateKey}_$curCode")
                                         ) {
                                             Text(
-                                                text = "${strings.dailyNetDelta} ${BdtFormatter.formatCurrency(deltaVal, curCode, lang, includeSign = true)}",
+                                                text = "${strings.dailyNetDelta} ${BdtFormatter.formatBalance(clampedDelta, curCode, lang)}",
                                                 style = MaterialTheme.typography.labelSmall.copy(
                                                     fontFamily = JetBrainsMonoFamily,
                                                     fontWeight = FontWeight.Bold
                                                 ),
-                                                color = if (deltaVal >= 0) crystal.assetGreen else crystal.liabilityRed,
+                                                color = crystal.assetGreen,
                                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                             )
                                         }

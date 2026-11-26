@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.core.ProfilePhotoUrlNormalizer
 import com.example.data.model.AppColourTheme
 import com.example.data.model.AppCountry
 import com.example.data.model.AppCurrency
@@ -69,6 +70,8 @@ data class UserPrefs(
     val notifDailyReminderHour: Int = 21,
     val notifDailyReminderMinute: Int = 0,
     val notifLoanDayBeforeEnabled: Boolean = true,
+    val notifLoanReminderHour: Int = 10,
+    val notifLoanReminderMinute: Int = 0,
     val notifHighSpendAlertEnabled: Boolean = true,
     val notifDailySpendLimit: Double = 0.0,
     val notificationLogJson: String = "",
@@ -99,7 +102,9 @@ data class UserPrefs(
 
     val effectiveAvatarUrl: String
         get() = when (authMode) {
-            AuthMode.GOOGLE -> googleCustomAvatarUrl.ifBlank { userAvatarUrl }
+            AuthMode.GOOGLE -> googleCustomAvatarUrl.ifBlank {
+                ProfilePhotoUrlNormalizer.toHighResUrl(userAvatarUrl)
+            }
             AuthMode.GUEST -> guestAvatarUrl
         }
 
@@ -153,6 +158,8 @@ class UserPreferencesRepository(private val context: Context) {
         val NOTIF_DAILY_HOUR = intPreferencesKey("notif_daily_reminder_hour")
         val NOTIF_DAILY_MINUTE = intPreferencesKey("notif_daily_reminder_minute")
         val NOTIF_LOAN_DAY_BEFORE = booleanPreferencesKey("notif_loan_day_before_enabled")
+        val NOTIF_LOAN_HOUR = intPreferencesKey("notif_loan_reminder_hour")
+        val NOTIF_LOAN_MINUTE = intPreferencesKey("notif_loan_reminder_minute")
         val NOTIF_HIGH_SPEND = booleanPreferencesKey("notif_high_spend_alert_enabled")
         val NOTIF_DAILY_SPEND_LIMIT = doublePreferencesKey("notif_daily_spend_limit")
         val NOTIFICATION_LOG_JSON = stringPreferencesKey("notification_log_json")
@@ -264,6 +271,8 @@ class UserPreferencesRepository(private val context: Context) {
             notifDailyReminderHour = (prefs[Keys.NOTIF_DAILY_HOUR] ?: 21).coerceIn(0, 23),
             notifDailyReminderMinute = (prefs[Keys.NOTIF_DAILY_MINUTE] ?: 0).coerceIn(0, 59),
             notifLoanDayBeforeEnabled = prefs[Keys.NOTIF_LOAN_DAY_BEFORE] ?: true,
+            notifLoanReminderHour = (prefs[Keys.NOTIF_LOAN_HOUR] ?: 10).coerceIn(0, 23),
+            notifLoanReminderMinute = (prefs[Keys.NOTIF_LOAN_MINUTE] ?: 0).coerceIn(0, 59),
             notifHighSpendAlertEnabled = prefs[Keys.NOTIF_HIGH_SPEND] ?: true,
             notifDailySpendLimit = (prefs[Keys.NOTIF_DAILY_SPEND_LIMIT] ?: 0.0).coerceAtLeast(0.0),
             notificationLogJson = prefs[Keys.NOTIFICATION_LOG_JSON] ?: "",
@@ -362,13 +371,44 @@ class UserPreferencesRepository(private val context: Context) {
     ) {
         val normalizedEmail = email.trim()
         context.dataStore.edit { prefs ->
+            val existingEmail = prefs[Keys.USER_EMAIL].orEmpty().trim().lowercase()
+            val isSameAccount = existingEmail.isNotBlank() &&
+                normalizedEmail.isNotBlank() &&
+                existingEmail == normalizedEmail.lowercase()
+            val existingAvatar = if (isSameAccount) prefs[Keys.USER_AVATAR_URL].orEmpty() else ""
+            val resolvedHighResAvatar = ProfilePhotoUrlNormalizer.mergePreservingHighRes(
+                incomingUrl = avatarUrl,
+                existingUrl = existingAvatar
+            )
+
             prefs[Keys.HAS_COMPLETED_WELCOME] = true
             prefs[Keys.AUTH_MODE] = AuthMode.GOOGLE.name
             if (displayName.isNotBlank()) prefs[Keys.USER_NAME] = displayName.trim()
             prefs[Keys.USER_EMAIL] = normalizedEmail
             prefs[Keys.LAST_LOCAL_OWNER_EMAIL] = normalizedEmail.lowercase()
-            prefs[Keys.USER_AVATAR_URL] = avatarUrl.trim()
-            prefs[Keys.GOOGLE_CUSTOM_AVATAR_URL] = ""
+            prefs[Keys.USER_AVATAR_URL] = resolvedHighResAvatar
+            if (!isSameAccount) {
+                prefs[Keys.GOOGLE_CUSTOM_AVATAR_URL] = ""
+            }
+        }
+    }
+
+    /**
+     * Silently upgrades any previously stored low-resolution Google avatar URL (e.g. `=s96-c`)
+     * to a sharp high-resolution URL (`=s400-c`) or backfills from Firebase Auth if blank,
+     * without overwriting any custom avatar override.
+     */
+    suspend fun upgradeStoredGoogleAvatarIfNeeded(fallbackPhotoUrl: String = "") {
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.AUTH_MODE] != AuthMode.GOOGLE.name) return@edit
+            val currentStored = prefs[Keys.USER_AVATAR_URL].orEmpty()
+            val upgraded = ProfilePhotoUrlNormalizer.mergePreservingHighRes(
+                incomingUrl = currentStored,
+                existingUrl = fallbackPhotoUrl
+            )
+            if (upgraded.isNotBlank() && upgraded != currentStored) {
+                prefs[Keys.USER_AVATAR_URL] = upgraded
+            }
         }
     }
 
@@ -523,6 +563,13 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun setLoanDayBeforeEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.NOTIF_LOAN_DAY_BEFORE] = enabled
+        }
+    }
+
+    suspend fun setLoanReminderTime(hour: Int, minute: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.NOTIF_LOAN_HOUR] = hour.coerceIn(0, 23)
+            prefs[Keys.NOTIF_LOAN_MINUTE] = minute.coerceIn(0, 59)
         }
     }
 

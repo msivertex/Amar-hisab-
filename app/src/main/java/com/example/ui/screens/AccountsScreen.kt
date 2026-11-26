@@ -5,8 +5,12 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -30,7 +35,6 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,9 +47,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.local.AccountEntity
 import com.example.data.market.MarketSnapshot
 import com.example.data.model.AccountType
@@ -56,6 +64,7 @@ import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
 import com.example.ui.components.AccountVisualCard
 import com.example.ui.components.CrystalCard
+import com.example.ui.components.CurrencyAmountText
 import com.example.ui.theme.JetBrainsMonoFamily
 import com.example.ui.theme.LocalCrystalColors
 
@@ -100,14 +109,18 @@ fun AccountsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
+                val addAccountInteractionSource = remember { MutableInteractionSource() }
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("accounts_header_row"),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(
+                        modifier = Modifier.weight(1f),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         IconButton(
                             onClick = onBack,
@@ -123,26 +136,65 @@ fun AccountsScreen(
                         }
                         Text(
                             text = strings.accountsTitle,
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onBackground
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontSize = 18.5.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("accounts_header_title")
                         )
                     }
 
-                    Button(
-                        onClick = onOpenAddWizard,
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        ),
-                        modifier = Modifier.testTag("add_account_wizard_button")
+                    Box(
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .clickable(
+                                interactionSource = addAccountInteractionSource,
+                                indication = null,
+                                role = Role.Button,
+                                onClick = onOpenAddWizard
+                            )
+                            .testTag("add_account_wizard_button"),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Add,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.size(6.dp))
-                        Text(strings.addAccount)
+                        Surface(
+                            shape = RoundedCornerShape(11.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            shadowElevation = 2.dp,
+                            modifier = Modifier
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(11.dp))
+                                .indication(addAccountInteractionSource, LocalIndication.current)
+                                .testTag("add_account_wizard_pill")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = strings.addAccount,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        lineHeight = 14.sp,
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false)
+                                    ),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Clip,
+                                    modifier = Modifier.testTag("add_account_wizard_label")
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -306,13 +358,18 @@ fun NetWorthHeaderCard(
             }
         }
         Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = BdtFormatter.formatCurrency(netWorth.netWorth, mainCur.code, language),
+        CurrencyAmountText(
+            amount = netWorth.netWorth,
+            currencyCode = mainCur.code,
+            language = language,
             style = MaterialTheme.typography.headlineLarge.copy(
                 fontFamily = JetBrainsMonoFamily,
                 fontWeight = FontWeight.Bold
             ),
-            color = MaterialTheme.colorScheme.onSurface
+            isBalance = true,
+            bdtFontScale = 0.84f,
+            minFontSize = 16.sp,
+            modifier = Modifier.fillMaxWidth()
         )
 
         if (secCur != null) {
@@ -323,13 +380,19 @@ fun NetWorthHeaderCard(
                 shape = RoundedCornerShape(10.dp),
                 border = BorderStroke(1.dp, crystal.glassBorder)
             ) {
-                Text(
-                    text = "≈ ${secCur.flag} ${BdtFormatter.formatCurrency(secNetWorth, secCur.code, language)}",
+                CurrencyAmountText(
+                    amount = secNetWorth,
+                    currencyCode = secCur.code,
+                    language = language,
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontFamily = JetBrainsMonoFamily,
                         fontWeight = FontWeight.SemiBold
                     ),
-                    color = MaterialTheme.colorScheme.primary,
+                    isBalance = true,
+                    prefix = "≈ ${secCur.flag} ",
+                    colorOverride = if (secCur == AppCurrency.KWD) crystal.kwdNumericInk else MaterialTheme.colorScheme.primary,
+                    bdtFontScale = 0.92f,
+                    minFontSize = 11.sp,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                 )
             }
@@ -388,7 +451,7 @@ fun NetWorthHeaderCard(
                     )
                 }
                 Text(
-                    text = BdtFormatter.formatCurrency(netWorth.totalAssets, mainCur.code, language),
+                    text = BdtFormatter.formatBalance(netWorth.totalAssets, mainCur.code, language),
                     style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMonoFamily),
                     color = crystal.assetGreen
                 )
@@ -412,7 +475,7 @@ fun NetWorthHeaderCard(
                     )
                 }
                 Text(
-                    text = BdtFormatter.formatCurrency(netWorth.totalLiabilities, mainCur.code, language),
+                    text = BdtFormatter.formatBalance(netWorth.totalLiabilities, mainCur.code, language),
                     style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMonoFamily),
                     color = crystal.liabilityRed
                 )

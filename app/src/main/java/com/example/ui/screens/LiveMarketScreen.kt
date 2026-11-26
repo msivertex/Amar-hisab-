@@ -294,7 +294,7 @@ fun HomeLiveMarketEntryCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "🇺🇸 1 USD = ৳$usdToBdt",
+                        text = "🇺🇸 1 USD = BDT $usdToBdt",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = JetBrainsMonoFamily,
                             fontWeight = FontWeight.Bold
@@ -303,7 +303,7 @@ fun HomeLiveMarketEntryCard(
                         maxLines = 1
                     )
                     Text(
-                        text = "🇰🇼 1 KWD = ৳$kwdToBdt",
+                        text = "🇰🇼 1 KWD = BDT $kwdToBdt",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = JetBrainsMonoFamily,
                             fontWeight = FontWeight.SemiBold
@@ -312,7 +312,7 @@ fun HomeLiveMarketEntryCard(
                         maxLines = 1
                     )
                     Text(
-                        text = "✨ 22K ৳$gold22k",
+                        text = "✨ 22K BDT $gold22k",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = JetBrainsMonoFamily,
                             fontWeight = FontWeight.Bold
@@ -720,9 +720,9 @@ private fun LiveMarketOptionsMenu(
         "Ref • $essentialsCount items"
     }
     val goldBadge = if (snapshot.isGoldLiveSynced && snapshot.xauUsdPerOunce > 0.0 && isOnline) {
-        "XAU • 22K ৳$gold22k"
+        "XAU • 22K BDT $gold22k"
     } else {
-        "22K ৳$gold22k"
+        "22K BDT $gold22k"
     }
 
     Column(
@@ -741,7 +741,7 @@ private fun LiveMarketOptionsMenu(
         LiveMarketOptionRowCard(
             title = hub.tabCurrency,
             description = hub.optionCurrencyDesc,
-            badgeText = "1 USD ৳$usdRate • 1 KWD ৳$kwdRate",
+            badgeText = "1 USD BDT $usdRate • 1 KWD BDT $kwdRate",
             icon = Icons.Filled.CurrencyExchange,
             accentColor = primary,
             onClick = { onSelectOption(LiveMarketOption.CURRENCY_RATE) },

@@ -996,7 +996,7 @@ object InsightsSummaryHelper {
             listOf(
                 OfflineMarketGuideItem(
                     title = "মুদ্রা রেট (১ USD / ১ SAR / ১ KWD)",
-                    value = "৳$usdFmt • ৳$sarFmt • ৳$kwdFmt",
+                    value = "BDT $usdFmt • BDT $sarFmt • BDT $kwdFmt",
                     note = "ব্যাংক ও রেমিট্যান্স চ্যানেল অনুযায়ী পরিবর্তিত হয়",
                     query = "আজকের ইউএস ডলার থেকে টাকা রেট কত?"
                 ),
@@ -1029,7 +1029,7 @@ object InsightsSummaryHelper {
             listOf(
                 OfflineMarketGuideItem(
                     title = "FX Rates (1 USD / 1 SAR / 1 KWD)",
-                    value = "৳$usdFmt • ৳$sarFmt • ৳$kwdFmt",
+                    value = "BDT $usdFmt • BDT $sarFmt • BDT $kwdFmt",
                     note = "Varies by bank & remittance channel",
                     query = "Latest USD to BDT exchange rate today"
                 ),

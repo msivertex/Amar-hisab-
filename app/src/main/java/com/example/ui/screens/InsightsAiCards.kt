@@ -101,6 +101,7 @@ import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.localization.BdtFormatter
 import com.example.ui.components.CrystalCard
+import com.example.ui.components.CurrencyAmountText
 import com.example.ui.theme.HindSiliguriFamily
 import com.example.ui.theme.JetBrainsMonoFamily
 import com.example.ui.theme.LocalCrystalColors
@@ -123,11 +124,17 @@ private data class MarketQuickPreset(
 fun SmartInsightsHighlightStrip(
     analytics: AnalyticsSnapshot,
     language: AppLanguage,
-    strings: AppStrings
+    strings: AppStrings,
+    mainCurrencyCode: String = "BDT",
+    secondaryCurrencyCode: String? = null,
+    marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
 ) {
     val crystal = LocalCrystalColors.current
     val modern = strings.insightsModern
     val primary = MaterialTheme.colorScheme.primary
+    val secondaryDailyAvg = remember(analytics.dailyAverage, mainCurrencyCode, secondaryCurrencyCode, marketSnapshot) {
+        secondaryCurrencyCode?.let { marketSnapshot.convertCurrencyCode(analytics.dailyAverage, mainCurrencyCode, it) }
+    }
 
     CrystalCard(
         modifier = Modifier
@@ -186,7 +193,7 @@ fun SmartInsightsHighlightStrip(
                 modifier = Modifier.weight(1f)
             )
 
-            // 2. Top Expense Category Share (or Savings Rate if no expenses)
+            // 2. Top Expense Category Share (or Savings Rate / Daily Avg if no expenses)
             val topCat = analytics.topCategory
             if (topCat != null) {
                 val pctStr = BdtFormatter.formatPercent((topCat.share * 100).toInt(), language)
@@ -198,13 +205,26 @@ fun SmartInsightsHighlightStrip(
                     testTag = "insight_highlight_top_category",
                     modifier = Modifier.weight(1f)
                 )
-            } else {
-                val savingsStr = analytics.savingsRatePercent?.let {
-                    BdtFormatter.formatPercent(it, language)
-                } ?: BdtFormatter.format(analytics.dailyAverage, language)
+            } else if (analytics.savingsRatePercent != null) {
                 HighlightMetricTile(
-                    label = if (analytics.savingsRatePercent != null) modern.savingsRateShortLabel else modern.dailyAvgShortLabel,
-                    value = savingsStr,
+                    label = modern.savingsRateShortLabel,
+                    value = BdtFormatter.formatPercent(analytics.savingsRatePercent, language),
+                    accentColor = crystal.assetGreen,
+                    icon = Icons.Filled.Savings,
+                    testTag = "insight_highlight_top_category",
+                    modifier = Modifier.weight(1f)
+                )
+            } else {
+                val secondaryText = if (secondaryCurrencyCode != null && secondaryDailyAvg != null) {
+                    BdtFormatter.formatCurrency(secondaryDailyAvg, secondaryCurrencyCode, language)
+                } else {
+                    null
+                }
+                HighlightMetricTile(
+                    label = modern.dailyAvgShortLabel,
+                    value = BdtFormatter.formatCurrency(analytics.dailyAverage, mainCurrencyCode, language),
+                    secondaryValue = secondaryText,
+                    secondaryColor = crystal.kwdNumericInk,
                     accentColor = crystal.assetGreen,
                     icon = Icons.Filled.Savings,
                     testTag = "insight_highlight_top_category",
@@ -213,7 +233,7 @@ fun SmartInsightsHighlightStrip(
             }
         }
 
-        // Secondary Savings Rate & Daily Avg pill bar when both are meaningful
+        // Secondary Savings Rate & Dual-Currency Daily Avg pill bar when both are meaningful
         if (analytics.topCategory != null && (analytics.savingsRatePercent != null || analytics.dailyAverage > 0.0)) {
             Spacer(modifier = Modifier.height(8.dp))
             FlowRow(
@@ -223,7 +243,7 @@ fun SmartInsightsHighlightStrip(
                 analytics.savingsRatePercent?.let { rate ->
                     val rateColor = if (rate >= 0) crystal.assetGreen else crystal.liabilityRed
                     Surface(
-                        shape = CircleShape,
+                        shape = RoundedCornerShape(12.dp),
                         color = rateColor.copy(alpha = if (crystal.isDark) 0.18f else 0.10f),
                         border = BorderStroke(0.8.dp, rateColor.copy(alpha = 0.30f))
                     ) {
@@ -234,25 +254,71 @@ fun SmartInsightsHighlightStrip(
                                 fontFamily = HindSiliguriFamily
                             ),
                             color = rateColor,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            maxLines = 2,
+                            softWrap = true,
+                            overflow = TextOverflow.Clip,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         )
                     }
                 }
                 if (analytics.dailyAverage > 0.0) {
                     Surface(
-                        shape = CircleShape,
+                        shape = RoundedCornerShape(12.dp),
                         color = primary.copy(alpha = if (crystal.isDark) 0.18f else 0.10f),
-                        border = BorderStroke(0.8.dp, primary.copy(alpha = 0.28f))
+                        border = BorderStroke(0.8.dp, primary.copy(alpha = 0.28f)),
+                        modifier = Modifier.testTag("insight_highlight_daily_avg")
                     ) {
-                        Text(
-                            text = "${modern.dailyAvgShortLabel}: ${BdtFormatter.format(analytics.dailyAverage, language)}",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.SemiBold,
-                                fontFamily = HindSiliguriFamily
-                            ),
-                            color = primary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
+                        Column(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "${modern.dailyAvgShortLabel}:",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontFamily = HindSiliguriFamily
+                                    ),
+                                    color = primary,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                                CurrencyAmountText(
+                                    amount = analytics.dailyAverage,
+                                    currencyCode = mainCurrencyCode,
+                                    language = language,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = JetBrainsMonoFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.5.sp
+                                    ),
+                                    isBalance = true,
+                                    colorOverride = primary,
+                                    bdtFontScale = 0.92f,
+                                    minFontSize = 9.5.sp
+                                )
+                            }
+                            if (secondaryCurrencyCode != null && secondaryDailyAvg != null) {
+                                CurrencyAmountText(
+                                    amount = secondaryDailyAvg,
+                                    currencyCode = secondaryCurrencyCode,
+                                    language = language,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = JetBrainsMonoFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 10.5.sp
+                                    ),
+                                    isBalance = true,
+                                    colorOverride = crystal.kwdNumericInk,
+                                    bdtFontScale = 0.92f,
+                                    minFontSize = 9.sp,
+                                    modifier = Modifier.testTag("insight_highlight_daily_avg_secondary")
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -267,7 +333,9 @@ private fun HighlightMetricTile(
     accentColor: Color,
     icon: ImageVector,
     testTag: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    secondaryValue: String? = null,
+    secondaryColor: Color? = null
 ) {
     val crystal = LocalCrystalColors.current
     Surface(
@@ -298,8 +366,9 @@ private fun HighlightMetricTile(
                         fontFamily = HindSiliguriFamily
                     ),
                     color = crystal.mutedText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 2,
+                    softWrap = true,
+                    overflow = TextOverflow.Clip
                 )
             }
             Text(
@@ -310,9 +379,24 @@ private fun HighlightMetricTile(
                     fontSize = 13.sp
                 ),
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                maxLines = 3,
+                softWrap = true,
+                overflow = TextOverflow.Clip
             )
+            if (!secondaryValue.isNullOrBlank()) {
+                Text(
+                    text = secondaryValue,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = JetBrainsMonoFamily,
+                        fontSize = 11.5.sp
+                    ),
+                    color = secondaryColor ?: crystal.kwdNumericInk,
+                    maxLines = 2,
+                    softWrap = true,
+                    overflow = TextOverflow.Clip
+                )
+            }
         }
     }
 }

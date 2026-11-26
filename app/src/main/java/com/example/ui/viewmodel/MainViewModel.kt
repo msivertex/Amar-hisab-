@@ -370,10 +370,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         DbSnapshot(accounts, transactions, goals, loans, categoryBudgets)
     }
 
+    private val _dismissedAlertSignatures = MutableStateFlow<Set<String>>(emptySet())
+
+    private data class RuntimeOverlayState(
+        val timeContext: DeviceTimeContext,
+        val marketSnapshot: MarketSnapshot,
+        val dismissedAlertSignatures: Set<String>
+    )
+
     private val timeAndMarketFlow = combine(
         systemClockMonitor.timeContext,
-        marketRepository.snapshotFlow
-    ) { timeCtx, snapshot -> timeCtx to snapshot }
+        marketRepository.snapshotFlow,
+        _dismissedAlertSignatures
+    ) { timeCtx, snapshot, dismissed ->
+        RuntimeOverlayState(timeCtx, snapshot, dismissed)
+    }
 
     val uiState: StateFlow<MainUiState> = combine(
         prefsRepo.userPrefs,
@@ -381,7 +392,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dbFlow,
         navAndFilterFlow,
         timeAndMarketFlow
-    ) { prefs, pendingLayout, dbData, nav, (timeCtx, marketSnapshot) ->
+    ) { prefs, pendingLayout, dbData, nav, runtime ->
         val effectivePrefs = if (pendingLayout != null) {
             prefs.copy(
                 homeLayoutStyle = pendingLayout.layoutStyle,
@@ -391,7 +402,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             prefs
         }
-        buildMainUiState(effectivePrefs, dbData, nav, timeCtx, marketSnapshot)
+        buildMainUiState(
+            prefs = effectivePrefs,
+            dbData = dbData,
+            nav = nav,
+            timeContext = runtime.timeContext,
+            marketSnapshot = runtime.marketSnapshot,
+            dismissedAlertSignatures = runtime.dismissedAlertSignatures
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -405,6 +423,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure { Log.w(TAG, "System clock monitor failed to start", it) }
         runCatching { AmarHisabNotificationManager.ensureChannels(application) }
             .onFailure { Log.w(TAG, "Notification channels init skipped", it) }
+        // Preserve & upgrade any stored low-res Google photoURL (=s96-c -> =s400-c) on launch
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val firebasePhoto = GoogleAuthManager.currentFirebasePhotoUrl(application)
+                prefsRepo.upgradeStoredGoogleAvatarIfNeeded(firebasePhoto)
+            }
+        }
+        // Keep a crisp high-resolution circular avatar cached on disk for instant, offline-safe notification banners
+        viewModelScope.launch(Dispatchers.IO) {
+            prefsRepo.userPrefs
+                .distinctUntilChanged { old, new -> old.effectiveAvatarUrl == new.effectiveAvatarUrl }
+                .collect { prefs ->
+                    runCatching {
+                        com.example.notifications.NotificationVisualProvider.syncProfileAvatarCache(
+                            context = getApplication(),
+                            rawAvatarUrl = prefs.effectiveAvatarUrl
+                        )
+                    }
+                }
+        }
         // Automatically sync live exchange rates & XAU gold spot on launch
         // and whenever internet connectivity is restored (15-min freshness window).
         viewModelScope.launch {
@@ -438,7 +476,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         old.first.notifDailyReminderHour == new.first.notifDailyReminderHour &&
                         old.first.notifDailyReminderMinute == new.first.notifDailyReminderMinute &&
                         old.first.notifLoanReminders == new.first.notifLoanReminders &&
-                        old.first.notifLoanDayBeforeEnabled == new.first.notifLoanDayBeforeEnabled
+                        old.first.notifLoanDayBeforeEnabled == new.first.notifLoanDayBeforeEnabled &&
+                        old.first.notifLoanReminderHour == new.first.notifLoanReminderHour &&
+                        old.first.notifLoanReminderMinute == new.first.notifLoanReminderMinute
                 }
                 .collect { (prefs, loans, tzId) ->
                     runCatching {
@@ -1309,11 +1349,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefsRepo.setLoanDayBeforeEnabled(enabled)
     }
 
+    fun setLoanReminderTime(hour: Int, minute: Int) = viewModelScope.launch {
+        prefsRepo.setLoanReminderTime(hour, minute)
+    }
+
     fun setHighSpendAlertEnabled(enabled: Boolean) = viewModelScope.launch {
         prefsRepo.setHighSpendAlertConfig(enabled)
     }
 
     fun clearNotificationHistory() = viewModelScope.launch {
+        val currentSignatures = uiState.value.smartAlerts.map { alertSignature(it) }
+        if (currentSignatures.isNotEmpty()) {
+            _dismissedAlertSignatures.value = _dismissedAlertSignatures.value + currentSignatures
+        }
         prefsRepo.clearNotificationLog()
     }
 
@@ -1420,7 +1468,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         note: String = "",
         timestamp: Long = System.currentTimeMillis()
     ) = viewModelScope.launch {
-        repository.addTransaction(title, amount, type, category, subcategory, accountId, note, timestamp)
+        val saved = repository.addTransaction(title, amount, type, category, subcategory, accountId, note, timestamp)
+        if (!saved) return@launch
         scheduleCentralFirestoreSync()
         if (type == TransactionType.EXPENSE) {
             evaluateImmediateThresholdAlerts()
@@ -1501,7 +1550,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             customConversionRate?.takeIf { it > 0.0 && it.isFinite() }
                 ?: marketSyncState.value.snapshot.convertCurrencyCode(1.0, fromCode, toCode)
         }
-        repository.transferFunds(
+        val transferred = repository.transferFunds(
             fromAccountId = fromAccountId,
             toAccountId = toAccountId,
             amount = amount,
@@ -1509,6 +1558,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             timestamp = timestamp,
             conversionRate = conversionRate
         )
+        if (!transferred) return@launch
         scheduleCentralFirestoreSync()
     }
 
@@ -1526,7 +1576,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun fundGoalFromWallet(goal: SavingsGoalEntity, amount: Double, walletId: Long) =
         viewModelScope.launch {
-            repository.fundGoalFromWallet(goal, amount, walletId)
+            val funded = repository.fundGoalFromWallet(goal, amount, walletId)
+            if (!funded) return@launch
             scheduleCentralFirestoreSync()
         }
 
@@ -1561,7 +1612,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             1.0
         }
-        repository.settleLoan(loan, amount, walletId, conversionRate = rate)
+        val settled = repository.settleLoan(loan, amount, walletId, conversionRate = rate)
+        if (!settled) return@launch
         scheduleCentralFirestoreSync()
     }
 
@@ -2421,9 +2473,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dbData: DbSnapshot,
         nav: NavFilterState,
         timeContext: DeviceTimeContext,
-        marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
+        marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference(),
+        dismissedAlertSignatures: Set<String> = emptySet()
     ): MainUiState {
-        val accounts = dbData.accounts
+        val accounts = dbData.accounts.map { acc ->
+            val clamped = com.example.data.model.AccountBalanceGuard.clampNonNegative(acc.balance)
+            if (clamped == acc.balance) acc else acc.copy(balance = clamped)
+        }
         val transactions = dbData.transactions
         val activeTz = timeContext.timeZone
         val mainCurCode = prefs.mainCurrencyCode
@@ -2524,7 +2580,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             loans = dbData.loans,
             spentThisMonth = spentThisMonth,
             todaySpend = todaySpend,
-            timeContext = timeContext
+            timeContext = timeContext,
+            dismissedAlertSignatures = dismissedAlertSignatures
         )
 
         return MainUiState(
@@ -2641,7 +2698,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             null
         }
         val savingsRatePercent = if (totalIncome > 0.0) {
-            (((totalIncome - totalExpense) / totalIncome) * 100.0).toInt().coerceIn(-999, 100)
+            (((totalIncome - totalExpense) / totalIncome) * 100.0).toInt().coerceIn(0, 100)
         } else {
             null
         }
@@ -2714,7 +2771,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             periodLabel = periodLabel,
             totalIncome = totalIncome,
             totalExpense = totalExpense,
-            netFlow = totalIncome - totalExpense,
+            netFlow = (totalIncome - totalExpense).coerceAtLeast(0.0),
             dailyAverage = avg,
             peakAmount = maxAmt,
             trendPoints = pointsWithPeak,
@@ -2729,6 +2786,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    private fun alertSignature(alert: SmartAlert): String =
+        "${alert.id}|${alert.title}|${alert.subtitle}"
+
     private fun buildSmartAlerts(
         prefs: UserPrefs,
         accounts: List<AccountEntity>,
@@ -2736,7 +2796,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loans: List<LoanEntity>,
         spentThisMonth: Double,
         todaySpend: Double,
-        timeContext: DeviceTimeContext
+        timeContext: DeviceTimeContext,
+        dismissedAlertSignatures: Set<String> = emptySet()
     ): List<SmartAlert> {
         val isBn = prefs.language == AppLanguage.BN
         val activeTz = timeContext.timeZone
@@ -2746,12 +2807,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val seenIds = mutableSetOf<String>()
 
         fun addUnique(alert: SmartAlert) {
+            if (alertSignature(alert) in dismissedAlertSignatures) return
             if (seenIds.add(alert.id)) {
                 alerts += alert
             }
         }
 
-        // Strict zero-state discipline: emit only real, earned alerts based on actual user data.
+        // Strict zero-state discipline: emit only real, triggered alerts based on actual user data.
+        // 0. Triggered Unlogged Daily Entry Reminder (when past daily reminder time with zero entries today)
+        if (prefs.notifDailyReminderEnabled && (accounts.isNotEmpty() || transactions.isNotEmpty())) {
+            val todayStartCal = Calendar.getInstance(activeTz).apply {
+                timeInMillis = nowMillis
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            val nowCal = Calendar.getInstance(activeTz).apply { timeInMillis = nowMillis }
+            val nowMinutes = nowCal.get(Calendar.HOUR_OF_DAY) * 60 + nowCal.get(Calendar.MINUTE)
+            val targetMinutes = prefs.notifDailyReminderHour * 60 + prefs.notifDailyReminderMinute
+            val hasEntryToday = transactions.any { it.timestamp >= todayStartCal.timeInMillis && it.timestamp <= nowMillis }
+            if (!hasEntryToday && nowMinutes >= targetMinutes) {
+                val dailyTimeLabel = NotificationTimeCalculator.formatLocalTimeLabel(
+                    hour = prefs.notifDailyReminderHour,
+                    minute = prefs.notifDailyReminderMinute,
+                    language = prefs.language
+                )
+                addUnique(
+                    SmartAlert(
+                        id = "daily_unlogged_${timeContext.dayKey}",
+                        title = if (isBn) "আজকের হিসাব এখনো যোগ করা হয়নি" else "Today's Entries Not Logged Yet",
+                        subtitle = if (isBn) {
+                            "দৈনিক $dailyTimeLabel রিমাইন্ডার — আজকের আয়-ব্যয় যোগ করতে ট্যাপ করুন।"
+                        } else {
+                            "Daily $dailyTimeLabel reminder — tap to log today's expense or income."
+                        },
+                        isWarning = false,
+                        actionRoute = NotificationActionRoute.QUICK_ADD_TX,
+                        category = NotificationCategory.DAILY_REMINDER,
+                        timestampMillis = nowMillis
+                    )
+                )
+            }
+        }
+
         // 1. Immediate Monthly Budget Limit Alert (80% / 100%)
         if (prefs.notifBudgetAlerts && prefs.monthlyBudget > 0.0 && spentThisMonth > 0.0) {
             val budgetPct = ((spentThisMonth / prefs.monthlyBudget) * 100.0).toInt()
@@ -2839,6 +2938,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // 4. Dues, Loans & Planned Bills (Overdue, Due Today, or Due Tomorrow in exact loan currency)
         if (prefs.notifLoanReminders) {
+            val loanTimeLabel = NotificationTimeCalculator.formatLocalTimeLabel(
+                hour = prefs.notifLoanReminderHour,
+                minute = prefs.notifLoanReminderMinute,
+                language = prefs.language
+            )
             loans.filter { !it.isSettled && it.remainingAmount > 0.0 }.forEach { loan ->
                 val dueMillis = loan.dueDateMillis ?: return@forEach
                 val daysUntil = NotificationTimeCalculator.localCalendarDaysUntil(dueMillis, nowMillis, activeTz)
@@ -2855,9 +2959,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         else -> if (isBn) "আগামীকাল নির্ধারিত $kindLabel: ${loan.personName}" else "Due Tomorrow ($kindLabel): ${loan.personName}"
                     }
                     val subtitle = if (isBn) {
-                        "বাকি $amtStr • সকাল ১০:০০টা রিমাইন্ডার। পরিশোধ করতে ট্যাপ করুন।"
+                        "বাকি $amtStr • $loanTimeLabel রিমাইন্ডার। পরিশোধ করতে ট্যাপ করুন।"
                     } else {
-                        "Remaining $amtStr • 10:00 AM reminder. Tap to open Dues & Loans."
+                        "Remaining $amtStr • $loanTimeLabel reminder. Tap to open Dues & Loans."
                     }
                     addUnique(
                         SmartAlert(

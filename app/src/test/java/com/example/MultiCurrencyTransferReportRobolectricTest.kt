@@ -282,8 +282,8 @@ class MultiCurrencyTransferReportRobolectricTest {
         assertEquals(500.0 + expectedKwdInBdt, payload.totalExpense, 0.05)
 
         val csv = MonthlyReportExporter.generateMonthlyCsv(payload)
-        assertTrue(csv.contains("Currency_Summary,KWD,0.00,2.50,-2.50,10.00"))
-        assertTrue(csv.contains("Currency_Summary,BDT,0.00,500.00,-500.00,0.00"))
+        assertTrue(csv.contains("Currency_Summary,KWD,0.00,2.50,0.00,10.00"))
+        assertTrue(csv.contains("Currency_Summary,BDT,0.00,500.00,0.00,0.00"))
         assertTrue(csv.contains("Date,Title,Type,Category,Subcategory,Wallet,To_Wallet,Currency,Amount,Conversion_Details,Note"))
         assertTrue(csv.contains("\"Shariful Islam (KFH • KWD)\",\"Shariful Islam (bKash • BDT)\",KWD,10.00"))
         assertTrue(csv.contains("-> BDT 3957.65 @ 1 KWD = BDT 395.77"))
@@ -304,7 +304,8 @@ class MultiCurrencyTransferReportRobolectricTest {
         assertTrue(pdfResult.file.length() > 500L)
         val shareText = pdfResult.shareIntent.getStringExtra(android.content.Intent.EXTRA_TEXT).orEmpty()
         assertTrue(shareText.contains("KWD:"))
-        assertTrue(shareText.contains("KWD د.ك 10.000"))
+        assertTrue(shareText.contains("KWD 10.000"))
+        assertFalse(shareText.contains("د.ك"))
     }
 
     @Test
@@ -365,7 +366,7 @@ class MultiCurrencyTransferReportRobolectricTest {
         composeRule.onNodeWithTag("activity_transfer_pill_${state.deviceTimeContext.dayKey}_KWD")
             .assertIsDisplayed()
         assertTrue(
-            composeRule.onAllNodesWithText("KWD د.ك 10.000", substring = true).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithText("KWD 10.000", substring = true).fetchSemanticsNodes().isNotEmpty()
         )
         // Full From -> To route visible without truncation
         assertTrue(

@@ -37,7 +37,7 @@ object AmarHisabNotificationManager {
 
     private const val TAG = "AmarHisabNotifMgr"
 
-    const val CHANNEL_DAILY_REMINDER = "amar_hisab_daily_reminder"
+    const val CHANNEL_DAILY_REMINDER = "amar_hisab_daily_reminder_high"
     const val CHANNEL_DUES_REMINDERS = "amar_hisab_dues_reminders"
     const val CHANNEL_THRESHOLD_ALERTS = "amar_hisab_threshold_alerts"
 
@@ -70,13 +70,16 @@ object AmarHisabNotificationManager {
         val dailyChannel = NotificationChannel(
             CHANNEL_DAILY_REMINDER,
             if (isBn) "দৈনন্দিন হিসাব রিমাইন্ডার" else "Daily Logging Reminders",
-            NotificationManager.IMPORTANCE_DEFAULT
+            NotificationManager.IMPORTANCE_HIGH
         ).apply {
             description = if (isBn) {
                 "প্রতিদিন নির্ধারিত স্থানীয় সময়ে আয়-ব্যয় যোগ করার রিমাইন্ডার।"
             } else {
                 "Daily local-time reminder to log expenses and income."
             }
+            enableVibration(true)
+            enableLights(true)
+            lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
         }
 
         val duesChannel = NotificationChannel(
@@ -85,10 +88,13 @@ object AmarHisabNotificationManager {
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
             description = if (isBn) {
-                "নির্ধারিত তারিখে সকাল ১০:০০টায় দেনা-পাওনা ও বিলের রিমাইন্ডার।"
+                "নির্ধারিত স্থানীয় সময়ে দেনা-পাওনা ও বিলের রিমাইন্ডার।"
             } else {
-                "10:00 AM local-time reminders for dues, loans, and planned bills."
+                "Scheduled local-time reminders for dues, loans, and planned bills."
             }
+            enableVibration(true)
+            enableLights(true)
+            lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
         }
 
         val thresholdChannel = NotificationChannel(
@@ -101,6 +107,9 @@ object AmarHisabNotificationManager {
             } else {
                 "Immediate alerts when spending reaches budget, card, or daily limits."
             }
+            enableVibration(true)
+            enableLights(true)
+            lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
         }
 
         nm.createNotificationChannels(listOf(dailyChannel, duesChannel, thresholdChannel))
@@ -147,14 +156,16 @@ object AmarHisabNotificationManager {
                 val dueMillis = loan.dueDateMillis ?: return@forEach
                 activeLoanIds += loan.id
 
-                val dueDayTrigger = NotificationTimeCalculator.computeDueDateReminderMillis(
+            val dueDayTrigger = NotificationTimeCalculator.computeDueDateReminderMillis(
                     dueDateMillis = dueMillis,
                     daysBefore = 0,
-                    timeZone = timeZone
+                    timeZone = timeZone,
+                    triggerHour = prefs.notifLoanReminderHour,
+                    triggerMinute = prefs.notifLoanReminderMinute
                 )
                 val dueDayPi = buildLoanReminderPendingIntent(context, loan.id, isDayBefore = false)
                 if (dueDayTrigger > nowMillis) {
-                    scheduleDozeSafeAlarm(alarmManager, dueDayTrigger, dueDayPi)
+                    scheduleDozeSafeAlarm(alarmManager, triggerAtMillis = dueDayTrigger, pendingIntent = dueDayPi)
                 } else {
                     alarmManager.cancel(dueDayPi)
                 }
@@ -164,10 +175,12 @@ object AmarHisabNotificationManager {
                     val dayBeforeTrigger = NotificationTimeCalculator.computeDueDateReminderMillis(
                         dueDateMillis = dueMillis,
                         daysBefore = 1,
-                        timeZone = timeZone
+                        timeZone = timeZone,
+                        triggerHour = prefs.notifLoanReminderHour,
+                        triggerMinute = prefs.notifLoanReminderMinute
                     )
                     if (dayBeforeTrigger > nowMillis) {
-                        scheduleDozeSafeAlarm(alarmManager, dayBeforeTrigger, dayBeforePi)
+                        scheduleDozeSafeAlarm(alarmManager, triggerAtMillis = dayBeforeTrigger, pendingIntent = dayBeforePi)
                     } else {
                         alarmManager.cancel(dayBeforePi)
                     }
@@ -245,7 +258,8 @@ object AmarHisabNotificationManager {
                         channelId = CHANNEL_THRESHOLD_ALERTS,
                         title = title,
                         body = body,
-                        route = NotificationActionRoute.OPEN_INSIGHTS_BUDGET
+                        route = NotificationActionRoute.OPEN_INSIGHTS_BUDGET,
+                        avatarUrl = prefs.effectiveAvatarUrl
                     )
                     newlyTriggered += NotificationLogItem(
                         id = "threshold_budget_${monthKey}_$tier",
@@ -286,7 +300,8 @@ object AmarHisabNotificationManager {
                             channelId = CHANNEL_THRESHOLD_ALERTS,
                             title = title,
                             body = body,
-                            route = NotificationActionRoute.OPEN_ACCOUNTS
+                            route = NotificationActionRoute.OPEN_ACCOUNTS,
+                            avatarUrl = prefs.effectiveAvatarUrl
                         )
                         newlyTriggered += NotificationLogItem(
                             id = "threshold_cc_${cc.id}_$dayKey",
@@ -331,7 +346,8 @@ object AmarHisabNotificationManager {
                         channelId = CHANNEL_THRESHOLD_ALERTS,
                         title = title,
                         body = body,
-                        route = NotificationActionRoute.OPEN_INSIGHTS_BUDGET
+                        route = NotificationActionRoute.OPEN_INSIGHTS_BUDGET,
+                        avatarUrl = prefs.effectiveAvatarUrl
                     )
                     newlyTriggered += NotificationLogItem(
                         id = "threshold_daily_$dayKey",
@@ -372,7 +388,9 @@ object AmarHisabNotificationManager {
             channelId = CHANNEL_DAILY_REMINDER,
             title = title,
             body = body,
-            route = NotificationActionRoute.QUICK_ADD_TX
+            route = NotificationActionRoute.QUICK_ADD_TX,
+            avatarUrl = prefs.effectiveAvatarUrl,
+            allowNetworkAvatarFetch = true
         )
         val dayKey = NotificationTimeCalculator.localDayKey(nowMillis, TimeZone.getDefault())
         return NotificationLogItem(
@@ -433,7 +451,9 @@ object AmarHisabNotificationManager {
             channelId = CHANNEL_DUES_REMINDERS,
             title = title,
             body = body,
-            route = NotificationActionRoute.OPEN_PLAN_LOANS
+            route = NotificationActionRoute.OPEN_PLAN_LOANS,
+            avatarUrl = prefs.effectiveAvatarUrl,
+            allowNetworkAvatarFetch = true
         )
         return NotificationLogItem(
             id = "loan_${loan.id}_${if (isDayBefore) "day_before" else "due_day"}",
@@ -453,8 +473,11 @@ object AmarHisabNotificationManager {
         channelId: String,
         title: String,
         body: String,
-        route: NotificationActionRoute
+        route: NotificationActionRoute,
+        avatarUrl: String? = null,
+        allowNetworkAvatarFetch: Boolean = false
     ): Boolean {
+        ensureChannels(context)
         if (!DevicePermissionsHelper.isNotificationGranted(context)) {
             return false
         }
@@ -469,21 +492,30 @@ object AmarHisabNotificationManager {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val priority = if (channelId == CHANNEL_DAILY_REMINDER) {
-            NotificationCompat.PRIORITY_DEFAULT
-        } else {
-            NotificationCompat.PRIORITY_HIGH
-        }
+        val largeIconBitmap = NotificationVisualProvider.resolveNotificationLargeIcon(
+            context = context,
+            rawAvatarUrl = avatarUrl,
+            allowNetworkFetch = allowNetworkAvatarFetch
+        )
 
-        val notification = NotificationCompat.Builder(context, channelId)
+        val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_notif_amar_hisab)
+            .setColor(NotificationVisualProvider.BRAND_ACCENT_COLOR)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(priority)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setContentIntent(contentPendingIntent)
-            .build()
+
+        if (largeIconBitmap != null) {
+            builder.setLargeIcon(largeIconBitmap)
+        }
+
+        val notification = builder.build()
 
         return runCatching {
             NotificationManagerCompat.from(context).notify(notificationId, notification)
@@ -497,19 +529,53 @@ object AmarHisabNotificationManager {
         context.getSharedPreferences(PREFS_SCHEDULER, Context.MODE_PRIVATE).edit().clear().apply()
     }
 
+    @SuppressLint("ScheduleExactAlarm")
     private fun scheduleDozeSafeAlarm(
         alarmManager: AlarmManager,
         triggerAtMillis: Long,
         pendingIntent: PendingIntent
     ) {
         runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
-            } else {
-                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+            when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+                    if (alarmManager.canScheduleExactAlarms()) {
+                        alarmManager.setExactAndAllowWhileIdle(
+                            AlarmManager.RTC_WAKEUP,
+                            triggerAtMillis,
+                            pendingIntent
+                        )
+                    } else {
+                        alarmManager.setAndAllowWhileIdle(
+                            AlarmManager.RTC_WAKEUP,
+                            triggerAtMillis,
+                            pendingIntent
+                        )
+                    }
+                }
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerAtMillis,
+                        pendingIntent
+                    )
+                }
+                else -> {
+                    alarmManager.setExact(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerAtMillis,
+                        pendingIntent
+                    )
+                }
             }
         }.onFailure { e ->
-            Log.w(TAG, "Failed to schedule alarm at $triggerAtMillis", e)
+            Log.w(TAG, "Exact alarm failed; falling back to Doze-safe alarm at $triggerAtMillis", e)
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                } else {
+                    alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                }
+            }
         }
     }
 

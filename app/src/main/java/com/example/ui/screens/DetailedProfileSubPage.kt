@@ -235,7 +235,8 @@ fun DetailedProfileSubPage(
                                 avatarUrl = prefs.effectiveAvatarUrl,
                                 authMode = prefs.authMode,
                                 size = 96.dp,
-                                contentDescription = strings.chooseProfilePhotoTitle
+                                contentDescription = strings.chooseProfilePhotoTitle,
+                                showBorder = false
                             )
                         }
 
@@ -271,46 +272,14 @@ fun DetailedProfileSubPage(
                         }
                     }
 
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = effectiveName,
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onBackground,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Surface(
-                            color = if (prefs.authMode == AuthMode.GOOGLE) {
-                                crystal.assetGreenBg
-                            } else if (crystal.isDark) {
-                                Color(0xFF161C2B)
-                            } else {
-                                crystal.glassSurfaceElevated
-                            },
-                            shape = CircleShape,
-                            border = BorderStroke(0.8.dp, crystal.glassBorder)
-                        ) {
-                            Text(
-                                text = if (prefs.authMode == AuthMode.GOOGLE && prefs.userEmail.isNotBlank()) {
-                                    prefs.userEmail
-                                } else {
-                                    strings.offlineGuestLabel
-                                },
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (prefs.authMode == AuthMode.GOOGLE) {
-                                    crystal.assetGreen
-                                } else {
-                                    crystal.mutedText
-                                },
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-                            )
-                        }
-                    }
+                    Text(
+                        text = effectiveName,
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("detailed_profile_hero_name")
+                    )
                 }
             }
 
@@ -534,7 +503,8 @@ fun DetailedProfileSubPage(
                                     crystal.mutedText
                                 },
                                 maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.testTag("detailed_profile_google_email")
                             )
                         }
                     }

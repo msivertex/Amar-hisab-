@@ -18,9 +18,9 @@ class ExampleUnitTest {
 
     @Test
     fun bdtFormatter_formatsEnglishAndBanglaCorrectly() {
-        assertEquals("৳ 1,25,000", BdtFormatter.format(125000.0, AppLanguage.EN))
-        assertEquals("৳ ১,২৫,০০০", BdtFormatter.format(125000.0, AppLanguage.BN))
-        assertEquals("-৳ 450", BdtFormatter.format(-450.0, AppLanguage.EN))
+        assertEquals("BDT 1,25,000", BdtFormatter.format(125000.0, AppLanguage.EN))
+        assertEquals("BDT ১,২৫,০০০", BdtFormatter.format(125000.0, AppLanguage.BN))
+        assertEquals("-BDT 450", BdtFormatter.format(-450.0, AppLanguage.EN))
     }
 
     @Test

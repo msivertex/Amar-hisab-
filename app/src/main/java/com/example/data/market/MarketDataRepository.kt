@@ -136,11 +136,11 @@ enum class MfsChannel(
     val noteEn: String,
     val noteBn: String
 ) {
-    BKASH_APP(1.85, "bKash App (Standard)", "বিকাশ অ্যাপ (সাধারণ)", "৳18.50 per ৳1,000", "প্রতি ৳১,০০০-এ ৳১৮.৫০"),
-    BKASH_PRIYO(1.49, "bKash Priyo Agent", "বিকাশ প্রিয় এজেন্ট", "৳14.90 per ৳1,000", "প্রতি ৳১,০০০-এ ৳১৪.৯০"),
-    NAGAD_APP(1.25, "Nagad App Cash-out", "নগদ অ্যাপ ক্যাশ-আউট", "৳12.50 per ৳1,000 (incl. VAT)", "প্রতি ৳১,০০০-এ ৳১২.৫০"),
-    NAGAD_USSD(1.50, "Nagad USSD (*167#)", "নগদ USSD (*167#)", "৳15.00 per ৳1,000", "প্রতি ৳১,০০০-এ ৳১৫.০০"),
-    ROCKET_AGENT(1.67, "Rocket Agent", "রকেট এজেন্ট", "৳16.70 per ৳1,000", "প্রতি ৳১,০০০-এ ৳১৬.৭০");
+    BKASH_APP(1.85, "bKash App (Standard)", "বিকাশ অ্যাপ (সাধারণ)", "BDT 18.50 per BDT 1,000", "প্রতি BDT ১,০০০-এ BDT ১৮.৫০"),
+    BKASH_PRIYO(1.49, "bKash Priyo Agent", "বিকাশ প্রিয় এজেন্ট", "BDT 14.90 per BDT 1,000", "প্রতি BDT ১,০০০-এ BDT ১৪.৯০"),
+    NAGAD_APP(1.25, "Nagad App Cash-out", "নগদ অ্যাপ ক্যাশ-আউট", "BDT 12.50 per BDT 1,000 (incl. VAT)", "প্রতি BDT ১,০০০-এ BDT ১২.৫০"),
+    NAGAD_USSD(1.50, "Nagad USSD (*167#)", "নগদ USSD (*167#)", "BDT 15.00 per BDT 1,000", "প্রতি BDT ১,০০০-এ BDT ১৫.০০"),
+    ROCKET_AGENT(1.67, "Rocket Agent", "রকেট এজেন্ট", "BDT 16.70 per BDT 1,000", "প্রতি BDT ১,০০০-এ BDT ১৬.৭০");
 
     fun label(language: AppLanguage): String = if (language == AppLanguage.BN) labelBn else labelEn
     fun note(language: AppLanguage): String = if (language == AppLanguage.BN) noteBn else noteEn

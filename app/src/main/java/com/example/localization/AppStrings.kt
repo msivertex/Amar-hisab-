@@ -496,17 +496,21 @@ object BdtFormatter {
             else -> ""
         }
         val numeric = formatAmountOnly(abs(amount), currencyCode, language, includeSign = false)
-        val sym = currency.distinctSymbolOrNull()
-        return if (sym != null) {
-            "${sign}${currency.code} $sym $numeric"
-        } else {
-            "${sign}${currency.code} $numeric"
-        }
+        return "${sign}${currency.code} $numeric"
+    }
+
+    fun formatBalance(
+        amount: Double,
+        currencyCode: String,
+        language: AppLanguage
+    ): String {
+        val safeAmount = if (!amount.isFinite() || amount <= 0.0005) 0.0 else amount
+        return formatCurrency(safeAmount, currencyCode, language, includeSign = false)
     }
 
     /**
-     * Formats the symbol + numeric portion without repeating the ISO code (for balance rows
-     * where the ISO code is rendered inside a uniform leading badge pill, e.g., "[KWD] د.ك 244.000").
+     * Formats the numeric portion without repeating the ISO code (for balance rows
+     * where the ISO code is rendered inside a uniform leading badge pill, e.g., "[KWD] 244.000").
      */
     fun formatSymbolAndAmount(
         amount: Double,
@@ -514,15 +518,22 @@ object BdtFormatter {
         language: AppLanguage,
         includeSign: Boolean = false
     ): String {
-        val currency = AppCurrency.fromCode(currencyCode)
         val sign = when {
             amount < 0 -> "-"
             includeSign && amount > 0 -> "+"
             else -> ""
         }
         val numeric = formatAmountOnly(abs(amount), currencyCode, language, includeSign = false)
-        val sym = currency.distinctSymbolOrNull()
-        return if (sym != null) "${sign}$sym $numeric" else "${sign}$numeric"
+        return "${sign}$numeric"
+    }
+
+    fun formatSymbolAndBalance(
+        amount: Double,
+        currencyCode: String,
+        language: AppLanguage
+    ): String {
+        val safeAmount = if (!amount.isFinite() || amount <= 0.0005) 0.0 else amount
+        return formatSymbolAndAmount(safeAmount, currencyCode, language, includeSign = false)
     }
 
     fun formatAmountOnly(
@@ -1354,7 +1365,7 @@ object StringsProvider {
 
         welcomeTagline = "SMART PERSONAL FINANCE VAULT",
         welcomeFeatureOffline = "100% Offline Vault",
-        welcomeFeatureWallets = "BDT (৳) Multi-Wallet",
+        welcomeFeatureWallets = "BDT Multi-Wallet",
         welcomeFeatureSecurity = "Biometric & PIN Lock",
         continueWithGoogle = "CONTINUE WITH GOOGLE",
         continueAsGuest = "CONTINUE AS OFFLINE GUEST",
@@ -1424,9 +1435,9 @@ object StringsProvider {
         mfsProviderLabel = "MFS Provider",
         walletNameLabel = "Account / Wallet Name",
         mobileOrLast4Label = "Mobile Number or Last 4 Digits",
-        initialBalanceLabel = "Current Balance (৳)",
-        creditLimitLabel = "Credit Limit (৳)",
-        outstandingBalanceLabel = "Outstanding Balance (৳)",
+        initialBalanceLabel = "Current Balance (BDT)",
+        creditLimitLabel = "Credit Limit (BDT)",
+        outstandingBalanceLabel = "Outstanding Balance (BDT)",
         creditUtilization = "Credit Utilization",
         statusHealthy = "Healthy",
         statusModerate = "Moderate",
@@ -1440,7 +1451,7 @@ object StringsProvider {
         expenseLabel = "Expense",
         incomeLabel = "Income",
         transferLabel = "Transfer",
-        amountLabel = "Amount (৳ BDT)",
+        amountLabel = "Amount (BDT)",
         calculatorExprHint = "Tap keypad to calculate",
         titleOrMerchantLabel = "Merchant or Title",
         categoryLabel = "Category",
@@ -1474,7 +1485,7 @@ object StringsProvider {
         savingsGoals = "Savings Goals",
         addGoal = "New Goal",
         goalNameHint = "Goal name (e.g. Emergency Reserve Fund)",
-        targetAmountHint = "Target amount (৳)",
+        targetAmountHint = "Target amount (BDT)",
         dueDateLabel = "Due Date",
         fundFromWallet = "Fund from Wallet",
         fundGoalTitle = "Fund Savings Goal",
@@ -1483,10 +1494,10 @@ object StringsProvider {
         moneyOwedToMe = "Owed to Me",
         addLoan = "Add Entry",
         personNameLabel = "Person / Institution Name",
-        loanAmountLabel = "Principal Amount (৳)",
+        loanAmountLabel = "Principal Amount",
         settleLoan = "Settle",
         settledBadge = "Settled",
-        settlementAmountLabel = "Settlement Amount (৳)",
+        settlementAmountLabel = "Settlement Amount",
         remainingDueLabel = "Remaining",
 
         insightsTitle = "Financial Insights",
@@ -1524,7 +1535,7 @@ object StringsProvider {
         settingsWalletCurrencyData = "Wallet, Currency & Data",
         defaultWalletLabel = "Default Wallet",
         mainCurrencyLabel = "Main Currency",
-        mainCurrencyValue = "BDT (৳ Bangladeshi Taka)",
+        mainCurrencyValue = "BDT (Bangladeshi Taka)",
         categoriesOverviewLabel = "Categories",
         manageAccountsLabel = "Manage Accounts & Cards",
         settingsDateTimeSection = "Date & Time",
@@ -1563,7 +1574,7 @@ object StringsProvider {
         notificationsTitle = "Smart Alerts & Vault Notices",
         editProfileBudget = "Profile & Monthly Budget",
         yourNameLabel = "Your Name",
-        monthlyBudgetInput = "Monthly Budget (৳)",
+        monthlyBudgetInput = "Monthly Budget (BDT)",
         saveChanges = "Save Changes",
         cancel = "Cancel",
         close = "Close",
@@ -1623,9 +1634,9 @@ object StringsProvider {
             countryLabel = "Country",
             countryValue = "Bangladesh",
             primaryCurrencyTitle = "Primary Currency",
-            primaryCurrencyValue = "BDT (৳)",
+            primaryCurrencyValue = "BDT",
             quickCurrencyTitle = "Quick Currency",
-            quickCurrencyValue = "USD ($)",
+            quickCurrencyValue = "USD",
             guestSyncPrompt = "Guest Mode (Offline) - Sign in with Google to enable cloud backup & multi-device sync",
             googleSignedInSummary = "Google account linked • Cloud backup & multi-device sync ready",
             detailedProfileTitle = "Profile Details",
@@ -1646,7 +1657,7 @@ object StringsProvider {
             browseBtn = "Browse",
             databaseUpToDateNote = "Offline financial directory is up to date (v2026.11)",
             regionDialogNote = "Date, time, and calendar boundaries automatically sync with your device's active local timezone—even while traveling abroad.",
-            currencyDialogNote = "BDT (৳) is the primary vault currency. Multi-region currency rates stay accessible in Insights."
+            currencyDialogNote = "BDT is the primary vault currency. Multi-region currency rates stay accessible in Insights."
         ),
         themeSettings = ThemeSettingsStrings(
             themeTileTitle = "Theme",
@@ -1700,7 +1711,7 @@ object StringsProvider {
             languageOptionBanglaSubtitle = "Bengali • Full Bangla interface & numerals",
             languageOptionEnglishTitle = "English",
             languageOptionEnglishSubtitle = "ইংরেজি • Standard English interface",
-            languageInstantNote = "Language changes take effect immediately across all dashboards, wallets, and BDT (৳) summaries.",
+            languageInstantNote = "Language changes take effect immediately across all dashboards, wallets, and BDT summaries.",
             financialAlertsGroupTitle = "Financial Alerts",
             notifBudgetAlertsSubtitle = "Get alerted when monthly spending nears your budget limit",
             notifCreditAlertsSubtitle = "Instant warning when credit card utilization runs high",
@@ -1872,8 +1883,8 @@ object StringsProvider {
             essentialsClearBasket = "Clear",
             bankFdrTab = "FDR (Fixed)",
             bankDpsTab = "DPS (Monthly)",
-            fdrPrincipalLabel = "Deposit Amount (৳)",
-            dpsMonthlyLabel = "Monthly Installment (৳)",
+            fdrPrincipalLabel = "Deposit Amount (BDT)",
+            dpsMonthlyLabel = "Monthly Installment (BDT)",
             tenureLabel = "Tenure",
             interestRateLabel = "Annual Rate",
             tinTaxToggleLabel = "Have e-TIN (10% source tax instead of 15%)",
@@ -1884,7 +1895,7 @@ object StringsProvider {
             remittanceBaseLabel = "Base Bank Amount",
             remittanceIncentiveBonus = "2.5% Incentive Bonus",
             remittanceTotalReceivable = "Total Receivable in BDT",
-            mfsAmountLabel = "Cash-Out Amount (৳)",
+            mfsAmountLabel = "Cash-Out Amount (BDT)",
             mfsChargeLabel = "Cash-Out Charge",
             mfsTotalDeductedLabel = "Total Deducted",
             mfsNetReceivedLabel = "Net If Fee Inside",
@@ -1981,7 +1992,7 @@ object StringsProvider {
 
         welcomeTagline = "স্মার্ট ১০০% অফলাইন পার্সোনাল ফিন্যান্স ভল্ট",
         welcomeFeatureOffline = "১০০% অফলাইন ভল্ট",
-        welcomeFeatureWallets = "টাকা (৳) মাল্টি-ওয়ালেট",
+        welcomeFeatureWallets = "BDT মাল্টি-ওয়ালেট",
         welcomeFeatureSecurity = "বায়োমেট্রিক ও পিন লক",
         continueWithGoogle = "গুগল দিয়ে সাইন ইন করুন",
         continueAsGuest = "অফলাইন গেস্ট মোড",
@@ -2051,9 +2062,9 @@ object StringsProvider {
         mfsProviderLabel = "এমএফএস সেবা",
         walletNameLabel = "অ্যাকাউন্ট / ওয়ালেটের নাম",
         mobileOrLast4Label = "মোবাইল নম্বর বা শেষ ৪ ডিজিট",
-        initialBalanceLabel = "বর্তমান ব্যালেন্স (৳)",
-        creditLimitLabel = "ক্রেডিট লিমিট (৳)",
-        outstandingBalanceLabel = "বকেয়া ব্যালেন্স (৳)",
+        initialBalanceLabel = "বর্তমান ব্যালেন্স (BDT)",
+        creditLimitLabel = "ক্রেডিট লিমিট (BDT)",
+        outstandingBalanceLabel = "বকেয়া ব্যালেন্স (BDT)",
         creditUtilization = "ক্রেডিট ব্যবহার",
         statusHealthy = "স্বাস্থ্যকর",
         statusModerate = "মাঝারি",
@@ -2067,7 +2078,7 @@ object StringsProvider {
         expenseLabel = "ব্যয়",
         incomeLabel = "আয়",
         transferLabel = "স্থানান্তর",
-        amountLabel = "পরিমাণ (৳ টাকা)",
+        amountLabel = "পরিমাণ (BDT)",
         calculatorExprHint = "ক্যালকুলেটর দিয়ে হিসাব করুন",
         titleOrMerchantLabel = "দোকান বা শিরোনাম",
         categoryLabel = "খাত",
@@ -2101,7 +2112,7 @@ object StringsProvider {
         savingsGoals = "সেভিংস গোল",
         addGoal = "নতুন গোল",
         goalNameHint = "লক্ষ্যের নাম (যেমন: জরুরি তহবিল)",
-        targetAmountHint = "লক্ষ্য পরিমাণ (৳)",
+        targetAmountHint = "লক্ষ্য পরিমাণ (BDT)",
         dueDateLabel = "শেষ তারিখ",
         fundFromWallet = "ওয়ালেট থেকে জমা দিন",
         fundGoalTitle = "সেভিংস গোলে জমা দিন",
@@ -2110,10 +2121,10 @@ object StringsProvider {
         moneyOwedToMe = "পাওনা (আমি পাব)",
         addLoan = "নতুন এন্ট্রি",
         personNameLabel = "ব্যক্তি বা প্রতিষ্ঠানের নাম",
-        loanAmountLabel = "মোট টাকা (৳)",
+        loanAmountLabel = "মোট পরিমাণ",
         settleLoan = "পরিশোধ",
         settledBadge = "পরিশোধিত",
-        settlementAmountLabel = "পরিশোধের পরিমাণ (৳)",
+        settlementAmountLabel = "পরিশোধের পরিমাণ",
         remainingDueLabel = "বাকি আছে",
 
         insightsTitle = "ফিন্যান্সিয়াল ইনসাইটস",
@@ -2151,7 +2162,7 @@ object StringsProvider {
         settingsWalletCurrencyData = "ওয়ালেট, মুদ্রা ও ডাটা",
         defaultWalletLabel = "ডিফল্ট ওয়ালেট",
         mainCurrencyLabel = "প্রধান মুদ্রা",
-        mainCurrencyValue = "BDT (৳ বাংলাদেশি টাকা)",
+        mainCurrencyValue = "BDT (বাংলাদেশি টাকা)",
         categoriesOverviewLabel = "ক্যাটাগরি",
         manageAccountsLabel = "অ্যাকাউন্ট ও কার্ড পরিচালনা",
         settingsDateTimeSection = "তারিখ ও সময়",
@@ -2190,7 +2201,7 @@ object StringsProvider {
         notificationsTitle = "স্মার্ট সতর্কতা ও ভল্ট বার্তা",
         editProfileBudget = "প্রোফাইল ও মাসিক বাজেট",
         yourNameLabel = "আপনার নাম",
-        monthlyBudgetInput = "মাসিক বাজেট (৳)",
+        monthlyBudgetInput = "মাসিক বাজেট (BDT)",
         saveChanges = "পরিবর্তন সংরক্ষণ",
         cancel = "বাতিল",
         close = "বন্ধ করুন",
@@ -2250,9 +2261,9 @@ object StringsProvider {
             countryLabel = "দেশ",
             countryValue = "Bangladesh",
             primaryCurrencyTitle = "প্রধান মুদ্রা",
-            primaryCurrencyValue = "BDT (৳)",
+            primaryCurrencyValue = "BDT",
             quickCurrencyTitle = "দ্রুত মুদ্রা",
-            quickCurrencyValue = "USD ($)",
+            quickCurrencyValue = "USD",
             guestSyncPrompt = "গেস্ট মোড (অফলাইন) - ক্লাউড ব্যাকআপ ও মাল্টি-ডিভাইস সিঙ্ক চালু করতে গুগল সাইন ইন করুন",
             googleSignedInSummary = "গুগল অ্যাকাউন্ট সংযুক্ত • ক্লাউড ব্যাকআপ ও সিঙ্ক প্রস্তুত",
             detailedProfileTitle = "প্রোফাইল বিস্তারিত",
@@ -2273,7 +2284,7 @@ object StringsProvider {
             browseBtn = "ব্রাউজ করুন",
             databaseUpToDateNote = "অফলাইন ব্যাংক ও এমএফএস ডাটাবেস সর্বশেষ সংস্করণে আপডেট রয়েছে (v2026.11)",
             regionDialogNote = "তারিখ, সময় ও সাপ্তাহিক/মাসিক হিসাব স্বয়ংক্রিয়ভাবে আপনার ডিভাইসের বর্তমান স্থানীয় টাইমজোন অনুযায়ী সিঙ্ক হয়—ভ্রমণের সময়ও।",
-            currencyDialogNote = "BDT (৳) আপনার মূল ভল্ট মুদ্রা। ইনসাইটস-এ ১৫টি দেশের মুদ্রা রূপান্তর সুবিধা রয়েছে।"
+            currencyDialogNote = "BDT আপনার মূল ভল্ট মুদ্রা। ইনসাইটস-এ ১৫টি দেশের মুদ্রা রূপান্তর সুবিধা রয়েছে।"
         ),
         themeSettings = ThemeSettingsStrings(
             themeTileTitle = "থিম",
@@ -2327,7 +2338,7 @@ object StringsProvider {
             languageOptionBanglaSubtitle = "Bengali • সম্পূর্ণ বাংলা ইন্টারফেস ও সংখ্যা",
             languageOptionEnglishTitle = "ইংরেজি",
             languageOptionEnglishSubtitle = "English • আন্তর্জাতিক ইংরেজি ইন্টারফেস",
-            languageInstantNote = "ভাষা পরিবর্তন করলে সাথে সাথেই সকল স্ক্রিন, ওয়ালেট এবং টাকার (৳) হিসাব আপডেট হয়ে যাবে।",
+            languageInstantNote = "ভাষা পরিবর্তন করলে সাথে সাথেই সকল স্ক্রিন, ওয়ালেট এবং BDT হিসাব আপডেট হয়ে যাবে।",
             financialAlertsGroupTitle = "আর্থিক সতর্কতা",
             notifBudgetAlertsSubtitle = "মাসিক খরচ বাজেট সীমার কাছাকাছি পৌঁছালে সতর্কবার্তা পাবেন",
             notifCreditAlertsSubtitle = "ক্রেডিট কার্ডের ব্যবহার বেশি হলে তাৎক্ষণিক সতর্কতা",
@@ -2499,8 +2510,8 @@ object StringsProvider {
             essentialsClearBasket = "মুছুন",
             bankFdrTab = "FDR (স্থায়ী আমানত)",
             bankDpsTab = "DPS (মাসিক সঞ্চয়)",
-            fdrPrincipalLabel = "জমার পরিমাণ (৳)",
-            dpsMonthlyLabel = "মাসিক কিস্তি (৳)",
+            fdrPrincipalLabel = "জমার পরিমাণ (BDT)",
+            dpsMonthlyLabel = "মাসিক কিস্তি (BDT)",
             tenureLabel = "মেয়াদ",
             interestRateLabel = "বার্ষিক মুনাফা",
             tinTaxToggleLabel = "ই-টিআইএন আছে (১৫%-এর বদলে ১০% উৎস কর)",
@@ -2510,8 +2521,8 @@ object StringsProvider {
             remittanceIncentiveToggle = "২.৫% সরকারি নগদ প্রণোদনা যোগ করুন",
             remittanceBaseLabel = "মূল ব্যাংক রেট",
             remittanceIncentiveBonus = "২.৫% সরকারি প্রণোদনা",
-            remittanceTotalReceivable = "মোট প্রাপ্য (টাকা)",
-            mfsAmountLabel = "ক্যাশ-আউট পরিমাণ (৳)",
+            remittanceTotalReceivable = "মোট প্রাপ্য (BDT)",
+            mfsAmountLabel = "ক্যাশ-আউট পরিমাণ (BDT)",
             mfsChargeLabel = "ক্যাশ-আউট চার্জ",
             mfsTotalDeductedLabel = "মোট কাটা হবে",
             mfsNetReceivedLabel = "চার্জ বাদে হাতে পাবেন",

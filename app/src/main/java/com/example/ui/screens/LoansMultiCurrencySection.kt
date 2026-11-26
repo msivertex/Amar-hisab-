@@ -719,7 +719,7 @@ fun LoanEditorDialog(
                     label = { Text("${strings.loanAmountLabel} (${selectedCurrency.cleanBadgeLabel()})") },
                     prefix = {
                         Text(
-                            text = "${selectedCurrency.symbol} ",
+                            text = "${selectedCurrency.code} ",
                             style = MaterialTheme.typography.bodyLarge.copy(
                                 fontFamily = JetBrainsMonoFamily,
                                 fontWeight = FontWeight.Bold
@@ -915,7 +915,7 @@ fun LoanSettlementDialog(
                     label = { Text("${strings.settlementAmountLabel} (${loanCurrency.cleanBadgeLabel()})") },
                     prefix = {
                         Text(
-                            text = "${loanCurrency.symbol} ",
+                            text = "${loanCurrency.code} ",
                             style = MaterialTheme.typography.bodyLarge.copy(
                                 fontFamily = JetBrainsMonoFamily,
                                 fontWeight = FontWeight.Bold
@@ -986,13 +986,25 @@ fun LoanSettlementDialog(
                     }
                 }
 
+                val walletImpactAmount = if (chosenWallet != null && effectiveAmount > 0.0) {
+                    if (chosenWallet.currencyCode.equals(loan.currencyCode, ignoreCase = true)) {
+                        effectiveAmount
+                    } else {
+                        marketSnapshot.convertCurrencyCode(
+                            amount = effectiveAmount,
+                            fromCode = loan.currencyCode,
+                            toCode = chosenWallet.currencyCode
+                        )
+                    }
+                } else {
+                    0.0
+                }
+                val isInsufficientLoanWallet = loan.loanType == LoanType.I_OWE &&
+                    chosenWallet != null &&
+                    com.example.data.model.AccountBalanceGuard.isInsufficientForDeduction(chosenWallet, walletImpactAmount)
+
                 if (chosenWallet != null && !chosenWallet.currencyCode.equals(loan.currencyCode, ignoreCase = true) && effectiveAmount > 0.0) {
-                    val converted = marketSnapshot.convertCurrencyCode(
-                        amount = effectiveAmount,
-                        fromCode = loan.currencyCode,
-                        toCode = chosenWallet.currencyCode
-                    )
-                    val targetFormatted = formatLoanCurrencyAmount(converted, chosenWallet.currencyCode, language)
+                    val targetFormatted = formatLoanCurrencyAmount(walletImpactAmount, chosenWallet.currencyCode, language)
                     Surface(
                         color = crystal.warningAmberBg,
                         shape = RoundedCornerShape(10.dp),
@@ -1010,16 +1022,50 @@ fun LoanSettlementDialog(
                         )
                     }
                 }
+
+                if (isInsufficientLoanWallet && chosenWallet != null) {
+                    Surface(
+                        color = crystal.liabilityRedBg,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, crystal.liabilityRed.copy(alpha = 0.45f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("loan_settle_insufficient_balance_error")
+                    ) {
+                        Text(
+                            text = com.example.data.model.AccountBalanceGuard.insufficientBalanceMessage(
+                                account = chosenWallet,
+                                requestedAmount = walletImpactAmount,
+                                language = language
+                            ),
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = crystal.liabilityRed,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
+            val walletImpactForConfirm = if (chosenWallet != null && effectiveAmount > 0.0) {
+                if (chosenWallet.currencyCode.equals(loan.currencyCode, ignoreCase = true)) {
+                    effectiveAmount
+                } else {
+                    marketSnapshot.convertCurrencyCode(effectiveAmount, loan.currencyCode, chosenWallet.currencyCode)
+                }
+            } else {
+                0.0
+            }
+            val blockedByBalance = loan.loanType == LoanType.I_OWE &&
+                chosenWallet != null &&
+                com.example.data.model.AccountBalanceGuard.isInsufficientForDeduction(chosenWallet, walletImpactForConfirm)
             Button(
                 onClick = {
-                    if (effectiveAmount > 0.0) {
+                    if (effectiveAmount > 0.0 && !blockedByBalance) {
                         onConfirmSettle(loan, effectiveAmount, chosenWalletId)
                     }
                 },
-                enabled = effectiveAmount > 0.0,
+                enabled = effectiveAmount > 0.0 && !blockedByBalance,
                 modifier = Modifier.testTag("loan_settle_confirm_button")
             ) {
                 Text(strings.settleLoan)
@@ -1047,7 +1093,7 @@ internal fun formatLoanCurrencyAmount(
         val frac = formattedUs.substring(dot + 1)
         val wholeFormatted = BdtFormatter.formatAmountOnly(whole.toDouble(), "BDT", language, includeSign = false)
         val fracLocalized = if (language == AppLanguage.BN) BdtFormatter.toBanglaDigits(frac) else frac
-        return "$sign${currency.code} ${currency.symbol} $wholeFormatted.$fracLocalized"
+        return "$sign${currency.code} $wholeFormatted.$fracLocalized"
     }
     return BdtFormatter.formatCurrency(amount, currencyCode, language)
 }

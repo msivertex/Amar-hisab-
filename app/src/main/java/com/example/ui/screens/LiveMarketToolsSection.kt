@@ -525,7 +525,7 @@ internal fun CurrencyConverterPanel(
             },
             prefix = {
                 Text(
-                    text = "${fromCurrency.symbol} ",
+                    text = "${fromCurrency.code} ",
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontFamily = JetBrainsMonoFamily,
                         fontWeight = FontWeight.Bold
@@ -1231,11 +1231,11 @@ internal fun EssentialsMarketPanel(
                 val customPrice = customPrices[item.id]
                 val priceLabel = if (customPrice != null) {
                     val cStr = if (language == AppLanguage.BN) MarketCalculators.toBanglaDigits(customPrice.toString()) else customPrice.toString()
-                    "৳$cStr"
+                    "BDT $cStr"
                 } else {
                     val minStr = if (language == AppLanguage.BN) MarketCalculators.toBanglaDigits(item.minPriceBdt.toString()) else item.minPriceBdt.toString()
                     val maxStr = if (language == AppLanguage.BN) MarketCalculators.toBanglaDigits(item.maxPriceBdt.toString()) else item.maxPriceBdt.toString()
-                    "৳$minStr–৳$maxStr"
+                    "BDT $minStr–$maxStr"
                 }
                 Surface(
                     onClick = {
@@ -1352,7 +1352,7 @@ internal fun EssentialsMarketPanel(
                     OutlinedTextField(
                         value = editPriceText,
                         onValueChange = { editPriceText = it.filter { ch -> ch.isDigit() } },
-                        prefix = { Text("৳ ") },
+                        prefix = { Text("BDT ") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         shape = RoundedCornerShape(12.dp),
@@ -1769,7 +1769,7 @@ internal fun RemittanceCalculatorPanel(
                 },
                 label = {
                     Text(
-                        text = if (language == AppLanguage.BN) "কাস্টম রেট (৳)" else "Custom Rate (৳)",
+                        text = if (language == AppLanguage.BN) "কাস্টম রেট (BDT)" else "Custom Rate (BDT)",
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily)
                     )
                 },
@@ -1794,7 +1794,7 @@ internal fun RemittanceCalculatorPanel(
                 },
                 label = {
                     Text(
-                        text = if (language == AppLanguage.BN) "এক্সচেঞ্জ ফি (৳)" else "Fee (BDT)",
+                        text = if (language == AppLanguage.BN) "এক্সচেঞ্জ ফি (BDT)" else "Fee (BDT)",
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = HindSiliguriFamily)
                     )
                 },
@@ -1993,7 +1993,7 @@ internal fun MfsFeeCalculatorPanel(
         ) {
             listOf("500", "1000", "5000", "10000").forEach { preset ->
                 SmallPresetChip(
-                    text = "৳${if (language == AppLanguage.BN) MarketCalculators.toBanglaDigits(preset) else preset}",
+                    text = "BDT ${if (language == AppLanguage.BN) MarketCalculators.toBanglaDigits(preset) else preset}",
                     selected = amountText == preset,
                     onClick = { amountText = preset }
                 )
@@ -2023,7 +2023,7 @@ internal fun MfsFeeCalculatorPanel(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "৳${MarketCalculators.formatDecimal(feeEst.feeBdt, 2, language)}",
+                        text = "BDT ${MarketCalculators.formatDecimal(feeEst.feeBdt, 2, language)}",
                         style = MaterialTheme.typography.titleSmall.copy(
                             fontFamily = JetBrainsMonoFamily,
                             fontWeight = FontWeight.ExtraBold
@@ -2041,7 +2041,7 @@ internal fun MfsFeeCalculatorPanel(
                         color = crystal.mutedText
                     )
                     Text(
-                        text = "৳${MarketCalculators.formatDecimal(feeEst.totalDeductedBdt, 2, language)}",
+                        text = "BDT ${MarketCalculators.formatDecimal(feeEst.totalDeductedBdt, 2, language)}",
                         style = MaterialTheme.typography.labelMedium.copy(fontFamily = JetBrainsMonoFamily),
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -2056,7 +2056,7 @@ internal fun MfsFeeCalculatorPanel(
                         color = crystal.mutedText
                     )
                     Text(
-                        text = "৳${MarketCalculators.formatDecimal(feeEst.netReceivedBdt, 2, language)}",
+                        text = "BDT ${MarketCalculators.formatDecimal(feeEst.netReceivedBdt, 2, language)}",
                         style = MaterialTheme.typography.labelMedium.copy(fontFamily = JetBrainsMonoFamily),
                         color = crystal.assetGreen
                     )
@@ -2156,7 +2156,7 @@ internal fun CurrencyPickerModalSheet(
                     val isSelected = currency == selected
                     val appCur = AppCurrency.fromCode(currency.code)
                     val bdtPerUnit = snapshot.convert(1.0, currency, MarketCurrency.BDT)
-                    val rateLabel = "1 ${currency.code} ≈ BDT ৳ ${MarketCalculators.formatDecimal(bdtPerUnit, 2, language)}"
+                    val rateLabel = "1 ${currency.code} ≈ BDT ${MarketCalculators.formatDecimal(bdtPerUnit, 2, language)}"
                     val badgeText = appCur.codeAndSymbolLabel()
                     Surface(
                         onClick = { onSelect(currency) },

@@ -735,8 +735,8 @@ enum class InsightTimeFilter(val en: String, val bn: String) {
 enum class TransactionSortOption(val en: String, val bn: String) {
     NEWEST("Newest", "নতুন আগে"),
     OLDEST("Oldest", "পুরাতন আগে"),
-    HIGHEST("Highest ৳", "বেশি টাকা"),
-    LOWEST("Lowest ৳", "কম টাকা");
+    HIGHEST("Highest Amount", "বেশি পরিমাণ"),
+    LOWEST("Lowest Amount", "কম পরিমাণ");
 
     fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 }
@@ -869,7 +869,7 @@ data class NetWorthSummary(
     val totalAssets: Double = 0.0,
     val totalLiabilities: Double = 0.0
 ) {
-    val netWorth: Double get() = totalAssets - totalLiabilities
+    val netWorth: Double get() = (totalAssets - totalLiabilities).coerceAtLeast(0.0)
     val assetRatio: Float
         get() {
             val total = totalAssets + totalLiabilities

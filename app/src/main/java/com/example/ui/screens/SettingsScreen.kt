@@ -46,9 +46,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.EventNote
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -120,6 +122,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -132,6 +135,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -197,6 +201,11 @@ import java.util.Locale
 private enum class SettingsSubPage {
     MAIN,
     DETAILED_PROFILE,
+    GENERAL_CUSTOMIZATION,
+    FINANCIAL_ALERTS,
+    WALLET_CURRENCY_DATA,
+    DATE_TIME,
+    SECURITY_SYSTEM,
     THEME_CUSTOMIZATION,
     LANGUAGE,
     BACKUP_RESTORE,
@@ -270,6 +279,7 @@ fun SettingsScreen(
     onLogOut: () -> Unit = {},
     onSetDailyReminder: (enabled: Boolean, hour: Int, minute: Int) -> Unit = { _, _, _ -> },
     onSetLoanDayBefore: (enabled: Boolean) -> Unit = {},
+    onSetLoanReminderTime: (hour: Int, minute: Int) -> Unit = { _, _ -> },
     onSetHighSpendAlert: (enabled: Boolean) -> Unit = {},
     onShareBackupJson: ((File) -> Unit) -> Unit = {},
     driveSyncState: DriveSyncUiState = DriveSyncUiState(),
@@ -313,6 +323,8 @@ fun SettingsScreen(
 
     var showAvatarSheet by remember { mutableStateOf(false) }
     var activeSubPage by rememberSaveable { mutableStateOf(SettingsSubPage.MAIN) }
+    var parentSectionPage by rememberSaveable { mutableStateOf(SettingsSubPage.MAIN) }
+    var activeAlertDetail by rememberSaveable { mutableStateOf<FinancialAlertDetail?>(null) }
 
     fun triggerGoogleLink() {
         if (isGoogleSignInLoading) return
@@ -376,7 +388,10 @@ fun SettingsScreen(
                         googleNotice = null
                         onUnlinkGoogleAccount()
                     },
-                    onOpenBackupRestore = { activeSubPage = SettingsSubPage.BACKUP_RESTORE },
+                    onOpenBackupRestore = {
+                        parentSectionPage = SettingsSubPage.DETAILED_PROFILE
+                        activeSubPage = SettingsSubPage.BACKUP_RESTORE
+                    },
                     onSetUserCountry = onSetUserCountry,
                     onSetMainCurrency = onSetMainCurrency,
                     onSetSecondaryCurrency = onSetSecondaryCurrency,
@@ -384,11 +399,484 @@ fun SettingsScreen(
                 )
             }
 
+            SettingsSubPage.GENERAL_CUSTOMIZATION -> {
+                val refined = strings.settingsRefinement
+                val modeDisplayLabel = when (prefs.themeMode) {
+                    AppThemeMode.AUTO -> "Auto"
+                    AppThemeMode.LIGHT -> "Light"
+                    AppThemeMode.DARK -> "Dark"
+                }
+                val activeLanguageDisplay = when (prefs.language) {
+                    AppLanguage.BN -> refined.languageActiveBangla
+                    AppLanguage.EN -> refined.languageActiveEnglish
+                    else -> "${prefs.language.nativeName} · ${prefs.language.englishName}"
+                }
+                SettingsSectionSubPageScaffold(
+                    title = strings.settingsCustomization,
+                    icon = Icons.Filled.Tune,
+                    closeDescription = strings.close,
+                    sectionTag = "settings_section_page_general",
+                    onBack = { activeSubPage = SettingsSubPage.MAIN }
+                ) {
+                    CrystalCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevated = true
+                    ) {
+                        SettingsNavTile(
+                            title = strings.themeSettings.themeTileTitle,
+                            subtitle = "${prefs.colourTheme.label(lang)} · $modeDisplayLabel",
+                            icon = Icons.Filled.Palette,
+                            testTag = "settings_theme_tile",
+                            onClick = {
+                                parentSectionPage = SettingsSubPage.GENERAL_CUSTOMIZATION
+                                activeSubPage = SettingsSubPage.THEME_CUSTOMIZATION
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingsNavTile(
+                            title = refined.languageTileTitle,
+                            subtitle = activeLanguageDisplay,
+                            icon = Icons.Filled.Translate,
+                            testTag = "settings_language_tile",
+                            onClick = {
+                                parentSectionPage = SettingsSubPage.GENERAL_CUSTOMIZATION
+                                activeSubPage = SettingsSubPage.LANGUAGE
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingsNavTile(
+                            title = strings.customizeDashboard,
+                            subtitle = refined.customizeHomeSubtitle,
+                            icon = Icons.Filled.DashboardCustomize,
+                            testTag = "customize_home_button",
+                            onClick = { showDashboardCustomizer = true }
+                        )
+                    }
+                }
+            }
+
+            SettingsSubPage.FINANCIAL_ALERTS -> {
+                val isBnLang = lang == AppLanguage.BN
+                val alertsHeaderTitle = when (activeAlertDetail) {
+                    null -> strings.settingsRefinement.financialAlertsGroupTitle
+                    FinancialAlertDetail.DAILY_REMINDER -> if (isBnLang) {
+                        "দৈনন্দিন হিসাব যোগ করার রিমাইন্ডার"
+                    } else {
+                        "Daily Expense & Income Reminder"
+                    }
+                    FinancialAlertDetail.DUES_REMINDER -> strings.notifLoanReminders
+                }
+                val alertsHeaderIcon = when (activeAlertDetail) {
+                    null -> Icons.Filled.NotificationsActive
+                    FinancialAlertDetail.DAILY_REMINDER -> Icons.Filled.Alarm
+                    FinancialAlertDetail.DUES_REMINDER -> Icons.AutoMirrored.Filled.EventNote
+                }
+                SettingsSectionSubPageScaffold(
+                    title = alertsHeaderTitle,
+                    icon = alertsHeaderIcon,
+                    closeDescription = strings.close,
+                    sectionTag = "settings_section_page_alerts",
+                    onBack = {
+                        if (activeAlertDetail != null) {
+                            activeAlertDetail = null
+                        } else {
+                            activeSubPage = SettingsSubPage.MAIN
+                        }
+                    }
+                ) {
+                    CrystalCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevated = true
+                    ) {
+                        NotificationSettingsSection(
+                            prefs = prefs,
+                            strings = strings,
+                            deviceTimeContext = deviceTimeContext,
+                            onSetNotifications = onSetNotifications,
+                            onSetDailyReminder = onSetDailyReminder,
+                            onSetLoanDayBefore = onSetLoanDayBefore,
+                            onSetLoanReminderTime = onSetLoanReminderTime,
+                            onSetHighSpendAlert = onSetHighSpendAlert,
+                            activeDetail = activeAlertDetail,
+                            onActiveDetailChange = { activeAlertDetail = it }
+                        )
+                    }
+                }
+            }
+
+            SettingsSubPage.WALLET_CURRENCY_DATA -> {
+                val refined = strings.settingsRefinement
+                SettingsSectionSubPageScaffold(
+                    title = strings.settingsWalletCurrencyData,
+                    icon = Icons.Filled.AccountBalanceWallet,
+                    closeDescription = strings.close,
+                    sectionTag = "settings_section_page_wallet_data",
+                    onBack = { activeSubPage = SettingsSubPage.MAIN }
+                ) {
+                    CrystalCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevated = true
+                    ) {
+                        if (accounts.isNotEmpty()) {
+                            Text(
+                                text = strings.defaultWalletLabel,
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            val effectiveDefaultId = accounts.firstOrNull { it.id == prefs.defaultAccountId }?.id
+                                ?: accounts.firstOrNull()?.id ?: 0L
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                accounts.forEach { acc ->
+                                    FilterChip(
+                                        selected = acc.id == effectiveDefaultId,
+                                        onClick = { onSetDefaultAccount(acc.id) },
+                                        label = {
+                                            Text("${acc.name} (${BdtFormatter.formatBalance(acc.balance, acc.currencyCode, lang)})")
+                                        }
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
+
+                        SettingsNavTile(
+                            title = strings.categoriesOverviewLabel,
+                            subtitle = refined.categoriesSubtitle,
+                            icon = Icons.Filled.Category,
+                            testTag = "settings_categories_tile",
+                            onClick = {
+                                parentSectionPage = SettingsSubPage.WALLET_CURRENCY_DATA
+                                activeSubPage = SettingsSubPage.CATEGORIES
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingsNavTile(
+                            title = "${strings.manageAccountsLabel} (${BdtFormatter.formatNumber(accounts.size, lang)})",
+                            subtitle = refined.manageAccountsSubtitle,
+                            icon = Icons.Filled.AccountBalanceWallet,
+                            testTag = "settings_manage_accounts_tile",
+                            onClick = onOpenAccounts
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingsNavTile(
+                            title = strings.backupRestore.tileTitle,
+                            subtitle = strings.backupRestore.tileSubtitle,
+                            icon = Icons.Filled.Sync,
+                            testTag = "settings_backup_restore_tile",
+                            onClick = {
+                                parentSectionPage = SettingsSubPage.WALLET_CURRENCY_DATA
+                                activeSubPage = SettingsSubPage.BACKUP_RESTORE
+                            }
+                        )
+                    }
+                }
+            }
+
+            SettingsSubPage.DATE_TIME -> {
+                SettingsSectionSubPageScaffold(
+                    title = strings.settingsDateTimeSection,
+                    icon = Icons.Filled.Schedule,
+                    closeDescription = strings.close,
+                    sectionTag = "settings_section_page_date_time",
+                    onBack = { activeSubPage = SettingsSubPage.MAIN }
+                ) {
+                    CrystalCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevated = true
+                    ) {
+                        LiveDeviceClockSyncBanner(
+                            timeContext = deviceTimeContext,
+                            language = lang,
+                            strings = strings,
+                            onRefreshTime = onRefreshSystemTime
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingsNavTile(
+                            title = strings.startOfWeekLabel,
+                            subtitle = prefs.startOfWeek.label(lang),
+                            icon = Icons.Filled.EventNote,
+                            testTag = "settings_start_of_week_tile",
+                            onClick = { showWeekStartSheet = true }
+                        )
+                    }
+                }
+            }
+
+            SettingsSubPage.SECURITY_SYSTEM -> {
+                val refined = strings.settingsRefinement
+                val bioStrings = strings.biometricSecurity
+                SettingsSectionSubPageScaffold(
+                    title = strings.settingsSecuritySystem,
+                    icon = Icons.Filled.Security,
+                    closeDescription = strings.close,
+                    sectionTag = "settings_section_page_security",
+                    onBack = { activeSubPage = SettingsSubPage.MAIN }
+                ) {
+                    CrystalCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevated = true
+                    ) {
+                        if (prefs.isLaunchLockActive) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = crystal.assetGreen.copy(alpha = if (crystal.isDark) 0.16f else 0.10f),
+                                border = BorderStroke(1.dp, crystal.assetGreen.copy(alpha = 0.35f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("settings_vault_protected_badge")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.VerifiedUser,
+                                        contentDescription = null,
+                                        tint = crystal.assetGreen,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = bioStrings.vaultProtectedBadge,
+                                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                            color = crystal.assetGreen
+                                        )
+                                        Text(
+                                            text = bioStrings.autoLockPrivacyHint,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = crystal.mutedText
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(14.dp))
+                        }
+
+                        // Direct Biometric Unlock on Launch (Fingerprint / Face) Toggle
+                        SettingSwitchRow(
+                            label = bioStrings.biometricLaunchTitle,
+                            subtitle = bioStrings.biometricLaunchSubtitle,
+                            icon = Icons.Filled.Fingerprint,
+                            iconTint = crystal.assetGreen,
+                            checked = prefs.biometricUnlockEnabled,
+                            testTag = "settings_toggle_biometric",
+                            onCheckedChange = { enable ->
+                                biometricFeedback = null
+                                biometricFeedbackIsError = false
+                                if (!enable) {
+                                    onSetBiometricUnlock(false)
+                                    biometricFeedback = bioStrings.biometricDisabledNotice
+                                    biometricFeedbackIsError = false
+                                } else if (!biometricCapability.canAuthenticate) {
+                                    biometricFeedbackIsError = true
+                                    biometricFeedback = if (biometricAvailability == BiometricAvailability.NONE_ENROLLED) {
+                                        bioStrings.notEnrolledErrorMsg
+                                    } else {
+                                        bioStrings.hardwareUnavailableErrorMsg
+                                    }
+                                } else {
+                                    val handleSuccess = {
+                                        onSetBiometricUnlock(true)
+                                        biometricFeedbackIsError = false
+                                        biometricFeedback = bioStrings.biometricEnabledNotice
+                                    }
+                                    val handleFailure: (BiometricAuthFailureReason, String) -> Unit = { reason, raw ->
+                                        if (reason != BiometricAuthFailureReason.CANCELED) {
+                                            biometricFeedbackIsError = true
+                                            biometricFeedback = when (reason) {
+                                                BiometricAuthFailureReason.LOCKOUT -> bioStrings.lockoutErrorMsg
+                                                BiometricAuthFailureReason.LOCKOUT_PERMANENT -> bioStrings.permanentLockoutErrorMsg
+                                                BiometricAuthFailureReason.NO_BIOMETRICS -> bioStrings.notEnrolledErrorMsg
+                                                BiometricAuthFailureReason.HARDWARE_UNAVAILABLE -> bioStrings.hardwareUnavailableErrorMsg
+                                                else -> raw.ifBlank { bioStrings.hardwareUnavailableErrorMsg }
+                                            }
+                                        }
+                                    }
+                                    if (biometricVerifyOverride != null) {
+                                        biometricVerifyOverride(handleSuccess, handleFailure)
+                                    } else {
+                                        BiometricAuthHelper.authenticate(
+                                            context = context,
+                                            title = bioStrings.verifyBiometricTitle,
+                                            subtitle = bioStrings.verifyBiometricSubtitle,
+                                            negativeButtonText = bioStrings.verifyCancelBtn,
+                                            allowDeviceCredentialFallback = biometricAvailability != BiometricAvailability.AVAILABLE,
+                                            onSucceeded = handleSuccess,
+                                            onError = { /* handled via onFailureReason */ },
+                                            onFailureReason = handleFailure
+                                        )
+                                    }
+                                }
+                            }
+                        )
+
+                        val bioStatusText = when {
+                            biometricAvailability == BiometricAvailability.AVAILABLE &&
+                                biometricCapability.hasFingerprint && biometricCapability.hasFace ->
+                                bioStrings.fingerprintAndFaceReady
+                            biometricAvailability == BiometricAvailability.AVAILABLE && biometricCapability.hasFace ->
+                                bioStrings.faceReady
+                            biometricAvailability == BiometricAvailability.AVAILABLE ->
+                                bioStrings.fingerprintReady
+                            biometricCapability.canUseDeviceCredential ->
+                                bioStrings.deviceLockFallbackReady
+                            biometricAvailability == BiometricAvailability.NONE_ENROLLED ->
+                                strings.biometricNotEnrolledBadge
+                            else ->
+                                strings.biometricUnavailableBadge
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = bioStatusText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (biometricCapability.canAuthenticate) {
+                                crystal.assetGreen
+                            } else {
+                                crystal.mutedText
+                            },
+                            modifier = Modifier
+                                .padding(horizontal = 4.dp)
+                                .testTag("settings_biometric_status_text")
+                        )
+
+                        if (biometricAvailability == BiometricAvailability.NONE_ENROLLED) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(BiometricAuthHelper.createEnrollIntent())
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .testTag("settings_enroll_biometric_button")
+                            ) {
+                                Icon(Icons.Filled.Fingerprint, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(bioStrings.enrollBiometricsBtn, maxLines = 1)
+                            }
+                        }
+
+                        if (!biometricFeedback.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (biometricFeedbackIsError) {
+                                    crystal.warningAmberBg
+                                } else {
+                                    crystal.assetGreen.copy(alpha = if (crystal.isDark) 0.16f else 0.10f)
+                                },
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (biometricFeedbackIsError) {
+                                        crystal.warningAmber.copy(alpha = 0.4f)
+                                    } else {
+                                        crystal.assetGreen.copy(alpha = 0.35f)
+                                    }
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("settings_biometric_feedback")
+                            ) {
+                                Text(
+                                    text = biometricFeedback!!,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (biometricFeedbackIsError) crystal.warningAmber else crystal.assetGreen,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Optional 4-Digit App PIN Lock Toggle
+                        SettingSwitchRow(
+                            label = strings.appScreenLockLabel,
+                            subtitle = refined.appScreenLockSubtitle,
+                            icon = Icons.Filled.Lock,
+                            iconTint = MaterialTheme.colorScheme.primary,
+                            checked = prefs.appLockEnabled,
+                            testTag = "settings_toggle_app_lock",
+                            onCheckedChange = { enable ->
+                                if (enable) {
+                                    showPinSetupDialog = true
+                                } else {
+                                    onSetAppLock(false, prefs.appLockPin)
+                                }
+                            }
+                        )
+
+                        if (prefs.isLaunchLockActive) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (prefs.appLockEnabled) {
+                                    OutlinedButton(
+                                        onClick = { showPinSetupDialog = true },
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp)
+                                    ) {
+                                        Text(strings.changePinLabel, maxLines = 1)
+                                    }
+                                }
+                                FilledTonalButton(
+                                    onClick = onLockNow,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 48.dp)
+                                        .testTag("lock_vault_now_button")
+                                ) {
+                                    Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.size(6.dp))
+                                    Text(strings.lockNowLabel, maxLines = 1)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingSwitchRow(
+                            label = strings.hapticFeedbackLabel,
+                            subtitle = refined.hapticFeedbackSubtitle,
+                            icon = Icons.Filled.Vibration,
+                            iconTint = MaterialTheme.colorScheme.secondary,
+                            checked = prefs.hapticFeedbackEnabled,
+                            testTag = "settings_toggle_haptic",
+                            onCheckedChange = onSetHapticFeedback
+                        )
+                    }
+                }
+            }
+
             SettingsSubPage.THEME_CUSTOMIZATION -> {
                 ThemeCustomizationScreen(
                     prefs = prefs,
                     strings = strings,
-                    onBack = { activeSubPage = SettingsSubPage.MAIN },
+                    onBack = { activeSubPage = parentSectionPage },
                     onSelectThemeMode = onSetThemeMode,
                     onSelectColourTheme = onSetColourTheme
                 )
@@ -399,7 +887,7 @@ fun SettingsScreen(
                     activeLanguage = prefs.language,
                     strings = strings,
                     onSelectLanguage = onSetLanguage,
-                    onBack = { activeSubPage = SettingsSubPage.MAIN }
+                    onBack = { activeSubPage = parentSectionPage }
                 )
             }
 
@@ -410,7 +898,7 @@ fun SettingsScreen(
                     isGoogleSignInLoading = false,
                     googleNotice = null,
                     strings = strings,
-                    onBack = { activeSubPage = SettingsSubPage.MAIN },
+                    onBack = { activeSubPage = parentSectionPage },
                     onExportJsonClick = {
                         exportJsonLauncher.launch("amar_hisab_backup_$dateStamp.json")
                     },
@@ -444,7 +932,7 @@ fun SettingsScreen(
                     onUpsertCategory = onUpsertManagedCategory,
                     onDeleteCategory = onDeleteManagedCategory,
                     onResetDefaults = onResetCategoriesToDefault,
-                    onBack = { activeSubPage = SettingsSubPage.MAIN }
+                    onBack = { activeSubPage = parentSectionPage }
                 )
             }
 
@@ -649,21 +1137,11 @@ fun SettingsScreen(
                         }
                     }
 
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 12.dp),
-                        color = crystal.glassBorder
-                    )
-
-                    if (prefs.authMode == AuthMode.GOOGLE) {
-                        Text(
-                            text = prefs.userEmail.ifBlank { strings.profileDetails.googleSignedInSummary },
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                            color = crystal.assetGreen,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.testTag("settings_profile_signed_in_email")
+                    if (prefs.authMode != AuthMode.GOOGLE) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 12.dp),
+                            color = crystal.glassBorder
                         )
-                    } else {
                         Text(
                             text = strings.offlineGuestLabel,
                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
@@ -676,9 +1154,10 @@ fun SettingsScreen(
                 }
             }
 
-            // 2. General & Customization (Verified Tiles + Financial Alert Toggles)
+            // 2. Main Settings Options Only (tapping any main section opens its dedicated sub-options screen)
             item {
                 val refined = strings.settingsRefinement
+                val bioStrings = strings.biometricSecurity
                 val modeDisplayLabel = when (prefs.themeMode) {
                     AppThemeMode.AUTO -> "Auto"
                     AppThemeMode.LIGHT -> "Light"
@@ -689,429 +1168,89 @@ fun SettingsScreen(
                     AppLanguage.EN -> refined.languageActiveEnglish
                     else -> "${prefs.language.nativeName} · ${prefs.language.englishName}"
                 }
+                val enabledAlertsCount = listOf(
+                    prefs.notifDailyReminderEnabled,
+                    prefs.notifLoanReminders,
+                    prefs.notifBudgetAlerts,
+                    prefs.notifCreditAlerts,
+                    prefs.notifHighSpendAlertEnabled
+                ).count { it }
+                val alertsSubtitle = if (lang == AppLanguage.BN) {
+                    "${BdtFormatter.formatNumber(enabledAlertsCount, lang)}টি সতর্কতা চালু আছে"
+                } else {
+                    "$enabledAlertsCount alerts active"
+                }
+                val walletDataSubtitle = "${prefs.mainCurrency.codeAndSymbolLabel()} · ${strings.manageAccountsLabel} (${BdtFormatter.formatNumber(accounts.size, lang)})"
+                val dateTimeSubtitle = "${deviceTimeContext.utcOffsetLabel} · ${prefs.startOfWeek.label(lang)}"
+                val securitySubtitle = if (prefs.isLaunchLockActive) {
+                    bioStrings.vaultProtectedBadge
+                } else {
+                    refined.appScreenLockSubtitle
+                }
 
                 CrystalCard(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("settings_general_customization_card"),
+                        .testTag("settings_main_options_card"),
                     elevated = true
                 ) {
-                    SettingsSectionHeader(
+                    SettingsNavTile(
                         title = strings.settingsCustomization,
-                        icon = Icons.Filled.Tune
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // Dedicated "Theme" List Tile
-                    SettingsNavTile(
-                        title = strings.themeSettings.themeTileTitle,
-                        subtitle = "${prefs.colourTheme.label(lang)} · $modeDisplayLabel",
-                        icon = Icons.Filled.Palette,
-                        testTag = "settings_theme_tile",
-                        onClick = { activeSubPage = SettingsSubPage.THEME_CUSTOMIZATION }
+                        subtitle = "${prefs.colourTheme.label(lang)} · $modeDisplayLabel · $activeLanguageDisplay",
+                        icon = Icons.Filled.Tune,
+                        testTag = "settings_general_customization_card",
+                        onClick = { activeSubPage = SettingsSubPage.GENERAL_CUSTOMIZATION }
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Dedicated "Language" List Tile -> navigates to LanguageSelectionSubPage
                     SettingsNavTile(
-                        title = refined.languageTileTitle,
-                        subtitle = activeLanguageDisplay,
-                        icon = Icons.Filled.Translate,
-                        testTag = "settings_language_tile",
-                        onClick = { activeSubPage = SettingsSubPage.LANGUAGE }
+                        title = refined.financialAlertsGroupTitle,
+                        subtitle = alertsSubtitle,
+                        icon = Icons.Filled.NotificationsActive,
+                        iconTint = crystal.warningAmber,
+                        testTag = "settings_financial_alerts_tile",
+                        onClick = {
+                            activeAlertDetail = null
+                            activeSubPage = SettingsSubPage.FINANCIAL_ALERTS
+                        }
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Dedicated "Customize Home" List Tile -> opens HomeDashboardCustomizerSheet
                     SettingsNavTile(
-                        title = strings.customizeDashboard,
-                        subtitle = refined.customizeHomeSubtitle,
-                        icon = Icons.Filled.DashboardCustomize,
-                        testTag = "customize_home_button",
-                        onClick = { showDashboardCustomizer = true }
-                    )
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 14.dp),
-                        color = crystal.glassBorder
-                    )
-
-                    NotificationSettingsSection(
-                        prefs = prefs,
-                        strings = strings,
-                        deviceTimeContext = deviceTimeContext,
-                        onSetNotifications = onSetNotifications,
-                        onSetDailyReminder = onSetDailyReminder,
-                        onSetLoanDayBefore = onSetLoanDayBefore,
-                        onSetHighSpendAlert = onSetHighSpendAlert
-                    )
-                }
-            }
-
-            // 3. Wallet, Currency & Data
-            item {
-                val refined = strings.settingsRefinement
-                CrystalCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    elevated = true
-                ) {
-                    SettingsSectionHeader(
                         title = strings.settingsWalletCurrencyData,
-                        icon = Icons.Filled.AccountBalanceWallet
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    if (accounts.isNotEmpty()) {
-                        Text(
-                            text = strings.defaultWalletLabel,
-                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        val effectiveDefaultId = accounts.firstOrNull { it.id == prefs.defaultAccountId }?.id
-                            ?: accounts.firstOrNull()?.id ?: 0L
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            accounts.forEach { acc ->
-                                FilterChip(
-                                    selected = acc.id == effectiveDefaultId,
-                                    onClick = { onSetDefaultAccount(acc.id) },
-                                    label = {
-                                        Text("${acc.name} (${BdtFormatter.formatCurrency(acc.balance, acc.currencyCode, lang)})")
-                                    }
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(12.dp))
-                    }
-
-                    SettingsNavTile(
-                        title = strings.categoriesOverviewLabel,
-                        subtitle = refined.categoriesSubtitle,
-                        icon = Icons.Filled.Category,
-                        testTag = "settings_categories_tile",
-                        onClick = { activeSubPage = SettingsSubPage.CATEGORIES }
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    SettingsNavTile(
-                        title = "${strings.manageAccountsLabel} (${BdtFormatter.formatNumber(accounts.size, lang)})",
-                        subtitle = refined.manageAccountsSubtitle,
+                        subtitle = walletDataSubtitle,
                         icon = Icons.Filled.AccountBalanceWallet,
-                        testTag = "settings_manage_accounts_tile",
-                        onClick = onOpenAccounts
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Dedicated "Backup & Restore" List Tile
-                    SettingsNavTile(
-                        title = strings.backupRestore.tileTitle,
-                        subtitle = strings.backupRestore.tileSubtitle,
-                        icon = Icons.Filled.Sync,
-                        testTag = "settings_backup_restore_tile",
-                        onClick = { activeSubPage = SettingsSubPage.BACKUP_RESTORE }
-                    )
-                }
-            }
-
-            // 4. Date & Time (Live Device Clock & Timezone Sync + Week Start)
-            item {
-                CrystalCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("settings_date_time_card"),
-                    elevated = true
-                ) {
-                    SettingsSectionHeader(
-                        title = strings.settingsDateTimeSection,
-                        icon = Icons.Filled.Schedule
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    LiveDeviceClockSyncBanner(
-                        timeContext = deviceTimeContext,
-                        language = lang,
-                        strings = strings,
-                        onRefreshTime = onRefreshSystemTime
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    SettingsNavTile(
-                        title = strings.startOfWeekLabel,
-                        subtitle = prefs.startOfWeek.label(lang),
-                        icon = Icons.Filled.EventNote,
-                        testTag = "settings_start_of_week_tile",
-                        onClick = { showWeekStartSheet = true }
-                    )
-                }
-            }
-
-            // 5. Security & System
-            item {
-                val refined = strings.settingsRefinement
-                val bioStrings = strings.biometricSecurity
-                CrystalCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("settings_security_card"),
-                    elevated = true
-                ) {
-                    SettingsSectionHeader(
-                        title = strings.settingsSecuritySystem,
-                        icon = Icons.Filled.Security
-                    )
-
-                    if (prefs.isLaunchLockActive) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = crystal.assetGreen.copy(alpha = if (crystal.isDark) 0.16f else 0.10f),
-                            border = BorderStroke(1.dp, crystal.assetGreen.copy(alpha = 0.35f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("settings_vault_protected_badge")
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.VerifiedUser,
-                                    contentDescription = null,
-                                    tint = crystal.assetGreen,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = bioStrings.vaultProtectedBadge,
-                                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                                        color = crystal.assetGreen
-                                    )
-                                    Text(
-                                        text = bioStrings.autoLockPrivacyHint,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = crystal.mutedText
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // Direct Biometric Unlock on Launch (Fingerprint / Face) Toggle
-                    SettingSwitchRow(
-                        label = bioStrings.biometricLaunchTitle,
-                        subtitle = bioStrings.biometricLaunchSubtitle,
-                        icon = Icons.Filled.Fingerprint,
                         iconTint = crystal.assetGreen,
-                        checked = prefs.biometricUnlockEnabled,
-                        testTag = "settings_toggle_biometric",
-                        onCheckedChange = { enable ->
-                            biometricFeedback = null
-                            biometricFeedbackIsError = false
-                            if (!enable) {
-                                onSetBiometricUnlock(false)
-                                biometricFeedback = bioStrings.biometricDisabledNotice
-                                biometricFeedbackIsError = false
-                            } else if (!biometricCapability.canAuthenticate) {
-                                biometricFeedbackIsError = true
-                                biometricFeedback = if (biometricAvailability == BiometricAvailability.NONE_ENROLLED) {
-                                    bioStrings.notEnrolledErrorMsg
-                                } else {
-                                    bioStrings.hardwareUnavailableErrorMsg
-                                }
-                            } else {
-                                val handleSuccess = {
-                                    onSetBiometricUnlock(true)
-                                    biometricFeedbackIsError = false
-                                    biometricFeedback = bioStrings.biometricEnabledNotice
-                                }
-                                val handleFailure: (BiometricAuthFailureReason, String) -> Unit = { reason, raw ->
-                                    if (reason != BiometricAuthFailureReason.CANCELED) {
-                                        biometricFeedbackIsError = true
-                                        biometricFeedback = when (reason) {
-                                            BiometricAuthFailureReason.LOCKOUT -> bioStrings.lockoutErrorMsg
-                                            BiometricAuthFailureReason.LOCKOUT_PERMANENT -> bioStrings.permanentLockoutErrorMsg
-                                            BiometricAuthFailureReason.NO_BIOMETRICS -> bioStrings.notEnrolledErrorMsg
-                                            BiometricAuthFailureReason.HARDWARE_UNAVAILABLE -> bioStrings.hardwareUnavailableErrorMsg
-                                            else -> raw.ifBlank { bioStrings.hardwareUnavailableErrorMsg }
-                                        }
-                                    }
-                                }
-                                if (biometricVerifyOverride != null) {
-                                    biometricVerifyOverride(handleSuccess, handleFailure)
-                                } else {
-                                    BiometricAuthHelper.authenticate(
-                                        context = context,
-                                        title = bioStrings.verifyBiometricTitle,
-                                        subtitle = bioStrings.verifyBiometricSubtitle,
-                                        negativeButtonText = bioStrings.verifyCancelBtn,
-                                        allowDeviceCredentialFallback = biometricAvailability != BiometricAvailability.AVAILABLE,
-                                        onSucceeded = handleSuccess,
-                                        onError = { /* handled via onFailureReason */ },
-                                        onFailureReason = handleFailure
-                                    )
-                                }
-                            }
-                        }
+                        testTag = "settings_wallet_currency_data_tile",
+                        onClick = { activeSubPage = SettingsSubPage.WALLET_CURRENCY_DATA }
                     )
-
-                    val bioStatusText = when {
-                        biometricAvailability == BiometricAvailability.AVAILABLE &&
-                            biometricCapability.hasFingerprint && biometricCapability.hasFace ->
-                            bioStrings.fingerprintAndFaceReady
-                        biometricAvailability == BiometricAvailability.AVAILABLE && biometricCapability.hasFace ->
-                            bioStrings.faceReady
-                        biometricAvailability == BiometricAvailability.AVAILABLE ->
-                            bioStrings.fingerprintReady
-                        biometricCapability.canUseDeviceCredential ->
-                            bioStrings.deviceLockFallbackReady
-                        biometricAvailability == BiometricAvailability.NONE_ENROLLED ->
-                            strings.biometricNotEnrolledBadge
-                        else ->
-                            strings.biometricUnavailableBadge
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = bioStatusText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (biometricCapability.canAuthenticate) {
-                            crystal.assetGreen
-                        } else {
-                            crystal.mutedText
-                        },
-                        modifier = Modifier
-                            .padding(horizontal = 4.dp)
-                            .testTag("settings_biometric_status_text")
-                    )
-
-                    if (biometricAvailability == BiometricAvailability.NONE_ENROLLED) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = {
-                                runCatching {
-                                    context.startActivity(BiometricAuthHelper.createEnrollIntent())
-                                }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 48.dp)
-                                .testTag("settings_enroll_biometric_button")
-                        ) {
-                            Icon(Icons.Filled.Fingerprint, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(bioStrings.enrollBiometricsBtn, maxLines = 1)
-                        }
-                    }
-
-                    if (!biometricFeedback.isNullOrBlank()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (biometricFeedbackIsError) {
-                                crystal.warningAmberBg
-                            } else {
-                                crystal.assetGreen.copy(alpha = if (crystal.isDark) 0.16f else 0.10f)
-                            },
-                            border = BorderStroke(
-                                1.dp,
-                                if (biometricFeedbackIsError) {
-                                    crystal.warningAmber.copy(alpha = 0.4f)
-                                } else {
-                                    crystal.assetGreen.copy(alpha = 0.35f)
-                                }
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("settings_biometric_feedback")
-                        ) {
-                            Text(
-                                text = biometricFeedback!!,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (biometricFeedbackIsError) crystal.warningAmber else crystal.assetGreen,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                            )
-                        }
-                    }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Optional 4-Digit App PIN Lock Toggle
-                    SettingSwitchRow(
-                        label = strings.appScreenLockLabel,
-                        subtitle = refined.appScreenLockSubtitle,
-                        icon = Icons.Filled.Lock,
-                        iconTint = MaterialTheme.colorScheme.primary,
-                        checked = prefs.appLockEnabled,
-                        testTag = "settings_toggle_app_lock",
-                        onCheckedChange = { enable ->
-                            if (enable) {
-                                showPinSetupDialog = true
-                            } else {
-                                onSetAppLock(false, prefs.appLockPin)
-                            }
-                        }
+                    SettingsNavTile(
+                        title = strings.settingsDateTimeSection,
+                        subtitle = dateTimeSubtitle,
+                        icon = Icons.Filled.Schedule,
+                        testTag = "settings_date_time_card",
+                        onClick = { activeSubPage = SettingsSubPage.DATE_TIME }
                     )
-
-                    if (prefs.isLaunchLockActive) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            if (prefs.appLockEnabled) {
-                                OutlinedButton(
-                                    onClick = { showPinSetupDialog = true },
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .heightIn(min = 48.dp)
-                                ) {
-                                    Text(strings.changePinLabel, maxLines = 1)
-                                }
-                            }
-                            FilledTonalButton(
-                                onClick = onLockNow,
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = 48.dp)
-                                    .testTag("lock_vault_now_button")
-                            ) {
-                                Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.size(6.dp))
-                                Text(strings.lockNowLabel, maxLines = 1)
-                            }
-                        }
-                    }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    SettingSwitchRow(
-                        label = strings.hapticFeedbackLabel,
-                        subtitle = refined.hapticFeedbackSubtitle,
-                        icon = Icons.Filled.Vibration,
-                        iconTint = MaterialTheme.colorScheme.secondary,
-                        checked = prefs.hapticFeedbackEnabled,
-                        testTag = "settings_toggle_haptic",
-                        onCheckedChange = onSetHapticFeedback
+                    SettingsNavTile(
+                        title = strings.settingsSecuritySystem,
+                        subtitle = securitySubtitle,
+                        icon = Icons.Filled.Security,
+                        iconTint = crystal.assetGreen,
+                        testTag = "settings_security_card",
+                        onClick = { activeSubPage = SettingsSubPage.SECURITY_SYSTEM }
                     )
                 }
             }
 
-            // 6. Customer Support & About
+            // 3. Customer Support & About (Main Options)
             item {
                 CrystalCard(
                     modifier = Modifier
@@ -1615,6 +1754,78 @@ private fun createAvatarCaptureUri(context: Context): Uri {
 }
 
 @Composable
+private fun SettingsSectionSubPageScaffold(
+    title: String,
+    icon: ImageVector,
+    closeDescription: String,
+    sectionTag: String,
+    onBack: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    BackHandler(onBack = onBack)
+    val crystal = LocalCrystalColors.current
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag(sectionTag),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = 620.dp)
+                .fillMaxSize()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("settings_section_back_button")
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = crystal.glassSurfaceElevated,
+                        border = BorderStroke(1.dp, crystal.glassBorder),
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = closeDescription,
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+                SettingsSectionHeader(
+                    title = title,
+                    icon = icon
+                )
+            }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .testTag("settings_section_list"),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 40.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                item {
+                    content()
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsSectionHeader(
     title: String,
     icon: ImageVector
@@ -1878,7 +2089,7 @@ private fun HomeDashboardCustomizerSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 14.dp)
                 .padding(bottom = 16.dp)
                 .testTag("dashboard_customizer_sheet"),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1985,20 +2196,21 @@ private fun HomeDashboardCustomizerSheet(
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = strings.dashboard.sectionsOrderLabel,
                         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
                     )
                     Text(
                         text = strings.dashboard.reorderHint,
                         style = MaterialTheme.typography.labelSmall,
                         color = crystal.mutedText,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        softWrap = false
                     )
                 }
 
@@ -2029,7 +2241,7 @@ private fun HomeDashboardCustomizerSheet(
                             } else {
                                 if (isVisible) crystal.glassSurfaceElevated else crystal.glassSurface
                             },
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(14.dp),
                             border = BorderStroke(
                                 width = 1.dp,
                                 color = if (isVisible) {
@@ -2045,15 +2257,16 @@ private fun HomeDashboardCustomizerSheet(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(start = 8.dp, end = 10.dp, top = 6.dp, bottom = 6.dp),
+                                    .padding(start = 6.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 // Drag handle supporting direct vertical drag-to-reorder
                                 Box(
                                     modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(RoundedCornerShape(10.dp))
+                                        .width(26.dp)
+                                        .heightIn(min = 44.dp)
+                                        .clip(RoundedCornerShape(8.dp))
                                         .pointerInput(workingOrder, idx) {
                                             detectVerticalDragGestures(
                                                 onDragStart = { dragDeltaY = 0f },
@@ -2089,14 +2302,14 @@ private fun HomeDashboardCustomizerSheet(
                                         imageVector = Icons.Filled.DragIndicator,
                                         contentDescription = strings.dashboard.dragHandleDesc,
                                         tint = crystal.mutedText,
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
 
                                 Box(
                                     modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(RoundedCornerShape(10.dp))
+                                        .size(28.dp)
+                                        .clip(RoundedCornerShape(8.dp))
                                         .background(
                                             if (isVisible) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
                                             else crystal.mutedText.copy(alpha = 0.12f)
@@ -2107,84 +2320,113 @@ private fun HomeDashboardCustomizerSheet(
                                         imageVector = sectionIcon,
                                         contentDescription = null,
                                         tint = if (isVisible) MaterialTheme.colorScheme.primary else crystal.mutedText,
-                                        modifier = Modifier.size(17.dp)
+                                        modifier = Modifier.size(15.dp)
                                     )
                                 }
 
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = section.label(lang),
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        color = if (isVisible) MaterialTheme.colorScheme.onSurface else crystal.mutedText,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-
-                                // Accessible Up / Down Move Controls (48dp touch targets)
-                                IconButton(
-                                    onClick = {
-                                        if (idx > 0) {
-                                            val mutable = workingOrder.toMutableList()
-                                            val tmp = mutable[idx - 1]
-                                            mutable[idx - 1] = mutable[idx]
-                                            mutable[idx] = tmp
-                                            applyChange(order = mutable)
-                                        }
-                                    },
-                                    enabled = idx > 0,
+                                Text(
+                                    text = section.label(lang),
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontSize = 13.5.sp,
+                                        lineHeight = 17.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    ),
+                                    color = if (isVisible) MaterialTheme.colorScheme.onSurface else crystal.mutedText,
+                                    maxLines = 3,
+                                    softWrap = true,
+                                    overflow = TextOverflow.Clip,
                                     modifier = Modifier
-                                        .minimumInteractiveComponentSize()
-                                        .size(36.dp)
-                                        .testTag("move_up_${section.name}")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.ArrowUpward,
-                                        contentDescription = strings.dashboard.moveUpDesc,
-                                        tint = if (idx > 0) MaterialTheme.colorScheme.onSurface else crystal.mutedText.copy(alpha = 0.32f),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = {
-                                        if (idx < workingOrder.lastIndex) {
-                                            val mutable = workingOrder.toMutableList()
-                                            val tmp = mutable[idx + 1]
-                                            mutable[idx + 1] = mutable[idx]
-                                            mutable[idx] = tmp
-                                            applyChange(order = mutable)
-                                        }
-                                    },
-                                    enabled = idx < workingOrder.lastIndex,
-                                    modifier = Modifier
-                                        .minimumInteractiveComponentSize()
-                                        .size(36.dp)
-                                        .testTag("move_down_${section.name}")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.ArrowDownward,
-                                        contentDescription = strings.dashboard.moveDownDesc,
-                                        tint = if (idx < workingOrder.lastIndex) MaterialTheme.colorScheme.onSurface else crystal.mutedText.copy(alpha = 0.32f),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                Switch(
-                                    checked = isVisible,
-                                    onCheckedChange = { visible ->
-                                        val nextHidden = if (visible) workingHidden - section else workingHidden + section
-                                        applyChange(hidden = nextHidden)
-                                    },
-                                    modifier = Modifier.testTag("toggle_section_${section.name}"),
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Color.White,
-                                        checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                        uncheckedThumbColor = if (crystal.isDark) Color(0xFFF8FAFC) else MaterialTheme.colorScheme.outline,
-                                        uncheckedTrackColor = if (crystal.isDark) Color(0xFF1B2335) else MaterialTheme.colorScheme.surfaceVariant,
-                                        uncheckedBorderColor = MaterialTheme.colorScheme.outline
-                                    )
+                                        .weight(1f)
+                                        .padding(end = 2.dp)
+                                        .testTag("customizer_section_label_${section.name}")
                                 )
+
+                                // Compact, balanced right-side reorder & visibility controls
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(30.dp)
+                                            .heightIn(min = 44.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable(
+                                                enabled = idx > 0,
+                                                role = Role.Button,
+                                                onClick = {
+                                                    if (idx > 0) {
+                                                        val mutable = workingOrder.toMutableList()
+                                                        val tmp = mutable[idx - 1]
+                                                        mutable[idx - 1] = mutable[idx]
+                                                        mutable[idx] = tmp
+                                                        applyChange(order = mutable)
+                                                    }
+                                                }
+                                            )
+                                            .testTag("move_up_${section.name}"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.ArrowUpward,
+                                            contentDescription = strings.dashboard.moveUpDesc,
+                                            tint = if (idx > 0) MaterialTheme.colorScheme.onSurface else crystal.mutedText.copy(alpha = 0.32f),
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .width(30.dp)
+                                            .heightIn(min = 44.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable(
+                                                enabled = idx < workingOrder.lastIndex,
+                                                role = Role.Button,
+                                                onClick = {
+                                                    if (idx < workingOrder.lastIndex) {
+                                                        val mutable = workingOrder.toMutableList()
+                                                        val tmp = mutable[idx + 1]
+                                                        mutable[idx + 1] = mutable[idx]
+                                                        mutable[idx] = tmp
+                                                        applyChange(order = mutable)
+                                                    }
+                                                }
+                                            )
+                                            .testTag("move_down_${section.name}"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.ArrowDownward,
+                                            contentDescription = strings.dashboard.moveDownDesc,
+                                            tint = if (idx < workingOrder.lastIndex) MaterialTheme.colorScheme.onSurface else crystal.mutedText.copy(alpha = 0.32f),
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier.width(44.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Switch(
+                                            checked = isVisible,
+                                            onCheckedChange = { visible ->
+                                                val nextHidden = if (visible) workingHidden - section else workingHidden + section
+                                                applyChange(hidden = nextHidden)
+                                            },
+                                            modifier = Modifier
+                                                .scale(0.84f)
+                                                .testTag("toggle_section_${section.name}"),
+                                            colors = SwitchDefaults.colors(
+                                                checkedThumbColor = Color.White,
+                                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                                uncheckedThumbColor = if (crystal.isDark) Color(0xFFF8FAFC) else MaterialTheme.colorScheme.outline,
+                                                uncheckedTrackColor = if (crystal.isDark) Color(0xFF1B2335) else MaterialTheme.colorScheme.surfaceVariant,
+                                                uncheckedBorderColor = MaterialTheme.colorScheme.outline
+                                            )
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

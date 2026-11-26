@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.app.DatePickerDialog
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -621,6 +622,9 @@ fun PlanScreen(
         var chosenWalletId by remember(state.accounts) {
             mutableLongStateOf(state.accounts.firstOrNull()?.id ?: 0L)
         }
+        val amt = amountText.toDoubleOrNull() ?: 0.0
+        val selectedWallet = state.accounts.firstOrNull { it.id == chosenWalletId }
+        val isInsufficientGoalBalance = com.example.data.model.AccountBalanceGuard.isInsufficientForDeduction(selectedWallet, amt)
 
         AlertDialog(
             onDismissRequest = { fundingGoal = null },
@@ -646,7 +650,28 @@ fun PlanScreen(
                             FilterChip(
                                 selected = chosenWalletId == acc.id,
                                 onClick = { chosenWalletId = acc.id },
-                                label = { Text("${acc.name} (${BdtFormatter.formatCurrency(acc.balance, acc.currencyCode, lang)})") }
+                                label = { Text("${acc.name} (${BdtFormatter.formatBalance(acc.balance, acc.currencyCode, lang)})") }
+                            )
+                        }
+                    }
+                    if (isInsufficientGoalBalance && selectedWallet != null) {
+                        Surface(
+                            color = crystal.liabilityRedBg,
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, crystal.liabilityRed.copy(alpha = 0.45f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("goal_fund_insufficient_balance_error")
+                        ) {
+                            Text(
+                                text = com.example.data.model.AccountBalanceGuard.insufficientBalanceMessage(
+                                    account = selectedWallet,
+                                    requestedAmount = amt,
+                                    language = lang
+                                ),
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = crystal.liabilityRed,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
                             )
                         }
                     }
@@ -655,12 +680,12 @@ fun PlanScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val amt = amountText.toDoubleOrNull() ?: 0.0
-                        if (amt > 0.0 && chosenWalletId > 0L) {
+                        if (amt > 0.0 && chosenWalletId > 0L && !isInsufficientGoalBalance) {
                             onFundGoalFromWallet(goal, amt, chosenWalletId)
                             fundingGoal = null
                         }
-                    }
+                    },
+                    enabled = amt > 0.0 && chosenWalletId > 0L && !isInsufficientGoalBalance
                 ) { Text(strings.saveChanges) }
             },
             dismissButton = {

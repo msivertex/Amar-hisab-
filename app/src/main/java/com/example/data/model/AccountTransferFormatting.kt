@@ -408,3 +408,52 @@ object TransferNoteCodec {
         return "-> ${approxPrefix}$dstLabel $recvStr @ 1 $srcLabel = $dstLabel $rateStr"
     }
 }
+
+/**
+ * Shared balance protection guard ensuring outgoing expenses, transfers, goal contributions,
+ * and debt repayments never exceed available balance and balances always stop at 0 (never negative).
+ */
+object AccountBalanceGuard {
+    const val EPSILON: Double = 0.0005
+
+    fun clampNonNegative(value: Double): Double {
+        if (!value.isFinite() || value <= EPSILON) return 0.0
+        return value
+    }
+
+    fun availableBalance(account: AccountEntity): Double = clampNonNegative(account.balance)
+
+    fun isInsufficientForDeduction(account: AccountEntity?, requestedAmount: Double): Boolean {
+        if (account == null || requestedAmount <= 0.0 || !requestedAmount.isFinite()) return false
+        if (account.type == AccountType.CREDIT_CARD) return false
+        return requestedAmount > availableBalance(account) + EPSILON
+    }
+
+    fun deductOrZero(currentBalance: Double, amount: Double): Double {
+        val available = clampNonNegative(currentBalance)
+        return clampNonNegative(available - amount.coerceAtLeast(0.0))
+    }
+
+    fun insufficientBalanceMessage(
+        account: AccountEntity,
+        requestedAmount: Double,
+        language: AppLanguage
+    ): String {
+        val accountLabel = AccountNameResolver.resolveAccountName(account, language)
+        val availFormatted = BdtFormatter.formatBalance(account.balance, account.currencyCode, language)
+        val reqFormatted = BdtFormatter.formatBalance(requestedAmount, account.currencyCode, language)
+        return when (language) {
+            AppLanguage.BN ->
+                "পর্যাপ্ত ব্যালেন্স নেই! $accountLabel-এ বর্তমান ব্যালেন্স $availFormatted (অনুরোধকৃত: $reqFormatted)।"
+            AppLanguage.AR ->
+                "الرصيد غير كافٍ! الرصيد المتاح في $accountLabel هو $availFormatted (المطلوب: $reqFormatted)."
+            AppLanguage.HI ->
+                "पर्याप्त बैलेंस नहीं है! $accountLabel में उपलब्ध बैलेंस $availFormatted है (अनुरोधित: $reqFormatted)।"
+            AppLanguage.UR ->
+                "ناکافی بیلنس! $accountLabel میں دستیاب بیلنس $availFormatted ہے (درخواست کردہ: $reqFormatted)۔"
+            else ->
+                "Insufficient balance! Available in $accountLabel: $availFormatted (requested: $reqFormatted)."
+        }
+    }
+}
+

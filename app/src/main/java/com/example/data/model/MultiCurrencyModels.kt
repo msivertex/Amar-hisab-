@@ -36,19 +36,18 @@ data class AppCurrency(
     fun distinctSymbolOrNull(): String? =
         symbol.trim().takeIf { it.isNotEmpty() && !it.equals(code, ignoreCase = true) }
 
-    /** Uniform code + symbol label (e.g., "KWD د.ك", "BDT ৳", "INR ₹", "LKR Rs"). */
-    fun codeAndSymbolLabel(): String = distinctSymbolOrNull()?.let { "$code $it" } ?: code
+    /** Uniform code-only currency label (e.g., "KWD", "BDT", "INR", "LKR"). */
+    fun codeAndSymbolLabel(): String = code
 
     fun shortBadge(): String = "$flag $code"
 
     /** Clean uniform ISO badge label for cards & headers (always fixed ISO code, e.g., "KWD", "BDT", "INR", "LKR"). */
     fun cleanBadgeLabel(): String = code
 
-    /** Uniform Country Name + Currency Code + Symbol display across pickers & selectors. */
+    /** Uniform Country Name + Currency Code display across pickers & selectors (symbol-free). */
     fun pickerDisplayLabel(lang: AppLanguage, overrideCountryName: String? = null): String {
         val country = overrideCountryName?.takeIf { it.isNotBlank() } ?: countryName(lang)
-        val sym = distinctSymbolOrNull()
-        return if (sym != null) "$country • $code • $sym" else "$country • $code"
+        return "$country • $code"
     }
 
     fun fullDisplay(lang: AppLanguage): String = "$flag ${pickerDisplayLabel(lang)}"
@@ -173,11 +172,10 @@ data class AppCountry(
         else -> if (lang.isBangla) "${label(lang)} ব্যাংক নির্বাচন করুন" else "Select ${label(lang)} Bank"
     }
 
-    /** Formats the country + currency line cleanly, e.g. `Bangladesh • Bangladeshi Taka (BDT ৳)`. */
+    /** Formats the country + currency line cleanly, e.g. `Bangladesh • Bangladeshi Taka (BDT)`. */
     fun countryCurrencyDisplay(lang: AppLanguage): String {
         val cur = suggestedCurrency
-        val symbolSuffix = if (cur.symbol.equals(cur.code, ignoreCase = true)) cur.code else "${cur.code} ${cur.symbol}"
-        return "${label(lang)} • ${cur.currencyName(lang)} ($symbolSuffix)"
+        return "${label(lang)} • ${cur.currencyName(lang)} (${cur.code})"
     }
 
     companion object {

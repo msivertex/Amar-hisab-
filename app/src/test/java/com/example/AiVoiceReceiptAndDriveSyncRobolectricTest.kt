@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
@@ -712,12 +713,13 @@ class AiVoiceReceiptAndDriveSyncRobolectricTest {
 
         composeRule.waitForIdle()
 
-        // 1. Settings Profile summary card: shows avatar, name, signed-in email — NO Google Sign-In button
+        // 1. Settings Profile summary card: shows avatar, name, country/currency pills — NO email line and NO Google Sign-In button
         composeRule.onNodeWithTag("settings_profile_card").assertIsDisplayed()
         composeRule.onNodeWithTag("settings_profile_google_signin_button").assertDoesNotExist()
-        composeRule.onNodeWithTag("settings_profile_signed_in_email").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_profile_signed_in_email").assertDoesNotExist()
+        composeRule.onNodeWithText("shariful@gmail.com").assertDoesNotExist()
 
-        // 2. Open Profile Details -> verify avatar edit icon, Display Name edit, adaptive Google Account card, and Region & Currencies
+        // 2. Open Profile Details -> verify avatar edit icon, Display Name without duplicate email pill under name, and email kept inside Google Account card
         composeRule.onNodeWithTag("settings_open_detailed_profile_button")
             .assertIsDisplayed()
             .performSemanticsAction(SemanticsActions.OnClick)
@@ -725,6 +727,7 @@ class AiVoiceReceiptAndDriveSyncRobolectricTest {
 
         composeRule.onNodeWithTag("detailed_profile_screen").assertIsDisplayed()
         composeRule.onNodeWithTag("detailed_profile_avatar_edit_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("detailed_profile_hero_name").assertIsDisplayed()
 
         composeRule.onNodeWithTag("detailed_profile_list")
             .performScrollToNode(hasTestTag("detailed_profile_user_info_card"))
@@ -741,6 +744,8 @@ class AiVoiceReceiptAndDriveSyncRobolectricTest {
         composeRule.onNodeWithTag("detailed_profile_list")
             .performScrollToNode(hasTestTag("detailed_profile_google_card"))
         composeRule.onNodeWithTag("detailed_profile_google_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("detailed_profile_google_email").assertIsDisplayed()
+        composeRule.onNodeWithText("shariful@gmail.com").assertIsDisplayed()
         composeRule.onNodeWithTag("detailed_profile_unlink_google_button")
             .assertIsDisplayed()
             .performSemanticsAction(SemanticsActions.OnClick)
@@ -999,10 +1004,18 @@ class AiVoiceReceiptAndDriveSyncRobolectricTest {
 
         // 1. Settings > Wallet, Currency & Data must NOT duplicate currency pickers
         composeRule.onNodeWithTag("settings_list")
+            .performScrollToNode(hasTestTag("settings_wallet_currency_data_tile"))
+        composeRule.onNodeWithTag("settings_wallet_currency_data_tile")
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_section_list")
             .performScrollToNode(hasTestTag("settings_backup_restore_tile"))
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("settings_main_currency_tile").assertDoesNotExist()
         composeRule.onNodeWithTag("settings_secondary_currency_tile").assertDoesNotExist()
+        composeRule.onNodeWithTag("settings_section_back_button")
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
 
         // 2. Open Profile Details
         composeRule.onNodeWithTag("settings_list")

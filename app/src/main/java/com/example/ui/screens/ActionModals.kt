@@ -17,6 +17,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.EventNote
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Alarm
@@ -890,7 +892,7 @@ fun ReceiptScanSheet(
                     label = { Text("${strings.detectedAmount} (${activeCurrency.cleanBadgeLabel()})") },
                     prefix = {
                         Text(
-                            text = "${activeCurrency.symbol} ",
+                            text = "${activeCurrency.code} ",
                             style = MaterialTheme.typography.bodyLarge.copy(
                                 fontFamily = JetBrainsMonoFamily,
                                 fontWeight = FontWeight.Bold
@@ -922,7 +924,7 @@ fun ReceiptScanSheet(
                         },
                         prefix = {
                             Text(
-                                text = "${activeCurrency.symbol} ",
+                                text = "${activeCurrency.code} ",
                                 style = MaterialTheme.typography.bodyMedium.copy(
                                     fontFamily = JetBrainsMonoFamily,
                                     fontWeight = FontWeight.SemiBold
@@ -1109,13 +1111,43 @@ fun ReceiptScanSheet(
                 }
 
                 val isTransferReceipt = editableTransactionType == TransactionType.TRANSFER
+                val isReceiptOutgoing = editableTransactionType == TransactionType.EXPENSE || isTransferReceipt
+                val isReceiptInsufficient = isReceiptOutgoing &&
+                    com.example.data.model.AccountBalanceGuard.isInsufficientForDeduction(selectedAccount, effectiveTotalVal)
+
+                if (isReceiptInsufficient && selectedAccount != null) {
+                    Surface(
+                        color = crystal.liabilityRedBg,
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, crystal.liabilityRed.copy(alpha = 0.45f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("receipt_insufficient_balance_error")
+                    ) {
+                        Text(
+                            text = com.example.data.model.AccountBalanceGuard.insufficientBalanceMessage(
+                                account = selectedAccount,
+                                requestedAmount = effectiveTotalVal,
+                                language = language
+                            ),
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = crystal.liabilityRed,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                        )
+                    }
+                }
+
                 val canSaveReceiptTransfer = isTransferReceipt &&
                     effectiveTotalVal > 0.0 &&
+                    !isReceiptInsufficient &&
                     selectedAccount != null &&
                     selectedToAccount != null &&
                     selectedAccount.id != selectedToAccount.id &&
                     onExecuteTransfer != null
-                val canSaveReceiptStandard = !isTransferReceipt && effectiveTotalVal > 0.0 && selectedAccountId > 0L
+                val canSaveReceiptStandard = !isTransferReceipt &&
+                    effectiveTotalVal > 0.0 &&
+                    !isReceiptInsufficient &&
+                    selectedAccountId > 0L
 
                 val saveButtonText = when (editableTransactionType) {
                     TransactionType.INCOME -> if (isBn) "নিশ্চিত করুন ও কার্ডে যোগ করুন (+)" else "Confirm & Add to Card (+)"
@@ -1125,6 +1157,7 @@ fun ReceiptScanSheet(
 
                 Button(
                     onClick = {
+                        if (isReceiptInsufficient) return@Button
                         val managedLabel = selectedManagedCategory?.label(language).orEmpty()
                         val finalTitle = editableMerchant.ifBlank {
                             managedLabel.ifBlank { editableCategory.label(language) }
@@ -1839,7 +1872,7 @@ fun VoiceEntrySheet(
                                 },
                                 prefix = {
                                     Text(
-                                        text = "${activeCurrency.symbol} ",
+                                        text = "${activeCurrency.code} ",
                                         style = MaterialTheme.typography.bodyLarge.copy(
                                             fontFamily = JetBrainsMonoFamily,
                                             fontWeight = FontWeight.Bold
@@ -2007,8 +2040,35 @@ fun VoiceEntrySheet(
                                 )
                             }
 
+                            val isVoiceOutgoing = editableType == TransactionType.EXPENSE || editableType == TransactionType.TRANSFER
+                            val isVoiceInsufficient = isVoiceOutgoing &&
+                                com.example.data.model.AccountBalanceGuard.isInsufficientForDeduction(fromAccount, parsedAmount)
+
+                            if (isVoiceInsufficient && fromAccount != null) {
+                                Surface(
+                                    color = crystal.liabilityRedBg,
+                                    shape = RoundedCornerShape(14.dp),
+                                    border = BorderStroke(1.dp, crystal.liabilityRed.copy(alpha = 0.45f)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("voice_insufficient_balance_error")
+                                ) {
+                                    Text(
+                                        text = com.example.data.model.AccountBalanceGuard.insufficientBalanceMessage(
+                                            account = fromAccount,
+                                            requestedAmount = parsedAmount,
+                                            language = language
+                                        ),
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                        color = crystal.liabilityRed,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                                    )
+                                }
+                            }
+
                             Button(
                                 onClick = {
+                                    if (isVoiceInsufficient) return@Button
                                     if (canSaveTransfer && fromAccount != null && toAccount != null) {
                                         val finalNote = editableNote.ifBlank { editableTitle.ifBlank { utterance.trim() } }
                                         onExecuteTransfer?.invoke(
@@ -2045,7 +2105,7 @@ fun VoiceEntrySheet(
                                         onDismiss()
                                     }
                                 },
-                                enabled = canSaveTransfer || canSaveStandard,
+                                enabled = !isVoiceInsufficient && (canSaveTransfer || canSaveStandard),
                                 shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -2145,7 +2205,7 @@ fun GlobalSearchSheet(
                                 style = MaterialTheme.typography.titleSmall
                             )
                             Text(
-                                text = BdtFormatter.formatCurrency(acc.balance, acc.currencyCode, language),
+                                text = BdtFormatter.formatBalance(acc.balance, acc.currencyCode, language),
                                 style = MaterialTheme.typography.labelLarge.copy(fontFamily = JetBrainsMonoFamily)
                             )
                         }
@@ -2198,15 +2258,17 @@ fun NotificationsSheet(
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 8.dp),
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .testTag("notifications_inbox_sheet"),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -2217,17 +2279,27 @@ fun NotificationsSheet(
                     )
                     Text(
                         text = strings.notificationsTitle,
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 if (alerts.isNotEmpty() && onClearHistory != null) {
                     TextButton(
                         onClick = onClearHistory,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                         modifier = Modifier
                             .heightIn(min = 48.dp)
                             .testTag("notifications_clear_all")
                     ) {
-                        Text(if (isBn) "সব মুছুন" else "Clear All")
+                        Text(
+                            text = if (isBn) "সব মুছুন" else "Clear All",
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                            modifier = Modifier.testTag("notifications_clear_all_label")
+                        )
                     }
                 }
             }
@@ -2261,9 +2333,9 @@ fun NotificationsSheet(
                         )
                         Text(
                             text = if (isBn) {
-                                "আপনার স্থানীয় সময় অনুযায়ী দৈনিক রিমাইন্ডার, দেনা-পাওনা ও বাজেট সতর্কতা এখানে দেখা যাবে।"
+                                "দৈনিক হিসাবের রিমাইন্ডার, দেনা-পাওনা ও বাজেট সতর্কতা এখানে দেখা যাবে।"
                             } else {
-                                "Scheduled local-time reminders, dues alerts, and real spending warnings will appear here."
+                                "Triggered daily reminders, spending warnings, and due alerts will appear here."
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = crystal.mutedText,
@@ -2277,7 +2349,7 @@ fun NotificationsSheet(
                     val accentColor = if (alert.isWarning) crystal.warningAmber else MaterialTheme.colorScheme.primary
                     val iconVector = when (alert.category) {
                         com.example.notifications.NotificationCategory.DAILY_REMINDER -> Icons.Filled.Alarm
-                        com.example.notifications.NotificationCategory.DUE_LOAN -> Icons.Filled.EventNote
+                        com.example.notifications.NotificationCategory.DUE_LOAN -> Icons.AutoMirrored.Filled.EventNote
                         com.example.notifications.NotificationCategory.BUDGET_THRESHOLD -> Icons.Filled.WarningAmber
                         com.example.notifications.NotificationCategory.HIGH_SPEND_CARD -> Icons.Filled.CreditCard
                     }

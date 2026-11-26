@@ -469,7 +469,7 @@ fun ReceiptTempStorageNoticeBanner(
 }
 
 /**
- * Formats voucher amounts cleanly while preserving decimal fees (e.g. ৳ ১৮.৫০ or KD ৫৮.৫০).
+ * Formats voucher amounts cleanly while preserving decimal fees (e.g. BDT ১৮.৫০ or KWD ৫৮.৫০০).
  */
 internal fun formatVoucherAmount(
     amount: Double,
@@ -487,7 +487,7 @@ internal fun formatVoucherAmount(
         val frac = formattedUs.substring(dot + 1)
         val wholeFormatted = BdtFormatter.formatAmountOnly(whole.toDouble(), "BDT", language, includeSign = false)
         val fracLocalized = if (language == AppLanguage.BN) BdtFormatter.toBanglaDigits(frac) else frac
-        return "$sign${currency.code} ${currency.symbol} $wholeFormatted.$fracLocalized"
+        return "$sign${currency.code} $wholeFormatted.$fracLocalized"
     }
     return BdtFormatter.formatCurrency(amount, currencyCode, language)
 }

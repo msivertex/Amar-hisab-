@@ -434,6 +434,9 @@ fun AmarHisabApp(
                                         onSetLoanDayBefore = { enabled ->
                                             viewModel.setLoanDayBeforeEnabled(enabled)
                                         },
+                                        onSetLoanReminderTime = { hour, minute ->
+                                            viewModel.setLoanReminderTime(hour, minute)
+                                        },
                                         onSetHighSpendAlert = { enabled ->
                                             viewModel.setHighSpendAlertEnabled(enabled)
                                         },

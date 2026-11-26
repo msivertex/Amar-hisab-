@@ -42,8 +42,16 @@ data class CrystalColors(
     val warningAmberBg: Color,
     val navBarBackground: Color,
     val mutedText: Color,
-    val numericInk: Color
-)
+    val numericInk: Color,
+    val bdtNumericInk: Color,
+    val kwdNumericInk: Color
+) {
+    fun amountColorForCurrency(currencyCode: String, defaultColor: Color = numericInk): Color = when {
+        currencyCode.equals("KWD", ignoreCase = true) -> kwdNumericInk
+        currencyCode.equals("BDT", ignoreCase = true) -> bdtNumericInk
+        else -> defaultColor
+    }
+}
 
 private fun buildLightCrystalColors(colourTheme: AppColourTheme): CrystalColors {
     val tint = colourTheme.lightCanvasTint
@@ -66,7 +74,9 @@ private fun buildLightCrystalColors(colourTheme: AppColourTheme): CrystalColors 
         warningAmberBg = WarningAmberSoft,
         navBarBackground = Color.White.copy(alpha = 0.86f),
         mutedText = SlateOcean,
-        numericInk = CharcoalSlateInk
+        numericInk = CharcoalSlateInk,
+        bdtNumericInk = BdtPureBlackInk,
+        kwdNumericInk = KwdDarkBlueLight
     )
 }
 
@@ -89,7 +99,9 @@ private val DarkCrystalColors = CrystalColors(
     warningAmberBg = Color(0xFF78350F),
     navBarBackground = Color(0xFF0E131E),
     mutedText = DarkTextOffWhite,
-    numericInk = CrispDarkNumericInk
+    numericInk = CrispDarkNumericInk,
+    bdtNumericInk = CrispDarkNumericInk,
+    kwdNumericInk = KwdDarkBlueDark
 )
 
 private val DefaultLightCrystalColors = buildLightCrystalColors(AppColourTheme.SKY_CYAN)

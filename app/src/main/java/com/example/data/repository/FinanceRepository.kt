@@ -7,6 +7,7 @@ import com.example.data.local.CategoryBudgetEntity
 import com.example.data.local.LoanEntity
 import com.example.data.local.SavingsGoalEntity
 import com.example.data.local.TransactionEntity
+import com.example.data.model.AccountBalanceGuard
 import com.example.data.model.AccountNameResolver
 import com.example.data.model.AccountType
 import com.example.data.model.ExpenseCategory
@@ -28,8 +29,12 @@ class FinanceRepository(val db: AppDatabase) {
     val loans: Flow<List<LoanEntity>> = loanDao.observeAllLoans()
     val categoryBudgets: Flow<List<CategoryBudgetEntity>> = categoryBudgetDao.observeAllCategoryBudgets()
 
-    suspend fun addAccount(account: AccountEntity): Long =
-        accountDao.insertAccount(AccountNameResolver.normalizeAccountForSave(account))
+    suspend fun addAccount(account: AccountEntity): Long {
+        val normalized = AccountNameResolver.normalizeAccountForSave(account)
+        return accountDao.insertAccount(
+            normalized.copy(balance = AccountBalanceGuard.clampNonNegative(normalized.balance))
+        )
+    }
 
     suspend fun deleteAccount(accountId: Long) = accountDao.deleteAccountById(accountId)
 
@@ -42,10 +47,15 @@ class FinanceRepository(val db: AppDatabase) {
         accountId: Long,
         note: String = "",
         timestamp: Long = System.currentTimeMillis()
-    ) {
-        if (amount <= 0.0) return
-        db.withTransaction {
-            val account = accountDao.getAccountById(accountId) ?: return@withTransaction
+    ): Boolean {
+        if (amount <= 0.0 || !amount.isFinite()) return false
+        return db.withTransaction {
+            val account = accountDao.getAccountById(accountId) ?: return@withTransaction false
+            if (type == TransactionType.EXPENSE &&
+                AccountBalanceGuard.isInsufficientForDeduction(account, amount)
+            ) {
+                return@withTransaction false
+            }
             transactionDao.insertTransaction(
                 TransactionEntity(
                     title = title.trim(),
@@ -61,14 +71,17 @@ class FinanceRepository(val db: AppDatabase) {
             )
             val updatedBalance = when {
                 account.type == AccountType.CREDIT_CARD && type == TransactionType.EXPENSE ->
-                    account.balance + amount
+                    AccountBalanceGuard.clampNonNegative(account.balance + amount)
                 account.type == AccountType.CREDIT_CARD && type == TransactionType.INCOME ->
-                    (account.balance - amount).coerceAtLeast(0.0)
-                type == TransactionType.EXPENSE -> account.balance - amount
-                type == TransactionType.INCOME -> account.balance + amount
-                else -> account.balance
+                    AccountBalanceGuard.deductOrZero(account.balance, amount)
+                type == TransactionType.EXPENSE ->
+                    AccountBalanceGuard.deductOrZero(account.balance, amount)
+                type == TransactionType.INCOME ->
+                    AccountBalanceGuard.clampNonNegative(AccountBalanceGuard.clampNonNegative(account.balance) + amount)
+                else -> AccountBalanceGuard.clampNonNegative(account.balance)
             }
             accountDao.updateAccount(account.copy(balance = updatedBalance))
+            true
         }
     }
 
@@ -80,10 +93,13 @@ class FinanceRepository(val db: AppDatabase) {
         timestamp: Long = System.currentTimeMillis(),
         conversionRate: Double = 1.0
     ): Boolean {
-        if (amount <= 0.0 || fromAccountId == toAccountId) return false
+        if (amount <= 0.0 || !amount.isFinite() || fromAccountId == toAccountId) return false
         return db.withTransaction {
             val fromAcc = accountDao.getAccountById(fromAccountId) ?: return@withTransaction false
             val toAcc = accountDao.getAccountById(toAccountId) ?: return@withTransaction false
+            if (AccountBalanceGuard.isInsufficientForDeduction(fromAcc, amount)) {
+                return@withTransaction false
+            }
             val effectiveRate = if (fromAcc.currencyCode.equals(toAcc.currencyCode, ignoreCase = true)) {
                 1.0
             } else {
@@ -92,15 +108,15 @@ class FinanceRepository(val db: AppDatabase) {
             val creditedAmount = amount * effectiveRate
 
             val updatedFromBalance = if (fromAcc.type == AccountType.CREDIT_CARD) {
-                fromAcc.balance + amount
+                AccountBalanceGuard.clampNonNegative(fromAcc.balance + amount)
             } else {
-                fromAcc.balance - amount
+                AccountBalanceGuard.deductOrZero(fromAcc.balance, amount)
             }
 
             val updatedToBalance = if (toAcc.type == AccountType.CREDIT_CARD) {
-                (toAcc.balance - creditedAmount).coerceAtLeast(0.0)
+                AccountBalanceGuard.deductOrZero(toAcc.balance, creditedAmount)
             } else {
-                toAcc.balance + creditedAmount
+                AccountBalanceGuard.clampNonNegative(AccountBalanceGuard.clampNonNegative(toAcc.balance) + creditedAmount)
             }
 
             accountDao.updateAccount(fromAcc.copy(balance = updatedFromBalance))
@@ -145,14 +161,14 @@ class FinanceRepository(val db: AppDatabase) {
             if (source != null) {
                 val restored = when (tx.type) {
                     TransactionType.EXPENSE ->
-                        if (source.type == AccountType.CREDIT_CARD) (source.balance - tx.amount).coerceAtLeast(0.0)
-                        else source.balance + tx.amount
+                        if (source.type == AccountType.CREDIT_CARD) AccountBalanceGuard.deductOrZero(source.balance, tx.amount)
+                        else AccountBalanceGuard.clampNonNegative(AccountBalanceGuard.clampNonNegative(source.balance) + tx.amount)
                     TransactionType.INCOME ->
-                        if (source.type == AccountType.CREDIT_CARD) source.balance + tx.amount
-                        else source.balance - tx.amount
+                        if (source.type == AccountType.CREDIT_CARD) AccountBalanceGuard.clampNonNegative(source.balance + tx.amount)
+                        else AccountBalanceGuard.deductOrZero(source.balance, tx.amount)
                     TransactionType.TRANSFER ->
-                        if (source.type == AccountType.CREDIT_CARD) (source.balance - tx.amount).coerceAtLeast(0.0)
-                        else source.balance + tx.amount
+                        if (source.type == AccountType.CREDIT_CARD) AccountBalanceGuard.deductOrZero(source.balance, tx.amount)
+                        else AccountBalanceGuard.clampNonNegative(AccountBalanceGuard.clampNonNegative(source.balance) + tx.amount)
                 }
                 accountDao.updateAccount(source.copy(balance = restored))
             }
@@ -166,9 +182,9 @@ class FinanceRepository(val db: AppDatabase) {
                         tx.amount
                     }
                     val restoredDest = if (dest.type == AccountType.CREDIT_CARD) {
-                        dest.balance + destReversalAmount
+                        AccountBalanceGuard.clampNonNegative(dest.balance + destReversalAmount)
                     } else {
-                        dest.balance - destReversalAmount
+                        AccountBalanceGuard.deductOrZero(dest.balance, destReversalAmount)
                     }
                     accountDao.updateAccount(dest.copy(balance = restoredDest))
                 }
@@ -195,17 +211,20 @@ class FinanceRepository(val db: AppDatabase) {
         )
     }
 
-    suspend fun fundGoalFromWallet(goal: SavingsGoalEntity, amount: Double, walletId: Long) {
-        if (amount <= 0.0) return
-        db.withTransaction {
-            val account = accountDao.getAccountById(walletId) ?: return@withTransaction
+    suspend fun fundGoalFromWallet(goal: SavingsGoalEntity, amount: Double, walletId: Long): Boolean {
+        if (amount <= 0.0 || !amount.isFinite()) return false
+        return db.withTransaction {
+            val account = accountDao.getAccountById(walletId) ?: return@withTransaction false
+            if (AccountBalanceGuard.isInsufficientForDeduction(account, amount)) {
+                return@withTransaction false
+            }
             val newSaved = (goal.savedAmount + amount).coerceAtMost(goal.targetAmount)
             goalDao.updateGoal(goal.copy(savedAmount = newSaved))
 
             val updatedBalance = if (account.type == AccountType.CREDIT_CARD) {
-                account.balance + amount
+                AccountBalanceGuard.clampNonNegative(account.balance + amount)
             } else {
-                account.balance - amount
+                AccountBalanceGuard.deductOrZero(account.balance, amount)
             }
             accountDao.updateAccount(account.copy(balance = updatedBalance))
 
@@ -221,6 +240,7 @@ class FinanceRepository(val db: AppDatabase) {
                     currencyCode = account.currencyCode
                 )
             )
+            true
         }
     }
 
@@ -268,36 +288,44 @@ class FinanceRepository(val db: AppDatabase) {
         settlementAmount: Double,
         walletId: Long?,
         conversionRate: Double = 1.0
-    ) {
-        if (settlementAmount <= 0.0) return
+    ): Boolean {
+        if (settlementAmount <= 0.0 || !settlementAmount.isFinite()) return false
         val effectiveAmount = settlementAmount.coerceAtMost(loan.remainingAmount)
-        if (effectiveAmount <= 0.0) return
+        if (effectiveAmount <= 0.0) return false
 
-        db.withTransaction {
-            val newPaid = (loan.paidAmount + effectiveAmount).coerceAtMost(loan.totalAmount)
-            loanDao.updateLoan(loan.copy(paidAmount = newPaid))
-
-            // Allow recording partial/full settlement even without linking a wallet
-            val targetWalletId = walletId?.takeIf { it > 0L } ?: return@withTransaction
-            val account = accountDao.getAccountById(targetWalletId) ?: return@withTransaction
-
-            val sameCurrency = account.currencyCode.equals(loan.currencyCode, ignoreCase = true)
+        return db.withTransaction {
+            val targetWalletId = walletId?.takeIf { it > 0L }
+            val account = targetWalletId?.let { accountDao.getAccountById(it) }
+            val sameCurrency = account == null || account.currencyCode.equals(loan.currencyCode, ignoreCase = true)
             val effectiveRate = if (sameCurrency) 1.0 else conversionRate.takeIf { it > 0.0 } ?: 1.0
             val walletImpactAmount = effectiveAmount * effectiveRate
 
-            // Money I Owe -> settling deducts from wallet (EXPENSE); Money Owed to Me -> adds to wallet (INCOME)
             val txType = if (loan.loanType == LoanType.I_OWE) {
                 TransactionType.EXPENSE
             } else {
                 TransactionType.INCOME
             }
+            if (account != null && txType == TransactionType.EXPENSE &&
+                AccountBalanceGuard.isInsufficientForDeduction(account, walletImpactAmount)
+            ) {
+                return@withTransaction false
+            }
+
+            val newPaid = (loan.paidAmount + effectiveAmount).coerceAtMost(loan.totalAmount)
+            loanDao.updateLoan(loan.copy(paidAmount = newPaid))
+
+            // Allow recording partial/full settlement even without linking a wallet
+            if (targetWalletId == null || account == null) return@withTransaction true
+
             val updatedBalance = when {
                 account.type == AccountType.CREDIT_CARD && txType == TransactionType.EXPENSE ->
-                    account.balance + walletImpactAmount
+                    AccountBalanceGuard.clampNonNegative(account.balance + walletImpactAmount)
                 account.type == AccountType.CREDIT_CARD && txType == TransactionType.INCOME ->
-                    (account.balance - walletImpactAmount).coerceAtLeast(0.0)
-                txType == TransactionType.EXPENSE -> account.balance - walletImpactAmount
-                else -> account.balance + walletImpactAmount
+                    AccountBalanceGuard.deductOrZero(account.balance, walletImpactAmount)
+                txType == TransactionType.EXPENSE ->
+                    AccountBalanceGuard.deductOrZero(account.balance, walletImpactAmount)
+                else ->
+                    AccountBalanceGuard.clampNonNegative(AccountBalanceGuard.clampNonNegative(account.balance) + walletImpactAmount)
             }
             accountDao.updateAccount(account.copy(balance = updatedBalance))
 
@@ -320,6 +348,7 @@ class FinanceRepository(val db: AppDatabase) {
                     currencyCode = account.currencyCode
                 )
             )
+            true
         }
     }
 

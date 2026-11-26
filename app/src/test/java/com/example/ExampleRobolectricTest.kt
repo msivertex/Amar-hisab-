@@ -1292,38 +1292,23 @@ class ExampleRobolectricTest {
 
         composeRule.waitForIdle()
 
-        // Scroll to General & Customization section
+        // Open General & Customization dedicated section
         composeRule.onNodeWithTag("settings_list")
             .performScrollToNode(hasTestTag("settings_general_customization_card"))
+        composeRule.onNodeWithTag("settings_general_customization_card").performClick()
+        composeRule.waitForIdle()
 
         // Verify Language list tile with active subtitle "বাংলা"
-        composeRule.onNodeWithTag("settings_language_tile").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_language_tile").assertIsDisplayed()
         composeRule.onNodeWithText("ভাষা").assertIsDisplayed()
         composeRule.onNodeWithText("বাংলা").assertIsDisplayed()
-
-        // Verify the 3 essential financial alert toggles with descriptive subtext
-        composeRule.onNodeWithTag("settings_toggle_budget_alert").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("বাজেট সীমা সতর্কতা").assertIsDisplayed()
-        composeRule.onNodeWithTag("settings_toggle_credit_alert").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("ক্রেডিট কার্ড সতর্কতা").assertIsDisplayed()
-        composeRule.onNodeWithTag("settings_toggle_loan_reminder").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("দেনা-পাওনা পরিশোধের স্মারক").assertIsDisplayed()
-
-        // Toggle each financial alert switch and confirm state updates
-        composeRule.onNodeWithTag("settings_toggle_budget_alert").performClick()
-        composeRule.onNodeWithTag("settings_toggle_credit_alert").performClick()
-        composeRule.onNodeWithTag("settings_toggle_loan_reminder").performClick()
-        composeRule.waitForIdle()
-        assertFalse(currentPrefs.notifBudgetAlerts)
-        assertFalse(currentPrefs.notifCreditAlerts)
-        assertFalse(currentPrefs.notifLoanReminders)
 
         // Confirm stray toggles have been removed from the Settings list
         composeRule.onNodeWithText("উপ-খাত (Subcategories) চালু করুন").assertDoesNotExist()
         composeRule.onNodeWithText("স্বয়ংক্রিয় ক্যালকুলেটর কিপ্যাড").assertDoesNotExist()
 
         // Tap "ভাষা" tile -> navigates to dedicated LanguageSelectionSubPage
-        composeRule.onNodeWithTag("settings_language_tile").performScrollTo().performClick()
+        composeRule.onNodeWithTag("settings_language_tile").performClick()
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("language_selection_screen").assertIsDisplayed()
@@ -1339,14 +1324,31 @@ class ExampleRobolectricTest {
         composeRule.onNodeWithTag("language_check_EN", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithTag("language_check_BN", useUnmergedTree = true).assertDoesNotExist()
 
-        // Navigate back to Settings and confirm Language tile subtitle reflects "English"
+        // Navigate back to General & Customization and confirm Language tile subtitle reflects "English"
         composeRule.onNodeWithTag("language_back_button").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("settings_list")
-            .performScrollToNode(hasTestTag("settings_general_customization_card"))
-        composeRule.onNodeWithTag("settings_language_tile").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_language_tile").assertIsDisplayed()
         composeRule.onNodeWithText("Language").assertIsDisplayed()
         composeRule.onNodeWithText("English").assertIsDisplayed()
+
+        // Return to Main Settings and open Financial Alerts dedicated section
+        composeRule.onNodeWithTag("settings_section_back_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_list")
+            .performScrollToNode(hasTestTag("settings_financial_alerts_tile"))
+        composeRule.onNodeWithTag("settings_financial_alerts_tile").performClick()
+        composeRule.waitForIdle()
+
+        // Verify and toggle the 3 essential financial alert switches inside Financial Alerts
+        composeRule.onNodeWithTag("settings_section_list")
+            .performScrollToNode(hasTestTag("settings_toggle_budget_alert"))
+        composeRule.onNodeWithTag("settings_toggle_budget_alert").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("settings_toggle_credit_alert").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("settings_toggle_loan_reminder").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        assertFalse(currentPrefs.notifBudgetAlerts)
+        assertFalse(currentPrefs.notifCreditAlerts)
+        assertFalse(currentPrefs.notifLoanReminders)
     }
 
     @Test
@@ -1475,8 +1477,12 @@ class ExampleRobolectricTest {
 
         composeRule.waitForIdle()
 
-        // 1. Settings tile renamed to "ক্যাটাগরি" with exact subtitle
+        // 1. Open Wallet, Currency & Data section -> Settings tile renamed to "ক্যাটাগরি" with exact subtitle
         composeRule.onNodeWithTag("settings_list")
+            .performScrollToNode(hasTestTag("settings_wallet_currency_data_tile"))
+        composeRule.onNodeWithTag("settings_wallet_currency_data_tile").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_section_list")
             .performScrollToNode(hasTestTag("settings_categories_tile"))
         composeRule.onNodeWithTag("settings_categories_tile").assertIsDisplayed()
         composeRule.onNodeWithText("ক্যাটাগরি").assertIsDisplayed()
@@ -1528,8 +1534,11 @@ class ExampleRobolectricTest {
         composeRule.onNodeWithTag("category_drag_handle_trf_wallet", useUnmergedTree = true)
             .assertIsDisplayed()
 
-        // Back button returns smoothly to Settings
+        // Back button returns smoothly to Wallet, Currency & Data section and then to Main Settings
         composeRule.onNodeWithTag("categories_back_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_section_page_wallet_data").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_section_back_button").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("settings_list").assertIsDisplayed()
     }
@@ -1584,8 +1593,12 @@ class ExampleRobolectricTest {
 
         composeRule.waitForIdle()
 
-        // 1. Scroll to "সপ্তাহের শুরু" tile and verify current subtitle "শনিবার"
+        // 1. Open Date & Time section, scroll to "সপ্তাহের শুরু" tile and verify current subtitle "শনিবার"
         composeRule.onNodeWithTag("settings_list")
+            .performScrollToNode(hasTestTag("settings_date_time_card"))
+        composeRule.onNodeWithTag("settings_date_time_card").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_section_list")
             .performScrollToNode(hasTestTag("settings_start_of_week_tile"))
         composeRule.onNodeWithTag("settings_start_of_week_tile").assertIsDisplayed()
         composeRule.onNodeWithText("সপ্তাহের শুরু").assertIsDisplayed()
@@ -2267,6 +2280,8 @@ class ExampleRobolectricTest {
 
         composeRule.onNodeWithTag("settings_list")
             .performScrollToNode(hasTestTag("settings_security_card"))
+        composeRule.onNodeWithTag("settings_security_card").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("settings_toggle_biometric").assertIsDisplayed().performClick()
         composeRule.waitForIdle()
 
@@ -2275,7 +2290,7 @@ class ExampleRobolectricTest {
         assertTrue(prefs.isLaunchLockActive)
         composeRule.onNodeWithTag("settings_vault_protected_badge").assertIsDisplayed()
         composeRule.onNodeWithTag("settings_biometric_feedback").assertIsDisplayed()
-        composeRule.onNodeWithTag("settings_list").performTouchInput { swipeUp() }
+        composeRule.onNodeWithTag("settings_section_list").performTouchInput { swipeUp() }
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("lock_vault_now_button").assertIsDisplayed().performClick()
         assertTrue(lockedNowClicked)
@@ -2708,9 +2723,10 @@ class ExampleRobolectricTest {
             }
         }
 
-        // Verify live device clock & timezone card is present while Device Permissions card is completely removed from Settings
+        // Verify live device clock & timezone section is accessible while Device Permissions card is completely removed from Settings
         composeRule.onNodeWithTag("settings_list")
             .performScrollToNode(hasTestTag("settings_date_time_card"))
+        composeRule.onNodeWithTag("settings_date_time_card").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("settings_live_timezone_tile").assertIsDisplayed()
         composeRule.onNodeWithTag("settings_refresh_time_button").performClick()

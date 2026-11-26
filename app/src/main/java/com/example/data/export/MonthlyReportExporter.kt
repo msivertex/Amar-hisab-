@@ -49,7 +49,7 @@ data class CurrencyMonthlyTotals(
     val expense: Double,
     val transferOut: Double
 ) {
-    val netFlow: Double get() = income - expense
+    val netFlow: Double get() = (income - expense).coerceAtLeast(0.0)
 }
 
 data class MonthlyReportPayload(
@@ -253,7 +253,7 @@ object MonthlyReportExporter {
             null
         }
         val savingsRatePercent = if (totalIncome > 0.0) {
-            (((totalIncome - totalExpense) / totalIncome) * 100.0).toInt().coerceIn(-999, 100)
+            (((totalIncome - totalExpense) / totalIncome) * 100.0).toInt().coerceIn(0, 100)
         } else {
             null
         }
@@ -294,7 +294,7 @@ object MonthlyReportExporter {
             language = lang,
             totalIncome = totalIncome,
             totalExpense = totalExpense,
-            netFlow = totalIncome - totalExpense,
+            netFlow = (totalIncome - totalExpense).coerceAtLeast(0.0),
             dailyAverage = dailyAverage,
             peakAmount = peakAmount,
             monthlyBudget = state.prefs.monthlyBudget,
@@ -322,7 +322,7 @@ object MonthlyReportExporter {
         val copy = ReportLocalizedStrings.forLanguage(lang)
         val inc = BdtFormatter.formatCurrency(payload.totalIncome, payload.mainCurrencyCode, lang)
         val exp = BdtFormatter.formatCurrency(payload.totalExpense, payload.mainCurrencyCode, lang)
-        val net = BdtFormatter.formatCurrency(payload.netFlow, payload.mainCurrencyCode, lang, includeSign = true)
+        val net = BdtFormatter.formatBalance(payload.netFlow, payload.mainCurrencyCode, lang)
         val countText = if (lang.isBangla) {
             BdtFormatter.toBanglaDigits(payload.transactions.size.toString())
         } else {

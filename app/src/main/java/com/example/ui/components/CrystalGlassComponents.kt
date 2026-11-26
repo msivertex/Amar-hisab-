@@ -97,17 +97,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Precision
+import coil.size.Scale
 import com.example.R
 import com.example.core.GoogleAccountProfile
 import com.example.core.GoogleAuthManager
+import com.example.core.ProfilePhotoUrlNormalizer
 import com.example.data.local.AccountEntity
 import com.example.data.model.AccountType
 import com.example.data.model.AppCurrency
@@ -440,11 +447,15 @@ fun AccountVisualCard(
                         shape = CircleShape,
                         border = BorderStroke(0.7.dp, Color.White.copy(alpha = 0.28f))
                     ) {
-                        Text(
-                            text = BdtFormatter.formatCurrency(account.balance, account.currencyCode, language),
+                        CurrencyAmountText(
+                            amount = account.balance,
+                            currencyCode = account.currencyCode,
+                            language = language,
                             style = NumericPeekingBadgeStyle,
-                            color = Color.White.copy(alpha = 0.96f),
-                            maxLines = 1,
+                            isBalance = true,
+                            colorOverride = Color.White.copy(alpha = 0.96f),
+                            bdtFontScale = 0.90f,
+                            minFontSize = 10.sp,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     }
@@ -532,14 +543,17 @@ fun AccountVisualCard(
                             ),
                             color = Color.White.copy(alpha = 0.78f)
                         )
-                        Text(
-                            text = BdtFormatter.formatCurrency(account.balance, account.currencyCode, language),
+                        CurrencyAmountText(
+                            amount = account.balance,
+                            currencyCode = account.currencyCode,
+                            language = language,
                             style = NumericCardBalanceStyle.copy(
                                 fontSize = if (compact) 23.5.sp else 26.5.sp
                             ),
-                            color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            isBalance = true,
+                            colorOverride = Color.White,
+                            bdtFontScale = 0.85f,
+                            minFontSize = 14.sp
                         )
                     }
 
@@ -1049,7 +1063,7 @@ object BuiltInPresetAvatars {
             labelEn = "Taka Crest",
             labelBn = "টাকা প্রতীক",
             gradient = listOf(Color(0xFF10B981), Color(0xFF0E7490)),
-            glyphText = "৳"
+            glyphText = "BDT"
         ),
         PresetAvatarOption(
             id = "preset:emerald_saver",
@@ -1099,8 +1113,11 @@ object BuiltInPresetAvatars {
 }
 
 /**
- * Shared profile avatar supporting linked Google photo URL, local photo URI,
- * built-in curated preset emblems, Google initials, or local fallback avatar.
+ * Shared high-DPI circular profile avatar supporting upgraded high-resolution Google `photoURL`,
+ * local photo URI, built-in curated preset emblems, Google initials, or local fallback avatar.
+ *
+ * Uses `ProfilePhotoUrlNormalizer` + explicit high-DPI `ImageRequest` sizing + `FilterQuality.High`
+ * + `ContentScale.Crop` (`object-cover`) so Profile Details and Settings never stretch tiny thumbnails.
  */
 @Composable
 fun UserProfileAvatar(
@@ -1109,10 +1126,15 @@ fun UserProfileAvatar(
     authMode: AuthMode,
     size: Dp,
     contentDescription: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showBorder: Boolean = true
 ) {
-    val presetOption = if (avatarUrl.startsWith("preset:")) {
-        BuiltInPresetAvatars.find(avatarUrl) ?: BuiltInPresetAvatars.all.first()
+    val resolvedAvatarUrl = remember(avatarUrl) {
+        ProfilePhotoUrlNormalizer.toHighResUrl(avatarUrl)
+    }
+
+    val presetOption = if (resolvedAvatarUrl.startsWith("preset:")) {
+        BuiltInPresetAvatars.find(resolvedAvatarUrl) ?: BuiltInPresetAvatars.all.first()
     } else null
 
     val borderColor = if (authMode == AuthMode.GOOGLE) {
@@ -1130,8 +1152,8 @@ fun UserProfileAvatar(
     Box(
         modifier = modifier
             .size(size)
+            .aspectRatio(1f)
             .clip(CircleShape)
-            .border(2.dp, borderColor, CircleShape)
             .background(backgroundBrush),
         contentAlignment = Alignment.Center
     ) {
@@ -1141,7 +1163,7 @@ fun UserProfileAvatar(
                     text = presetOption.glyphText,
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = (size.value * 0.46f).sp
+                        fontSize = (size.value * 0.42f).sp
                     ),
                     color = Color.White
                 )
@@ -1153,7 +1175,28 @@ fun UserProfileAvatar(
                     modifier = Modifier.size(size * 0.48f)
                 )
             }
-        } else if (avatarUrl.isNotBlank()) {
+        } else if (resolvedAvatarUrl.isNotBlank()) {
+            val context = LocalContext.current
+            val density = LocalDensity.current
+            val targetPx = remember(size, density.density) {
+                // Decode at >= 2x physical pixels (minimum 400px) so Coil never serves a tiny
+                // cached thumbnail or low-DPI bitmap when rendering Settings/Profile avatars.
+                (with(density) { size.roundToPx() } * 2).coerceIn(
+                    ProfilePhotoUrlNormalizer.DEFAULT_HIGH_RES_PX,
+                    1024
+                )
+            }
+            val imageRequest = remember(context, resolvedAvatarUrl, targetPx) {
+                ImageRequest.Builder(context)
+                    .data(resolvedAvatarUrl)
+                    .size(targetPx, targetPx)
+                    .scale(Scale.FILL)
+                    .precision(Precision.EXACT)
+                    .allowHardware(true)
+                    .crossfade(false)
+                    .build()
+            }
+
             Icon(
                 imageVector = Icons.Filled.Person,
                 contentDescription = null,
@@ -1161,10 +1204,14 @@ fun UserProfileAvatar(
                 modifier = Modifier.size(size * 0.52f)
             )
             AsyncImage(
-                model = avatarUrl,
+                model = imageRequest,
                 contentDescription = contentDescription,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
+                filterQuality = FilterQuality.High,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .aspectRatio(1f)
+                    .clip(CircleShape)
             )
         } else if (authMode == AuthMode.GOOGLE && userName.isNotBlank()) {
             val initials = userName
@@ -1190,6 +1237,14 @@ fun UserProfileAvatar(
                 modifier = Modifier
                     .size(size * 0.54f)
                     .testTag("default_guest_avatar_icon")
+            )
+        }
+
+        if (showBorder) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .border(2.dp, borderColor, CircleShape)
             )
         }
     }

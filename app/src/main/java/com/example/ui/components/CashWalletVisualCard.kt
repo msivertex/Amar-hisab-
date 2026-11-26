@@ -220,11 +220,15 @@ fun CashWalletVisualCard(
                         shape = CircleShape,
                         border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.34f))
                     ) {
-                        Text(
-                            text = BdtFormatter.formatCurrency(account.balance, account.currencyCode, language),
+                        CurrencyAmountText(
+                            amount = account.balance,
+                            currencyCode = account.currencyCode,
+                            language = language,
                             style = NumericPeekingBadgeStyle,
-                            color = Color.White,
-                            maxLines = 1,
+                            isBalance = true,
+                            colorOverride = Color.White,
+                            bdtFontScale = 0.90f,
+                            minFontSize = 10.sp,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     }
@@ -290,14 +294,18 @@ fun CashWalletVisualCard(
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                     color = Color(0xFFD1FAE5).copy(alpha = 0.86f)
                 )
-                Text(
-                    text = BdtFormatter.formatCurrency(account.balance, account.currencyCode, language),
+                CurrencyAmountText(
+                    amount = account.balance,
+                    currencyCode = account.currencyCode,
+                    language = language,
                     style = NumericCardBalanceStyle.copy(
                         fontSize = if (compact) 23.5.sp else 26.5.sp
                     ),
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    isBalance = true,
+                    colorOverride = Color.White,
+                    bdtFontScale = 0.85f,
+                    minFontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }
@@ -444,12 +452,16 @@ fun CashWalletCompactCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = BdtFormatter.formatCurrency(account.balance, account.currencyCode, language),
+                CurrencyAmountText(
+                    amount = account.balance,
+                    currencyCode = account.currencyCode,
+                    language = language,
                     style = NumericCompactCardBalanceStyle,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    isBalance = true,
+                    colorOverride = Color.White,
+                    bdtFontScale = 0.86f,
+                    minFontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }

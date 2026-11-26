@@ -53,6 +53,7 @@ import com.example.core.CalculatorEngine
 import com.example.data.ai.UnifiedCategoryDetector
 import com.example.data.local.AccountEntity
 import com.example.data.market.MarketSnapshot
+import com.example.data.model.AccountBalanceGuard
 import com.example.data.model.AccountNameResolver
 import com.example.data.model.AppCurrency
 import com.example.data.model.BuiltInCategoriesCatalog
@@ -477,7 +478,7 @@ fun SmartTransactionModal(
                             selected = selectedAccountId == acc.id,
                             onClick = { selectedAccountId = acc.id },
                             label = {
-                                Text("$chipName • ${BdtFormatter.formatCurrency(acc.balance, acc.currencyCode, language)}")
+                                Text("$chipName • ${BdtFormatter.formatBalance(acc.balance, acc.currencyCode, language)}")
                             }
                         )
                     }
@@ -496,7 +497,7 @@ fun SmartTransactionModal(
                             selected = toAccountId == acc.id,
                             onClick = { toAccountId = acc.id },
                             label = {
-                                Text("$chipName • ${BdtFormatter.formatCurrency(acc.balance, acc.currencyCode, language)}")
+                                Text("$chipName • ${BdtFormatter.formatBalance(acc.balance, acc.currencyCode, language)}")
                             }
                         )
                     }
@@ -553,7 +554,7 @@ fun SmartTransactionModal(
                             selected = selectedAccountId == acc.id,
                             onClick = { selectedAccountId = acc.id },
                             label = {
-                                Text("$chipName (${BdtFormatter.formatCurrency(acc.balance, acc.currencyCode, language)})")
+                                Text("$chipName (${BdtFormatter.formatBalance(acc.balance, acc.currencyCode, language)})")
                             }
                         )
                     }
@@ -667,11 +668,34 @@ fun SmartTransactionModal(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            val canSave = evaluatedAmount > 0.0 && selectedAccountId > 0L &&
+            val isOutgoingMode = mode == TransactionType.EXPENSE || mode == TransactionType.TRANSFER
+            val isInsufficientBalance = isOutgoingMode &&
+                AccountBalanceGuard.isInsufficientForDeduction(activeAccount, evaluatedAmount)
+
+            if (isInsufficientBalance && activeAccount != null) {
+                Surface(
+                    color = crystal.liabilityRedBg,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, crystal.liabilityRed.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                        .testTag("tx_insufficient_balance_error")
+                ) {
+                    Text(
+                        text = AccountBalanceGuard.insufficientBalanceMessage(activeAccount, evaluatedAmount, language),
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = crystal.liabilityRed,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                    )
+                }
+            }
+
+            val canSave = evaluatedAmount > 0.0 && selectedAccountId > 0L && !isInsufficientBalance &&
                 (mode != TransactionType.TRANSFER || (toAccountId > 0L && toAccountId != selectedAccountId))
 
             Button(
                 onClick = {
+                    if (isInsufficientBalance) return@Button
                     triggerHaptic()
                     if (mode == TransactionType.TRANSFER) {
                         val parsedCustomRate = customRateText.toDoubleOrNull()?.takeIf { it > 0.0 && it.isFinite() }

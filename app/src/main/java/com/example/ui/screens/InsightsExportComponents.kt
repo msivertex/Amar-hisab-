@@ -622,8 +622,8 @@ fun MonthlyReportExportSheet(
                         )
                         SheetMetricColumn(
                             label = reportCopy.netFlowLabel,
-                            value = BdtFormatter.formatCurrency(payload.netFlow, payload.mainCurrencyCode, lang, includeSign = true),
-                            valueColor = if (payload.netFlow >= 0) crystal.assetGreen else crystal.liabilityRed,
+                            value = BdtFormatter.formatBalance(payload.netFlow, payload.mainCurrencyCode, lang),
+                            valueColor = crystal.assetGreen,
                             modifier = Modifier.weight(1f)
                         )
                     }

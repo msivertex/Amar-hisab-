@@ -267,9 +267,9 @@ class GeminiAiService(
     ): SearchGroundingResult {
         val apiKey = resolveApiKey()
         val langPrompt = if (language == AppLanguage.BN) {
-            "Answer clearly and concisely in Bengali (বাংলা) with practical numbers for Bangladesh (BDT ৳). "
+            "Answer clearly and concisely in Bengali (বাংলা) with practical numbers for Bangladesh (BDT). "
         } else {
-            "Answer clearly and concisely in English with practical figures for Bangladesh (BDT ৳). "
+            "Answer clearly and concisely in English with practical figures for Bangladesh (BDT). "
         }
 
         val body = JSONObject().apply {
