@@ -1,18 +1,10 @@
 package com.example.ui.screens
 
 import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -44,20 +36,14 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.DocumentScanner
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EventNote
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocalFireDepartment
@@ -65,7 +51,6 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
@@ -76,8 +61,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -102,9 +85,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
@@ -112,7 +93,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -142,7 +122,6 @@ import com.example.ui.components.CashWalletCompactCard
 import com.example.ui.components.CategoryIconBadge
 import com.example.ui.components.CrystalCard
 import com.example.ui.components.CurrencyAmountText
-import com.example.ui.components.GoogleGLogo
 import com.example.ui.components.UserProfileAvatar
 import com.example.ui.components.resolveAccountCardGradient
 import com.example.ui.theme.JetBrainsMonoFamily
@@ -160,6 +139,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun HomeDashboardScreen(
     state: MainUiState,
@@ -246,7 +226,7 @@ fun HomeDashboardScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 112.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. Top Header (Clean Profile Avatar -> Settings, Inline Name Edit, Search & Notifications)
+            // 1. Top Header (Clean Profile Avatar -> Profile & Settings, Read-Only Greeting & Name, Search & Notifications)
             item(key = "header") {
                 HomeTopHeader(
                     userName = state.prefs.userName.ifBlank { strings.profileDetails.guestUserFallback },
@@ -267,18 +247,6 @@ fun HomeDashboardScreen(
                     onOpenSettings = {
                         triggerHaptic()
                         onOpenSettings()
-                    },
-                    onUpdateName = { newName ->
-                        triggerHaptic()
-                        onUpdateName(newName)
-                    },
-                    onPickGuestAvatar = { uri ->
-                        triggerHaptic()
-                        onPickGuestAvatar(uri)
-                    },
-                    onClearGuestAvatar = {
-                        triggerHaptic()
-                        onClearGuestAvatar()
                     }
                 )
             }
@@ -1046,126 +1014,98 @@ private fun HomeTopHeader(
     strings: AppStrings,
     onOpenSearch: () -> Unit,
     onOpenNotifications: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onUpdateName: (String) -> Unit,
-    onPickGuestAvatar: (Uri) -> Unit,
-    onClearGuestAvatar: () -> Unit
+    onOpenSettings: () -> Unit
 ) {
     val crystal = LocalCrystalColors.current
-    val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
 
-    var isEditingName by remember { mutableStateOf(false) }
-    var draftName by remember(userName) { mutableStateOf(userName) }
-    var showNameError by remember { mutableStateOf(false) }
-
-    val guestPhotoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            onPickGuestAvatar(uri)
-        }
-    }
-
-    fun commitInlineName() {
-        val trimmed = draftName.trim()
-        if (trimmed.isEmpty()) {
-            showNameError = true
-            return
-        }
-        onUpdateName(trimmed)
-        showNameError = false
-        isEditingName = false
-        focusManager.clearFocus()
-        keyboardController?.hide()
-    }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Left: Clean Profile Avatar (opens Settings / Profile) + Display-Only Greeting & Name
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .weight(1f)
+                .padding(end = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Left: Clean Profile Avatar (opens Settings) + Inline-Editable Name Area
-            Row(
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onOpenSettings)
+                    .testTag("profile_settings_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                UserProfileAvatar(
+                    userName = userName,
+                    avatarUrl = avatarUrl,
+                    authMode = authMode,
+                    size = 46.dp,
+                    contentDescription = stringsAvatarDesc(language)
+                )
+            }
+
+            Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(end = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .clickable(onClick = onOpenSettings)
-                        .testTag("profile_settings_button"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    UserProfileAvatar(
-                        userName = userName,
-                        avatarUrl = avatarUrl,
-                        authMode = authMode,
-                        size = 46.dp,
-                        contentDescription = stringsAvatarDesc(language)
-                    )
-                }
+                Text(
+                    text = greeting,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = crystal.mutedText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = userName,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("home_header_user_name")
+                )
+            }
+        }
 
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .minimumInteractiveComponentSize()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable {
-                            draftName = userName
-                            showNameError = false
-                            isEditingName = !isEditingName
-                        }
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                        .testTag("profile_name_edit_trigger")
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            IconButton(
+                onClick = onOpenSearch,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("global_search_button")
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = crystal.glassSurfaceElevated,
+                    border = BorderStroke(1.dp, crystal.glassBorder),
+                    modifier = Modifier.size(40.dp)
                 ) {
-                    Text(
-                        text = greeting,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = crystal.mutedText,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Text(
-                            text = userName,
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onBackground,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
+                    Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Filled.Edit,
-                            contentDescription = strings.editNameDesc,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .size(14.dp)
-                                .testTag("profile_name_edit_icon")
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = strings.globalSearchTitle,
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
+            Box {
                 IconButton(
-                    onClick = onOpenSearch,
+                    onClick = onOpenNotifications,
                     modifier = Modifier
                         .size(48.dp)
-                        .testTag("global_search_button")
+                        .testTag("notifications_button")
                 ) {
                     Surface(
                         shape = CircleShape,
@@ -1175,234 +1115,24 @@ private fun HomeTopHeader(
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                imageVector = Icons.Filled.Search,
-                                contentDescription = strings.globalSearchTitle,
+                                imageVector = Icons.Filled.Notifications,
+                                contentDescription = strings.notificationsTitle,
                                 tint = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
                     }
                 }
-
-                Box {
-                    IconButton(
-                        onClick = onOpenNotifications,
+                if (hasUnreadAlert) {
+                    Box(
                         modifier = Modifier
-                            .size(48.dp)
-                            .testTag("notifications_button")
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = crystal.glassSurfaceElevated,
-                            border = BorderStroke(1.dp, crystal.glassBorder),
-                            modifier = Modifier.size(40.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Filled.Notifications,
-                                    contentDescription = strings.notificationsTitle,
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
-                    if (hasUnreadAlert) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(top = 9.dp, end = 9.dp)
-                                .size(9.dp)
-                                .clip(CircleShape)
-                                .background(crystal.liabilityRed)
-                                .border(1.5.dp, MaterialTheme.colorScheme.background, CircleShape)
-                        )
-                    }
-                }
-            }
-        }
-
-        // Smooth expandable inline name & dynamic profile photo editor
-        AnimatedVisibility(
-            visible = isEditingName,
-            enter = fadeIn() + expandVertically(
-                animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy)
-            ),
-            exit = fadeOut() + shrinkVertically()
-        ) {
-            CrystalCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-                    .testTag("inline_profile_editor_card"),
-                elevated = true
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = draftName,
-                        onValueChange = {
-                            if (it.length <= 40) {
-                                draftName = it
-                                showNameError = false
-                            }
-                        },
-                        label = { Text(strings.yourNameLabel) },
-                        isError = showNameError,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { commitInlineName() }),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = if (crystal.isDark) Color.White.copy(alpha = 0.24f) else crystal.glassBorder,
-                            focusedLabelColor = MaterialTheme.colorScheme.primary,
-                            unfocusedLabelColor = crystal.mutedText,
-                            cursorColor = MaterialTheme.colorScheme.primary,
-                            focusedContainerColor = crystal.glassSurfaceElevated,
-                            unfocusedContainerColor = crystal.glassSurfaceElevated
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("inline_name_input")
+                            .align(Alignment.TopEnd)
+                            .padding(top = 9.dp, end = 9.dp)
+                            .size(9.dp)
+                            .clip(CircleShape)
+                            .background(crystal.liabilityRed)
+                            .border(1.5.dp, MaterialTheme.colorScheme.background, CircleShape)
                     )
-
-                    Surface(
-                        onClick = { commitInlineName() },
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag("inline_name_save_button")
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Filled.Check,
-                                contentDescription = strings.saveNameDesc,
-                                tint = Color.White
-                            )
-                        }
-                    }
-
-                    IconButton(
-                        onClick = {
-                            draftName = userName
-                            showNameError = false
-                            isEditingName = false
-                            focusManager.clearFocus()
-                            keyboardController?.hide()
-                        },
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag("inline_name_cancel_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = strings.cancelNameDesc,
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-
-                if (showNameError) {
-                    Text(
-                        text = strings.nameEmptyError,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = crystal.liabilityRed,
-                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                if (authMode == AuthMode.GUEST) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                guestPhotoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            },
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(
-                                width = 1.dp,
-                                color = if (crystal.isDark) {
-                                    Color.White.copy(alpha = 0.24f)
-                                } else {
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
-                                }
-                            ),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                containerColor = crystal.glassSurfaceElevated,
-                                contentColor = MaterialTheme.colorScheme.onSurface
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp)
-                                .testTag("home_guest_upload_avatar_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.AddPhotoAlternate,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (avatarUrl.isNotBlank()) {
-                                    strings.changeProfilePhoto
-                                } else {
-                                    strings.uploadProfilePhoto
-                                },
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        if (avatarUrl.isNotBlank()) {
-                            TextButton(
-                                onClick = onClearGuestAvatar,
-                                modifier = Modifier
-                                    .height(48.dp)
-                                    .testTag("home_guest_reset_avatar_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Refresh,
-                                    contentDescription = null,
-                                    tint = crystal.mutedText,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = strings.resetProfilePhoto,
-                                    color = crystal.mutedText
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        GoogleGLogo(size = 15.dp)
-                        Text(
-                            text = strings.googleAvatarSyncedNote,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = crystal.mutedText,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
                 }
             }
         }

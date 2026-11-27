@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PieChart
-import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -97,7 +96,7 @@ private enum class ReminderTimePickerTarget {
 fun NotificationSettingsSection(
     prefs: UserPrefs,
     strings: AppStrings,
-    deviceTimeContext: DeviceTimeContext,
+    @Suppress("UNUSED_PARAMETER") deviceTimeContext: DeviceTimeContext,
     onSetNotifications: (budget: Boolean, credit: Boolean, loan: Boolean) -> Unit,
     onSetDailyReminder: (enabled: Boolean, hour: Int, minute: Int) -> Unit,
     onSetLoanDayBefore: (enabled: Boolean) -> Unit,
@@ -218,12 +217,6 @@ fun NotificationSettingsSection(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-
-                    // Active Local Device Timezone Indicator
-                    LocalTimezoneInfoBadge(
-                        isBn = isBn,
-                        timezoneSummary = deviceTimeContext.displayTimeZoneSummary
-                    )
 
                     // System Notification Permission / Exact Timing Prompts (only shown when OS access is missing)
                     NotificationPermissionBanners(
@@ -453,9 +446,9 @@ fun NotificationSettingsSection(
                             NestedReminderTimeRow(
                                 title = if (isBn) "দৈনিক রিমাইন্ডারের সময়" else "Daily Reminder Time",
                                 subtitle = if (isBn) {
-                                    "ডিফল্ট: রাত ৯:০০টা • ${deviceTimeContext.displayTimeZoneSummary}"
+                                    "ডিফল্ট: রাত ৯:০০টা"
                                 } else {
-                                    "Default: 9:00 PM • ${deviceTimeContext.displayTimeZoneSummary}"
+                                    "Default: 9:00 PM"
                                 },
                                 formattedTime = formattedDailyTime,
                                 accentColor = MaterialTheme.colorScheme.primary,
@@ -467,11 +460,6 @@ fun NotificationSettingsSection(
                             )
                         }
                     }
-
-                    LocalTimezoneInfoBadge(
-                        isBn = isBn,
-                        timezoneSummary = deviceTimeContext.displayTimeZoneSummary
-                    )
                 }
             }
 
@@ -649,11 +637,6 @@ fun NotificationSettingsSection(
                             )
                         }
                     }
-
-                    LocalTimezoneInfoBadge(
-                        isBn = isBn,
-                        timezoneSummary = deviceTimeContext.displayTimeZoneSummary
-                    )
                 }
             }
         }
@@ -682,18 +665,8 @@ fun NotificationSettingsSection(
             text = {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text(
-                        text = if (isBn) {
-                            "স্থানীয় টাইমজোন: ${deviceTimeContext.displayTimeZoneSummary}"
-                        } else {
-                            "Local timezone: ${deviceTimeContext.displayTimeZoneSummary}"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = crystal.mutedText
-                    )
                     TimePicker(state = timePickerState)
                 }
             },
@@ -769,49 +742,6 @@ private fun StandaloneDetailHeader(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-    }
-}
-
-@Composable
-private fun LocalTimezoneInfoBadge(
-    isBn: Boolean,
-    timezoneSummary: String
-) {
-    val crystal = LocalCrystalColors.current
-    Surface(
-        color = crystal.glassSurfaceElevated,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, crystal.glassBorder),
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("settings_notif_timezone_badge")
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Public,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp)
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (isBn) "ডিভাইসের স্থানীয় সময় ও টাইমজোন অনুযায়ী সক্রিয়" else "Synced to Local Device Time & Timezone",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = timezoneSummary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = crystal.mutedText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
     }
 }
 

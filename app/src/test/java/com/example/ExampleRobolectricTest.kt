@@ -236,7 +236,7 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `home profile section supports clean avatar settings tap, inline name editing, and dynamic photo controls`() {
+    fun `home profile header opens settings via avatar and omits inline name edit pencil and editor`() {
         var openedSettings = false
         var savedName = ""
         val guestPrefs = UserPrefs(
@@ -278,23 +278,22 @@ class ExampleRobolectricTest {
         composeRule.onNodeWithTag("toggle_language_button").assertDoesNotExist()
         composeRule.onNodeWithTag("toggle_theme_button").assertDoesNotExist()
 
-        // Tapping clean avatar opens Settings
+        // Display name is shown read-only without pencil icon or inline name editor
+        composeRule.onNodeWithTag("home_header_user_name").assertIsDisplayed()
+        composeRule.onNodeWithText("Tahmid Hasan").assertIsDisplayed()
+        composeRule.onNodeWithTag("profile_name_edit_icon").assertDoesNotExist()
+        composeRule.onNodeWithTag("profile_name_edit_trigger").assertDoesNotExist()
+        composeRule.onNodeWithTag("inline_profile_editor_card").assertDoesNotExist()
+        composeRule.onNodeWithTag("inline_name_input").assertDoesNotExist()
+        assertEquals("", savedName)
+
+        // Tapping clean avatar still opens Profile & Settings naturally
         composeRule.onNodeWithTag("profile_settings_button").assertIsDisplayed().performClick()
         assertTrue(openedSettings)
-
-        // Tapping name / edit icon expands inline frosted editor with Guest photo upload
-        composeRule.onNodeWithTag("profile_name_edit_trigger").assertIsDisplayed().performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("inline_profile_editor_card").assertIsDisplayed()
-        composeRule.onNodeWithTag("home_guest_upload_avatar_button").assertIsDisplayed()
-        composeRule.onNodeWithTag("inline_name_input").performTextReplacement("Nusrat Jahan")
-        composeRule.onNodeWithTag("inline_name_save_button").performClick()
-
-        assertEquals("Nusrat Jahan", savedName)
     }
 
     @Test
-    fun `home profile inline editor shows google synced avatar note for Google users`() {
+    fun `home profile header renders Google user name cleanly without inline editor`() {
         val googlePrefs = UserPrefs(
             userName = "Nusrat Jahan",
             userEmail = "nusrat@gmail.com",
@@ -322,10 +321,11 @@ class ExampleRobolectricTest {
         }
 
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("profile_name_edit_trigger").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("Google account photo synced automatically").assertIsDisplayed()
-        composeRule.onNodeWithTag("home_guest_upload_avatar_button").assertDoesNotExist()
+        composeRule.onNodeWithTag("home_header_user_name").assertIsDisplayed()
+        composeRule.onNodeWithText("Nusrat Jahan").assertIsDisplayed()
+        composeRule.onNodeWithTag("profile_name_edit_icon").assertDoesNotExist()
+        composeRule.onNodeWithTag("profile_name_edit_trigger").assertDoesNotExist()
+        composeRule.onNodeWithTag("inline_profile_editor_card").assertDoesNotExist()
     }
 
     @Test
@@ -412,12 +412,13 @@ class ExampleRobolectricTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("detailed_profile_screen").assertIsDisplayed()
 
-        // Prominent avatar + User Information ("ব্যবহারকারীর তথ্য") + Adaptive Google Account card + Region/Currencies
+        // Prominent avatar + compact pencil icon right next to hero name (no separate "ব্যবহারকারীর তথ্য" card)
         composeRule.onNodeWithTag("detailed_profile_avatar_edit_button").assertIsDisplayed()
-        composeRule.onNodeWithTag("detailed_profile_list")
-            .performScrollToNode(hasTestTag("detailed_profile_user_info_card"))
-        composeRule.onNodeWithText("ব্যবহারকারীর তথ্য").assertIsDisplayed()
-        composeRule.onNodeWithText("সম্পাদনা").assertIsDisplayed()
+        composeRule.onNodeWithTag("detailed_profile_hero_name").assertIsDisplayed()
+        composeRule.onNodeWithTag("detailed_profile_edit_name_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("detailed_profile_hero_name_edit_icon", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("detailed_profile_user_info_card").assertDoesNotExist()
+        composeRule.onNodeWithText("ব্যবহারকারীর তথ্য").assertDoesNotExist()
 
         composeRule.onNodeWithTag("detailed_profile_list")
             .performScrollToNode(hasTestTag("detailed_profile_google_card"))
@@ -453,18 +454,30 @@ class ExampleRobolectricTest {
         composeRule.onNodeWithText("বন্ধ করুন").performClick()
         composeRule.waitForIdle()
 
-        // Inline name editing via "সম্পাদনা"
+        // Name editing via small pencil icon next to hero display name below avatar
         composeRule.onNodeWithTag("detailed_profile_list")
-            .performScrollToNode(hasTestTag("detailed_profile_user_info_card"))
+            .performScrollToNode(hasTestTag("detailed_profile_hero_card"))
+        composeRule.onNodeWithTag("detailed_profile_edit_name_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("detailed_profile_edit_name_dialog").assertIsDisplayed()
+        // Empty submission shows validation error and does not save
+        composeRule.onNodeWithTag("detailed_profile_name_save_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("detailed_profile_name_error").assertIsDisplayed()
+        assertEquals("", savedName)
+        // Cancel closes dialog cleanly
+        composeRule.onNodeWithTag("detailed_profile_name_cancel_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("detailed_profile_edit_name_dialog").assertDoesNotExist()
+        // Re-open, enter name, and save
         composeRule.onNodeWithTag("detailed_profile_edit_name_button").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("detailed_profile_name_input").performTextReplacement("Farhana Rahman")
         composeRule.onNodeWithTag("detailed_profile_name_save_button").performClick()
+        composeRule.waitForIdle()
         assertEquals("Farhana Rahman", savedName)
 
         // Avatar edit opens 3-option bottom sheet with gallery, camera, and preset avatars
-        composeRule.onNodeWithTag("detailed_profile_list")
-            .performScrollToNode(hasTestTag("detailed_profile_hero_card"))
         composeRule.onNodeWithTag("detailed_profile_avatar_edit_button").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("avatar_selector_sheet").assertIsDisplayed()

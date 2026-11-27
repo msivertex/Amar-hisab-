@@ -299,7 +299,8 @@ data class InternationalBank(
     val bn: String,
     val shortCode: String,
     val brandColor: Color,
-    val defaultCurrency: AppCurrency = country.suggestedCurrency
+    val defaultCurrency: AppCurrency = country.suggestedCurrency,
+    val category: BankCategory = BankCategory.PRIVATE
 ) {
     fun label(lang: AppLanguage): String = if (lang.isBangla) bn else en
 }
@@ -331,61 +332,75 @@ object InternationalBankCatalog {
     )
 
     val all: List<InternationalBank> = listOf(
-        // Bangladesh (BDT) - All 22 Government & Private Banks preserved intact
-        InternationalBank("bd_city", AppCountry.BD, "City Bank", "সিটি ব্যাংক", "CITY", BrandCityBank),
-        InternationalBank("bd_dbbl", AppCountry.BD, "Dutch-Bangla Bank", "ডাচ-বাংলা ব্যাংক", "DBBL", BrandDbbl),
-        InternationalBank("bd_brac", AppCountry.BD, "BRAC Bank", "ব্র্যাক ব্যাংক", "BRAC", BrandBracBank),
-        InternationalBank("bd_islami", AppCountry.BD, "Islami Bank", "ইসলামী ব্যাংক", "IBBL", BrandIslamiBank),
-        InternationalBank("bd_trust", AppCountry.BD, "Trust Bank", "ট্রাস্ট ব্যাংক", "TRUST", BrandTrustBank),
-        InternationalBank("bd_sonali", AppCountry.BD, "Sonali Bank", "সোনালী ব্যাংক", "SONALI", BrandSonaliBank),
-        InternationalBank("bd_janata", AppCountry.BD, "Janata Bank", "জনতা ব্যাংক", "JANATA", BangladeshiBank.JANATA_BANK.brandColor),
-        InternationalBank("bd_agrani", AppCountry.BD, "Agrani Bank", "অগ্রণী ব্যাংক", "AGRANI", BangladeshiBank.AGRANI_BANK.brandColor),
-        InternationalBank("bd_rupali", AppCountry.BD, "Rupali Bank", "রূপালী ব্যাংক", "RUPALI", BangladeshiBank.RUPALI_BANK.brandColor),
-        InternationalBank("bd_bkb", AppCountry.BD, "Bangladesh Krishi Bank", "বাংলাদেশ কৃষি ব্যাংক", "BKB", BangladeshiBank.BKB.brandColor),
-        InternationalBank("bd_ebl", AppCountry.BD, "Eastern Bank", "ইস্টার্ন ব্যাংক", "EBL", BangladeshiBank.EBL.brandColor),
-        InternationalBank("bd_prime", AppCountry.BD, "Prime Bank", "প্রাইম ব্যাংক", "PRIME", BangladeshiBank.PRIME_BANK.brandColor),
-        InternationalBank("bd_mtb", AppCountry.BD, "Mutual Trust Bank", "মিউচুয়াল ট্রাস্ট ব্যাংক", "MTB", BangladeshiBank.MTB.brandColor),
-        InternationalBank("bd_dhaka", AppCountry.BD, "Dhaka Bank", "ঢাকা ব্যাংক", "DHAKA", BangladeshiBank.DHAKA_BANK.brandColor),
-        InternationalBank("bd_pubali", AppCountry.BD, "Pubali Bank", "পূবালী ব্যাংক", "PUBALI", BangladeshiBank.PUBALI_BANK.brandColor),
-        InternationalBank("bd_bankasia", AppCountry.BD, "Bank Asia", "ব্যাংক এশিয়া", "BANKASIA", BangladeshiBank.BANK_ASIA.brandColor),
-        InternationalBank("bd_sebl", AppCountry.BD, "Southeast Bank", "সাউথইস্ট ব্যাংক", "SEBL", BangladeshiBank.SEBL.brandColor),
-        InternationalBank("bd_one", AppCountry.BD, "One Bank", "ওয়ান ব্যাংক", "ONE", BangladeshiBank.ONE_BANK.brandColor),
-        InternationalBank("bd_uttara", AppCountry.BD, "Uttara Bank", "উত্তরা ব্যাংক", "UTTARA", BangladeshiBank.UTTARA_BANK.brandColor),
-        InternationalBank("bd_jamuna", AppCountry.BD, "Jamuna Bank", "যমুনা ব্যাংক", "JAMUNA", BangladeshiBank.JAMUNA_BANK.brandColor),
-        InternationalBank("bd_ucb", AppCountry.BD, "United Commercial Bank", "ইউনাইটেড কমার্শিয়াল ব্যাংক", "UCB", BangladeshiBank.UCB.brandColor),
-        InternationalBank("bd_mbl", AppCountry.BD, "Mercantile Bank", "মার্কেন্টাইল ব্যাংক", "MBL", BangladeshiBank.MBL.brandColor),
+        // Bangladesh (BDT) - All 22 Government (5) & Private (17) Banks preserved intact
+        InternationalBank("bd_city", AppCountry.BD, "City Bank", "সিটি ব্যাংক", "CITY", BrandCityBank, category = BankCategory.PRIVATE),
+        InternationalBank("bd_dbbl", AppCountry.BD, "Dutch-Bangla Bank", "ডাচ-বাংলা ব্যাংক", "DBBL", BrandDbbl, category = BankCategory.PRIVATE),
+        InternationalBank("bd_brac", AppCountry.BD, "BRAC Bank", "ব্র্যাক ব্যাংক", "BRAC", BrandBracBank, category = BankCategory.PRIVATE),
+        InternationalBank("bd_islami", AppCountry.BD, "Islami Bank", "ইসলামী ব্যাংক", "IBBL", BrandIslamiBank, category = BankCategory.PRIVATE),
+        InternationalBank("bd_trust", AppCountry.BD, "Trust Bank", "ট্রাস্ট ব্যাংক", "TRUST", BrandTrustBank, category = BankCategory.PRIVATE),
+        InternationalBank("bd_sonali", AppCountry.BD, "Sonali Bank", "সোনালী ব্যাংক", "SONALI", BrandSonaliBank, category = BankCategory.GOVERNMENT),
+        InternationalBank("bd_janata", AppCountry.BD, "Janata Bank", "জনতা ব্যাংক", "JANATA", BangladeshiBank.JANATA_BANK.brandColor, category = BankCategory.GOVERNMENT),
+        InternationalBank("bd_agrani", AppCountry.BD, "Agrani Bank", "অগ্রণী ব্যাংক", "AGRANI", BangladeshiBank.AGRANI_BANK.brandColor, category = BankCategory.GOVERNMENT),
+        InternationalBank("bd_rupali", AppCountry.BD, "Rupali Bank", "রূপালী ব্যাংক", "RUPALI", BangladeshiBank.RUPALI_BANK.brandColor, category = BankCategory.GOVERNMENT),
+        InternationalBank("bd_bkb", AppCountry.BD, "Bangladesh Krishi Bank", "বাংলাদেশ কৃষি ব্যাংক", "BKB", BangladeshiBank.BKB.brandColor, category = BankCategory.GOVERNMENT),
+        InternationalBank("bd_ebl", AppCountry.BD, "Eastern Bank", "ইস্টার্ন ব্যাংক", "EBL", BangladeshiBank.EBL.brandColor, category = BankCategory.PRIVATE),
+        InternationalBank("bd_prime", AppCountry.BD, "Prime Bank", "প্রাইম ব্যাংক", "PRIME", BangladeshiBank.PRIME_BANK.brandColor, category = BankCategory.PRIVATE),
+        InternationalBank("bd_mtb", AppCountry.BD, "Mutual Trust Bank", "মিউচুয়াল ট্রাস্ট ব্যাংক", "MTB", BangladeshiBank.MTB.brandColor, category = BankCategory.PRIVATE),
+        InternationalBank("bd_dhaka", AppCountry.BD, "Dhaka Bank", "ঢাকা ব্যাংক", "DHAKA", BangladeshiBank.DHAKA_BANK.brandColor, category = BankCategory.PRIVATE),
+        InternationalBank("bd_pubali", AppCountry.BD, "Pubali Bank", "পূবালী ব্যাংক", "PUBALI", BangladeshiBank.PUBALI_BANK.brandColor, category = BankCategory.PRIVATE),
+        InternationalBank("bd_bankasia", AppCountry.BD, "Bank Asia", "ব্যাংক এশিয়া", "BANKASIA", BangladeshiBank.BANK_ASIA.brandColor, category = BankCategory.PRIVATE),
+        InternationalBank("bd_sebl", AppCountry.BD, "Southeast Bank", "সাউথইস্ট ব্যাংক", "SEBL", BangladeshiBank.SEBL.brandColor, category = BankCategory.PRIVATE),
+        InternationalBank("bd_one", AppCountry.BD, "One Bank", "ওয়ান ব্যাংক", "ONE", BangladeshiBank.ONE_BANK.brandColor, category = BankCategory.PRIVATE),
+        InternationalBank("bd_uttara", AppCountry.BD, "Uttara Bank", "উত্তরা ব্যাংক", "UTTARA", BangladeshiBank.UTTARA_BANK.brandColor, category = BankCategory.PRIVATE),
+        InternationalBank("bd_jamuna", AppCountry.BD, "Jamuna Bank", "যমুনা ব্যাংক", "JAMUNA", BangladeshiBank.JAMUNA_BANK.brandColor, category = BankCategory.PRIVATE),
+        InternationalBank("bd_ucb", AppCountry.BD, "United Commercial Bank", "ইউনাইটেড কমার্শিয়াল ব্যাংক", "UCB", BangladeshiBank.UCB.brandColor, category = BankCategory.PRIVATE),
+        InternationalBank("bd_mbl", AppCountry.BD, "Mercantile Bank", "মার্কেন্টাইল ব্যাংক", "MBL", BangladeshiBank.MBL.brandColor, category = BankCategory.PRIVATE),
 
         // South Asia & Neighboring Countries
-        InternationalBank("in_sbi", AppCountry.IN, "State Bank of India (SBI)", "স্টেট ব্যাংক অফ ইন্ডিয়া (SBI)", "SBI", Color(0xFF0284C7)),
-        InternationalBank("in_hdfc", AppCountry.IN, "HDFC Bank", "এইচডিএফসি ব্যাংক", "HDFC", Color(0xFF1E3A8A)),
-        InternationalBank("in_icici", AppCountry.IN, "ICICI Bank", "আইসিআইসিআই ব্যাংক", "ICICI", Color(0xFFEA580C)),
-        InternationalBank("in_axis", AppCountry.IN, "Axis Bank", "অ্যাক্সিস ব্যাংক", "AXIS", Color(0xFF9D174D)),
+        InternationalBank("in_sbi", AppCountry.IN, "State Bank of India (SBI)", "স্টেট ব্যাংক অফ ইন্ডিয়া (SBI)", "SBI", Color(0xFF0284C7), category = BankCategory.GOVERNMENT),
+        InternationalBank("in_pnb", AppCountry.IN, "Punjab National Bank (PNB)", "পাঞ্জাব ন্যাশনাল ব্যাংক (PNB)", "PNB", Color(0xFF9F1239), category = BankCategory.GOVERNMENT),
+        InternationalBank("in_bob", AppCountry.IN, "Bank of Baroda (BoB)", "ব্যাংক অফ বরোদা (BoB)", "BOB", Color(0xFFEA580C), category = BankCategory.GOVERNMENT),
+        InternationalBank("in_hdfc", AppCountry.IN, "HDFC Bank", "এইচডিএফসি ব্যাংক", "HDFC", Color(0xFF1E3A8A), category = BankCategory.PRIVATE),
+        InternationalBank("in_icici", AppCountry.IN, "ICICI Bank", "আইসিআইসিআই ব্যাংক", "ICICI", Color(0xFFEA580C), category = BankCategory.PRIVATE),
+        InternationalBank("in_axis", AppCountry.IN, "Axis Bank", "অ্যাক্সিস ব্যাংক", "AXIS", Color(0xFF9D174D), category = BankCategory.PRIVATE),
+        InternationalBank("in_kotak", AppCountry.IN, "Kotak Mahindra Bank", "কোটাক মাহিন্দ্রা ব্যাংক", "KOTAK", Color(0xFFDC2626), category = BankCategory.PRIVATE),
+        InternationalBank("in_indusind", AppCountry.IN, "IndusInd Bank", "ইন্ডাসইন্ড ব্যাংক", "INDUS", Color(0xFF7F1D1D), category = BankCategory.PRIVATE),
 
-        InternationalBank("np_nabil", AppCountry.NP, "Nabil Bank", "নাবিল ব্যাংক", "NABIL", Color(0xFF15803D)),
-        InternationalBank("np_nimb", AppCountry.NP, "Nepal Investment Mega Bank", "নেপাল ইনভেস্টমেন্ট মেগা ব্যাংক", "NIMB", Color(0xFF1D4ED8)),
-        InternationalBank("np_globalime", AppCountry.NP, "Global IME Bank", "গ্লোবাল আইএমই ব্যাংক", "GIME", Color(0xFFB91C1C)),
+        InternationalBank("pk_nbp", AppCountry.fromCode("PK"), "National Bank of Pakistan (NBP)", "ন্যাশনাল ব্যাংক অফ পাকিস্তান (NBP)", "NBP", Color(0xFF15803D), category = BankCategory.GOVERNMENT),
+        InternationalBank("pk_hbl", AppCountry.fromCode("PK"), "Habib Bank (HBL)", "হাবিব ব্যাংক (HBL)", "HBL", Color(0xFF047857), category = BankCategory.PRIVATE),
+        InternationalBank("pk_ubl", AppCountry.fromCode("PK"), "United Bank (UBL)", "ইউনাইটেড ব্যাংক (UBL)", "UBL", Color(0xFF0284C7), category = BankCategory.PRIVATE),
+        InternationalBank("pk_mcb", AppCountry.fromCode("PK"), "MCB Bank", "এমসিবি ব্যাংক", "MCB", Color(0xFF1E3A8A), category = BankCategory.PRIVATE),
+        InternationalBank("pk_meezan", AppCountry.fromCode("PK"), "Meezan Bank", "মিজান ব্যাংক", "MEEZAN", Color(0xFF5B21B6), category = BankCategory.PRIVATE),
 
-        InternationalBank("lk_boc", AppCountry.LK, "Bank of Ceylon (BOC)", "ব্যাংক অফ সিলন (BOC)", "BOC", Color(0xFFCA8A04)),
-        InternationalBank("lk_combank", AppCountry.LK, "Commercial Bank of Ceylon", "কমার্শিয়াল ব্যাংক অফ সিলন", "COM", Color(0xFF0369A1)),
-        InternationalBank("lk_sampath", AppCountry.LK, "Sampath Bank", "সম্পথ ব্যাংক", "SAMP", Color(0xFFEA580C)),
+        InternationalBank("np_rbb", AppCountry.NP, "Rastriya Banijya Bank", "রাষ্ট্রীয় বাণিজ্য ব্যাংক", "RBB", Color(0xFF0369A1), category = BankCategory.GOVERNMENT),
+        InternationalBank("np_nabil", AppCountry.NP, "Nabil Bank", "নাবিল ব্যাংক", "NABIL", Color(0xFF15803D), category = BankCategory.PRIVATE),
+        InternationalBank("np_nimb", AppCountry.NP, "Nepal Investment Mega Bank", "নেপাল ইনভেস্টমেন্ট মেগা ব্যাংক", "NIMB", Color(0xFF1D4ED8), category = BankCategory.PRIVATE),
+        InternationalBank("np_globalime", AppCountry.NP, "Global IME Bank", "গ্লোবাল আইএমই ব্যাংক", "GIME", Color(0xFFB91C1C), category = BankCategory.PRIVATE),
 
-        InternationalBank("bt_bob", AppCountry.BT, "Bank of Bhutan (BoB)", "ব্যাংক অফ ভুটান (BoB)", "BOB", Color(0xFF0284C7)),
-        InternationalBank("bt_bnb", AppCountry.BT, "Bhutan National Bank (BNB)", "ভুটান ন্যাশনাল ব্যাংক (BNB)", "BNB", Color(0xFF1E40AF)),
+        InternationalBank("lk_boc", AppCountry.LK, "Bank of Ceylon (BOC)", "ব্যাংক অফ সিলন (BOC)", "BOC", Color(0xFFCA8A04), category = BankCategory.GOVERNMENT),
+        InternationalBank("lk_peoples", AppCountry.LK, "People's Bank", "পিপলস ব্যাংক", "PBL", Color(0xFFB91C1C), category = BankCategory.GOVERNMENT),
+        InternationalBank("lk_combank", AppCountry.LK, "Commercial Bank of Ceylon", "কমার্শিয়াল ব্যাংক অফ সিলন", "COM", Color(0xFF0369A1), category = BankCategory.PRIVATE),
+        InternationalBank("lk_sampath", AppCountry.LK, "Sampath Bank", "সম্পথ ব্যাংক", "SAMP", Color(0xFFEA580C), category = BankCategory.PRIVATE),
 
-        InternationalBank("mm_kbz", AppCountry.MM, "KBZ Bank", "কেবিজেড ব্যাংক", "KBZ", Color(0xFF1D4ED8)),
-        InternationalBank("mm_cb", AppCountry.MM, "CB Bank", "সিবি ব্যাংক", "CB", Color(0xFF0F766E)),
-        InternationalBank("mm_aya", AppCountry.MM, "AYA Bank", "আয়া ব্যাংক", "AYA", Color(0xFFB91C1C)),
+        InternationalBank("bt_bob", AppCountry.BT, "Bank of Bhutan (BoB)", "ব্যাংক অফ ভুটান (BoB)", "BOB", Color(0xFF0284C7), category = BankCategory.GOVERNMENT),
+        InternationalBank("bt_bnb", AppCountry.BT, "Bhutan National Bank (BNB)", "ভুটান ন্যাশনাল ব্যাংক (BNB)", "BNB", Color(0xFF1E40AF), category = BankCategory.PRIVATE),
 
-        InternationalBank("mv_bml", AppCountry.MV, "Bank of Maldives (BML)", "ব্যাংক অফ মালদ্বীপ (BML)", "BML", Color(0xFFDC2626)),
+        InternationalBank("mm_kbz", AppCountry.MM, "KBZ Bank", "কেবিজেড ব্যাংক", "KBZ", Color(0xFF1D4ED8), category = BankCategory.PRIVATE),
+        InternationalBank("mm_cb", AppCountry.MM, "CB Bank", "সিবি ব্যাংক", "CB", Color(0xFF0F766E), category = BankCategory.PRIVATE),
+        InternationalBank("mm_aya", AppCountry.MM, "AYA Bank", "আয়া ব্যাংক", "AYA", Color(0xFFB91C1C), category = BankCategory.PRIVATE),
 
-        // Kuwait (KWD) - All 7 Major Banks
-        InternationalBank("kw_abk", AppCountry.KW, "Al Ahli Bank of Kuwait (ABK)", "আল আহলি ব্যাংক অফ কুয়েত (ABK)", "ABK", Color(0xFF0369A1)),
+        InternationalBank("mv_bml", AppCountry.MV, "Bank of Maldives (BML)", "ব্যাংক অফ মালদ্বীপ (BML)", "BML", Color(0xFFDC2626), category = BankCategory.GOVERNMENT),
+        InternationalBank("mv_mib", AppCountry.MV, "Maldives Islamic Bank (MIB)", "মালদ্বীপ ইসলামী ব্যাংক (MIB)", "MIB", Color(0xFF047857), category = BankCategory.PRIVATE),
+
+        // Kuwait (KWD) - All 8 Major Banks
         InternationalBank("kw_nbk", AppCountry.KW, "National Bank of Kuwait (NBK)", "ন্যাশনাল ব্যাংক অফ কুয়েত (NBK)", "NBK", Color(0xFF003B73)),
         InternationalBank("kw_kfh", AppCountry.KW, "Kuwait Finance House (KFH)", "কুয়েত ফিন্যান্স হাউস (KFH)", "KFH", Color(0xFF007A3D)),
         InternationalBank("kw_gulf", AppCountry.KW, "Gulf Bank Kuwait", "গালফ ব্যাংক কুয়েত", "GULF", Color(0xFFB91C1C)),
         InternationalBank("kw_boubyan", AppCountry.KW, "Boubyan Bank", "বুবিয়ান ব্যাংক", "BOUBYAN", Color(0xFF991B1B)),
         InternationalBank("kw_burgan", AppCountry.KW, "Burgan Bank", "বুরগান ব্যাংক", "BURGAN", Color(0xFF0284C7)),
+        InternationalBank("kw_abk", AppCountry.KW, "Al Ahli Bank of Kuwait (ABK)", "আল আহলি ব্যাংক অফ কুয়েত (ABK)", "ABK", Color(0xFF0369A1)),
         InternationalBank("kw_cbk", AppCountry.KW, "Commercial Bank of Kuwait (Al Tijari)", "কমার্শিয়াল ব্যাংক অফ কুয়েত (আল তিজারি)", "CBK", Color(0xFF0F766E)),
+        InternationalBank("kw_warba", AppCountry.KW, "Warba Bank", "ওয়ারবা ব্যাংক", "WARBA", Color(0xFF0E7490)),
 
         // Saudi Arabia (SAR) - All 7 Major Banks
         InternationalBank("sa_alrajhi", AppCountry.SA, "Al Rajhi Bank", "আল রাজি ব্যাংক", "RAJHI", Color(0xFF0052A5)),
@@ -396,12 +411,13 @@ object InternationalBankCatalog {
         InternationalBank("sa_bsf", AppCountry.SA, "Banque Saudi Fransi (BSF)", "ব্যাংক সৌদি ফ্রান্সি (BSF)", "BSF", Color(0xFF0F766E)),
         InternationalBank("sa_sab", AppCountry.SA, "Saudi British Bank (SAB)", "সৌদি ব্রিটিশ ব্যাংক (SAB)", "SAB", Color(0xFFDC2626)),
 
-        // UAE / Dubai (AED) - All 5 Major Banks
+        // UAE / Dubai (AED) - All 6 Major Banks
         InternationalBank("ae_enbd", AppCountry.AE, "Emirates NBD", "এমিরেটস এনবিডি", "ENBD", Color(0xFF00338D)),
         InternationalBank("ae_fab", AppCountry.AE, "First Abu Dhabi Bank (FAB)", "ফার্স্ট আবুধাবি ব্যাংক (FAB)", "FAB", Color(0xFF00205B)),
         InternationalBank("ae_dib", AppCountry.AE, "Dubai Islamic Bank (DIB)", "দুবাই ইসলামী ব্যাংক (DIB)", "DIB", Color(0xFF007A4D)),
         InternationalBank("ae_adcb", AppCountry.AE, "Abu Dhabi Commercial Bank (ADCB)", "আবুধাবি কমার্শিয়াল ব্যাংক (ADCB)", "ADCB", Color(0xFF9D174D)),
         InternationalBank("ae_mashreq", AppCountry.AE, "Mashreq Bank", "মাশরেক ব্যাংক", "MASHREQ", Color(0xFFEA580C)),
+        InternationalBank("ae_cbd", AppCountry.AE, "Commercial Bank of Dubai (CBD)", "কমার্শিয়াল ব্যাংক অফ দুবাই (CBD)", "CBD", Color(0xFF047857)),
 
         // Qatar (QAR) - All 5 Major Banks
         InternationalBank("qa_qnb", AppCountry.QA, "Qatar National Bank (QNB)", "কাতার ন্যাশনাল ব্যাংক (QNB)", "QNB", Color(0xFF6B1D4A)),
@@ -501,21 +517,81 @@ object InternationalBankCatalog {
         InternationalBank("gr_deutsche", AppCountry.GR, "Deutsche Bank", "ডয়েচে ব্যাংক", "DB", Color(0xFF1E3A8A)),
         InternationalBank("gr_bnp", AppCountry.GR, "BNP Paribas", "বিএনপি পারিবাস", "BNP", Color(0xFF047857)),
         InternationalBank("gr_santander", AppCountry.GR, "Banco Santander", "ব্যাঙ্কো সান্তান্দের", "SAN", Color(0xFFDC2626)),
-        InternationalBank("gr_ing", AppCountry.GR, "ING", "আইএনজি ব্যাংক", "ING", Color(0xFFEA580C))
+        InternationalBank("gr_ing", AppCountry.GR, "ING", "আইএনজি ব্যাংক", "ING", Color(0xFFEA580C)),
+
+        // Additional Global Economies
+        InternationalBank("cn_icbc", AppCountry.fromCode("CN"), "ICBC", "আইসিবিসি ব্যাংক", "ICBC", Color(0xFFDC2626), category = BankCategory.GOVERNMENT),
+        InternationalBank("cn_boc", AppCountry.fromCode("CN"), "Bank of China", "ব্যাংক অফ চায়না", "BOC", Color(0xFFB91C1C), category = BankCategory.GOVERNMENT),
+        InternationalBank("cn_ccb", AppCountry.fromCode("CN"), "China Construction Bank", "চায়না কনস্ট্রাকশন ব্যাংক", "CCB", Color(0xFF1D4ED8), category = BankCategory.GOVERNMENT),
+        InternationalBank("cn_cmb", AppCountry.fromCode("CN"), "China Merchants Bank", "চায়না মার্চেন্টস ব্যাংক", "CMB", Color(0xFFE11D48), category = BankCategory.PRIVATE),
+
+        InternationalBank("id_mandiri", AppCountry.fromCode("ID"), "Bank Mandiri", "ব্যাংক মান্দিরি", "MANDIRI", Color(0xFF1E3A8A), category = BankCategory.GOVERNMENT),
+        InternationalBank("id_bri", AppCountry.fromCode("ID"), "Bank Rakyat Indonesia (BRI)", "ব্যাংক রাকইয়াত ইন্দোনেশিয়া (BRI)", "BRI", Color(0xFF0284C7), category = BankCategory.GOVERNMENT),
+        InternationalBank("id_bca", AppCountry.fromCode("ID"), "Bank Central Asia (BCA)", "ব্যাংক সেন্ট্রাল এশিয়া (BCA)", "BCA", Color(0xFF1D4ED8), category = BankCategory.PRIVATE),
+
+        InternationalBank("ph_bdo", AppCountry.fromCode("PH"), "BDO Unibank", "বিডিও ইউনিব্যাংক", "BDO", Color(0xFF1D4ED8)),
+        InternationalBank("ph_bpi", AppCountry.fromCode("PH"), "Bank of the Philippine Islands (BPI)", "ব্যাংক অফ ফিলিপাইন (BPI)", "BPI", Color(0xFFB91C1C)),
+        InternationalBank("ph_metro", AppCountry.fromCode("PH"), "Metrobank", "মেট্রোব্যাংক", "METRO", Color(0xFF0369A1)),
+
+        InternationalBank("th_bangkok", AppCountry.fromCode("TH"), "Bangkok Bank", "ব্যাংকক ব্যাংক", "BBL", Color(0xFF1E3A8A)),
+        InternationalBank("th_kbank", AppCountry.fromCode("TH"), "Kasikornbank (KBank)", "কাসিকর্নব্যাংক (KBank)", "KBANK", Color(0xFF15803D)),
+        InternationalBank("th_scb", AppCountry.fromCode("TH"), "Siam Commercial Bank (SCB)", "সিয়াম কমার্শিয়াল ব্যাংক (SCB)", "SCB", Color(0xFF5B21B6)),
+
+        InternationalBank("vn_vcb", AppCountry.fromCode("VN"), "Vietcombank", "ভিয়েতকমব্যাংক", "VCB", Color(0xFF15803D), category = BankCategory.GOVERNMENT),
+        InternationalBank("vn_bidv", AppCountry.fromCode("VN"), "BIDV", "বিআইডিভি ব্যাংক", "BIDV", Color(0xFF0F766E), category = BankCategory.GOVERNMENT),
+        InternationalBank("vn_techcom", AppCountry.fromCode("VN"), "Techcombank", "টেককমব্যাংক", "TCB", Color(0xFFDC2626), category = BankCategory.PRIVATE),
+
+        InternationalBank("tr_ziraat", AppCountry.fromCode("TR"), "Ziraat Bank", "জিরাত ব্যাংক", "ZIRAAT", Color(0xFFDC2626), category = BankCategory.GOVERNMENT),
+        InternationalBank("tr_isbank", AppCountry.fromCode("TR"), "Türkiye İş Bankası", "ইশ ব্যাংক (İşbank)", "ISBANK", Color(0xFF1E3A8A), category = BankCategory.PRIVATE),
+        InternationalBank("tr_garanti", AppCountry.fromCode("TR"), "Garanti BBVA", "গারান্তি বিবিভিএ", "GARANTI", Color(0xFF15803D), category = BankCategory.PRIVATE),
+
+        InternationalBank("eg_nbe", AppCountry.fromCode("EG"), "National Bank of Egypt (NBE)", "ন্যাশনাল ব্যাংক অফ ইজিপ্ট (NBE)", "NBE", Color(0xFF047857), category = BankCategory.GOVERNMENT),
+        InternationalBank("eg_cib", AppCountry.fromCode("EG"), "CIB Egypt", "সিআইবি মিশর", "CIB", Color(0xFF1D4ED8), category = BankCategory.PRIVATE),
+        InternationalBank("eg_qnb", AppCountry.fromCode("EG"), "QNB Alahli", "কিউএনবি আলআহলি", "QNB", Color(0xFF6B1D4A), category = BankCategory.PRIVATE),
+
+        InternationalBank("br_itau", AppCountry.fromCode("BR"), "Itaú Unibanco", "ইতাউ ইউনিবাঙ্কো", "ITAU", Color(0xFFEA580C)),
+        InternationalBank("br_bradesco", AppCountry.fromCode("BR"), "Bradesco", "ব্রাদেস্কো ব্যাংক", "BRAD", Color(0xFFDC2626)),
+        InternationalBank("br_bb", AppCountry.fromCode("BR"), "Banco do Brasil", "বাঙ্কো দো ব্রাজিল", "BB", Color(0xFFCA8A04), category = BankCategory.GOVERNMENT),
+        InternationalBank("br_nubank", AppCountry.fromCode("BR"), "Nubank", "নুব্যাংক", "NU", Color(0xFF7C3AED))
     )
+
+    private fun regionalFallbackBanks(country: AppCountry): List<InternationalBank> {
+        val code = country.code.lowercase()
+        val cur = country.suggestedCurrency
+        return when (country.group) {
+            CountryRegionGroup.EUROPE_CYPRUS ->
+                sharedMajorEuropeanBanks.map { it.copy(id = "${code}_${it.id}", country = country, defaultCurrency = cur) }
+            CountryRegionGroup.MIDDLE_EAST -> listOf(
+                InternationalBank("${code}_arabbank", country, "Arab Bank", "আরব ব্যাংক", "ARAB", Color(0xFF0369A1), cur),
+                InternationalBank("${code}_hsbc", country, "HSBC Middle East", "এইচএসবিসি মিডল ইস্ট", "HSBC", Color(0xFFDC2626), cur),
+                InternationalBank("${code}_scb", country, "Standard Chartered", "স্ট্যান্ডার্ড চার্টার্ড", "SCB", Color(0xFF0F766E), cur)
+            )
+            CountryRegionGroup.AFRICA -> listOf(
+                InternationalBank("${code}_std", country, "Standard Bank", "স্ট্যান্ডার্ড ব্যাংক", "STD", Color(0xFF1D4ED8), cur),
+                InternationalBank("${code}_ecobank", country, "Ecobank", "ইকোব্যাংক", "ECO", Color(0xFF0284C7), cur),
+                InternationalBank("${code}_absa", country, "Absa Bank", "অ্যাবসা ব্যাংক", "ABSA", Color(0xFFDC2626), cur)
+            )
+            CountryRegionGroup.LATIN_AMERICA_CARIBBEAN -> listOf(
+                InternationalBank("${code}_santander", country, "Banco Santander", "ব্যাঙ্কো সান্তান্দের", "SAN", Color(0xFFDC2626), cur),
+                InternationalBank("${code}_bbva", country, "BBVA", "বিবিভিএ ব্যাংক", "BBVA", Color(0xFF1D4ED8), cur),
+                InternationalBank("${code}_scotia", country, "Scotiabank", "স্কোশিয়াব্যাংক", "BNS", Color(0xFFB91C1C), cur)
+            )
+            else -> listOf(
+                InternationalBank("${code}_hsbc", country, "HSBC", "এইচএসবিসি ব্যাংক", "HSBC", Color(0xFFDC2626), cur),
+                InternationalBank("${code}_scb", country, "Standard Chartered", "স্ট্যান্ডার্ড চার্টার্ড", "SCB", Color(0xFF0F766E), cur),
+                InternationalBank("${code}_citi", country, "Citibank", "সিটিব্যাংক", "CITI", Color(0xFF0369A1), cur)
+            )
+        }
+    }
 
     /**
      * Returns all major banks for any synchronized [AppCountry].
-     * Guarantees every country in [AppCountry.entries] has major banks available.
+     * Guarantees every country in [AppCountry.entries] has relevant local or regional banks available.
      */
     fun banksForCountry(country: AppCountry): List<InternationalBank> {
         val direct = all.filter { it.country == country }
         if (direct.isNotEmpty()) return direct
-        return if (country.group == CountryRegionGroup.EUROPE_CYPRUS) {
-            sharedMajorEuropeanBanks.map { it.copy(country = country, defaultCurrency = country.suggestedCurrency) }
-        } else {
-            emptyList()
-        }
+        return regionalFallbackBanks(country)
     }
 
     fun banksForRegion(region: BankRegion): List<InternationalBank> =

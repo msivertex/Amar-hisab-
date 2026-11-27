@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -77,6 +78,7 @@ fun AccountsScreen(
     onBack: () -> Unit,
     onOpenAddWizard: () -> Unit,
     onDeleteAccount: (Long) -> Unit,
+    onEditAccount: (AccountEntity) -> Unit = {},
     mainCurrencyCode: String = "BDT",
     secondaryCurrencyCode: String = "",
     marketSnapshot: MarketSnapshot = MarketSnapshot.defaultReference()
@@ -287,23 +289,48 @@ fun AccountsScreen(
                         language = language,
                         strings = strings
                     )
-                    Surface(
-                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.36f),
-                        shape = CircleShape,
+                    Row(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(top = 12.dp, end = 124.dp)
+                            .padding(top = 12.dp, end = 120.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(
-                            onClick = { onDeleteAccount(account.id) },
-                            modifier = Modifier.size(36.dp)
+                        Surface(
+                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.36f),
+                            shape = CircleShape
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.DeleteOutline,
-                                contentDescription = strings.deleteAccount,
-                                tint = androidx.compose.ui.graphics.Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            IconButton(
+                                onClick = { onEditAccount(account) },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .testTag("edit_account_${account.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Edit,
+                                    contentDescription = if (language == AppLanguage.BN) "অ্যাকাউন্ট সম্পাদনা" else "Edit Account",
+                                    tint = androidx.compose.ui.graphics.Color.White,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+                        }
+                        Surface(
+                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.36f),
+                            shape = CircleShape
+                        ) {
+                            IconButton(
+                                onClick = { onDeleteAccount(account.id) },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .testTag("delete_account_${account.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.DeleteOutline,
+                                    contentDescription = strings.deleteAccount,
+                                    tint = androidx.compose.ui.graphics.Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
                 }

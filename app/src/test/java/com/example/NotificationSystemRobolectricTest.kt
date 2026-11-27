@@ -343,7 +343,10 @@ class NotificationSystemRobolectricTest {
             }
         }
 
-        composeRule.onNodeWithTag("settings_notif_timezone_badge").assertIsDisplayed()
+        // Visible local timezone status banner is removed across main list and both reminder detail views
+        composeRule.onNodeWithTag("settings_notif_timezone_badge").assertDoesNotExist()
+        composeRule.onNodeWithText("ডিভাইসের স্থানীয় সময় ও টাইমজোন অনুযায়ী সক্রিয়", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText(tzCtx.displayTimeZoneSummary, substring = true).assertDoesNotExist()
         composeRule.onNodeWithTag("settings_test_notification_button").assertDoesNotExist()
         composeRule.onNodeWithTag("settings_test_notification_feedback").assertDoesNotExist()
 
@@ -358,21 +361,27 @@ class NotificationSystemRobolectricTest {
         composeRule.onNodeWithTag("settings_toggle_high_spend_alert").performScrollTo().performClick()
         assertEquals(false, highSpendToggled)
 
-        // Tap Daily Expense & Income Reminder -> opens detail view with ON/OFF toggle + 9:00 PM time row
+        // Tap Daily Expense & Income Reminder -> opens detail view with ON/OFF toggle + 9:00 PM time row (no timezone banner)
         composeRule.onNodeWithTag("settings_daily_reminder_card").performScrollTo().performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("settings_daily_reminder_detail_panel").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_notif_timezone_badge").assertDoesNotExist()
+        composeRule.onNodeWithText("ডিভাইসের স্থানীয় সময় ও টাইমজোন অনুযায়ী সক্রিয়", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText(tzCtx.displayTimeZoneSummary, substring = true).assertDoesNotExist()
         composeRule.onNodeWithTag("settings_daily_reminder_time_row").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("রাত ৯:০০টা").assertIsDisplayed()
         composeRule.onNodeWithTag("settings_toggle_daily_reminder").performScrollTo().performClick()
         assertEquals(false, dailyToggled)
 
-        // Return to main Financial Alerts list and open Dues & Payment Reminder detail view
+        // Return to main Financial Alerts list and open Dues & Payment Reminder detail view (no timezone banner)
         composeRule.onNodeWithTag("settings_alert_detail_back_button").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("settings_loan_reminder_card").performScrollTo().performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("settings_loan_reminder_detail_panel").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_notif_timezone_badge").assertDoesNotExist()
+        composeRule.onNodeWithText("ডিভাইসের স্থানীয় সময় ও টাইমজোন অনুযায়ী সক্রিয়", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText(tzCtx.displayTimeZoneSummary, substring = true).assertDoesNotExist()
         composeRule.onNodeWithTag("settings_toggle_loan_day_before").performScrollTo().performClick()
         assertEquals(false, dayBeforeToggled)
     }

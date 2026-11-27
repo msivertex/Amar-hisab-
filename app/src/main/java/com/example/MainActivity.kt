@@ -135,6 +135,7 @@ fun AmarHisabApp(
     var showReceiptScanSheet by remember { mutableStateOf(false) }
     var showVoiceEntrySheet by remember { mutableStateOf(false) }
     var showAddAccountWizard by remember { mutableStateOf(false) }
+    var editingAccount by remember { mutableStateOf<com.example.data.local.AccountEntity?>(null) }
     var showGlobalSearch by remember { mutableStateOf(false) }
     var showNotifications by remember { mutableStateOf(false) }
     var showProfileBudgetDialog by remember { mutableStateOf(false) }
@@ -341,8 +342,15 @@ fun AmarHisabApp(
                                         language = uiState.prefs.language,
                                         strings = strings,
                                         onBack = { viewModel.closeAccountsScreen() },
-                                        onOpenAddWizard = { showAddAccountWizard = true },
+                                        onOpenAddWizard = {
+                                            editingAccount = null
+                                            showAddAccountWizard = true
+                                        },
                                         onDeleteAccount = { viewModel.deleteAccount(it) },
+                                        onEditAccount = { accountToEdit ->
+                                            editingAccount = accountToEdit
+                                            showAddAccountWizard = true
+                                        },
                                         mainCurrencyCode = uiState.prefs.mainCurrencyCode,
                                         secondaryCurrencyCode = uiState.prefs.secondaryCurrencyCode,
                                         marketSnapshot = marketSyncState.snapshot
@@ -743,15 +751,26 @@ fun AmarHisabApp(
                     }
 
                     if (showAddAccountWizard) {
+                        val activeEdit = editingAccount
                         AddAccountWizardSheet(
                             language = uiState.prefs.language,
                             strings = strings,
-                            onDismiss = { showAddAccountWizard = false },
-                            onSaveAccount = { viewModel.addAccount(it) },
+                            onDismiss = {
+                                showAddAccountWizard = false
+                                editingAccount = null
+                            },
+                            onSaveAccount = { saved ->
+                                if (activeEdit != null) {
+                                    viewModel.updateAccount(saved)
+                                } else {
+                                    viewModel.addAccount(saved)
+                                }
+                            },
                             defaultCurrencyCode = uiState.prefs.mainCurrencyCode,
                             secondaryCurrencyCode = uiState.prefs.secondaryCurrencyCode,
                             userCountryCode = uiState.prefs.userCountryCode,
-                            marketSnapshot = marketSyncState.snapshot
+                            marketSnapshot = marketSyncState.snapshot,
+                            existingAccount = activeEdit
                         )
                     }
 

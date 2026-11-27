@@ -36,6 +36,13 @@ class FinanceRepository(val db: AppDatabase) {
         )
     }
 
+    suspend fun updateAccount(account: AccountEntity) {
+        val normalized = AccountNameResolver.normalizeAccountForSave(account)
+        accountDao.updateAccount(
+            normalized.copy(balance = AccountBalanceGuard.clampNonNegative(normalized.balance))
+        )
+    }
+
     suspend fun deleteAccount(accountId: Long) = accountDao.deleteAccountById(accountId)
 
     suspend fun addTransaction(

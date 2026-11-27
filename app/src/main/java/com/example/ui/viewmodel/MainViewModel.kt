@@ -1453,6 +1453,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         scheduleCentralFirestoreSync()
     }
 
+    fun updateAccount(account: AccountEntity) = viewModelScope.launch {
+        repository.updateAccount(account)
+        scheduleCentralFirestoreSync()
+    }
+
     fun deleteAccount(accountId: Long) = viewModelScope.launch {
         repository.deleteAccount(accountId)
         viewModelScope.launch(Dispatchers.IO) { firestoreRepo.deleteAccountDoc(accountId) }

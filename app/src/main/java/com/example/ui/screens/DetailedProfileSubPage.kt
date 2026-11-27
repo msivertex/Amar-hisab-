@@ -1,13 +1,6 @@
 package com.example.ui.screens
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -38,13 +31,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountBalance
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Payments
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Storage
@@ -87,9 +77,10 @@ import com.example.data.local.UserPrefs
 import com.example.data.market.MarketSnapshot
 import com.example.data.model.AppCurrency
 import com.example.data.model.AuthMode
-import com.example.data.model.BangladeshiBank
 import com.example.data.model.BankCategory
-import com.example.data.model.MfsProvider
+import com.example.data.model.InternationalBank
+import com.example.data.model.InternationalBankCatalog
+import com.example.data.model.InternationalMfsCatalog
 import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.ui.components.AppCountryPickerSheet
@@ -125,8 +116,8 @@ fun DetailedProfileSubPage(
     val keyboardController = LocalSoftwareKeyboardController.current
 
     val effectiveName = prefs.userName.ifBlank { strings.profileDetails.guestUserFallback }
-    var isEditingName by remember { mutableStateOf(false) }
-    var draftName by remember(effectiveName) { mutableStateOf(effectiveName) }
+    var showEditNameDialog by remember { mutableStateOf(false) }
+    var draftName by remember(prefs.userName) { mutableStateOf(prefs.userName) }
     var showNameError by remember { mutableStateOf(false) }
 
     var showCountryPicker by remember { mutableStateOf(false) }
@@ -135,7 +126,7 @@ fun DetailedProfileSubPage(
     var showBankDirectoryDialog by remember { mutableStateOf(false) }
     var showMfsDirectoryDialog by remember { mutableStateOf(false) }
 
-    fun commitInlineName() {
+    fun commitDisplayName() {
         val trimmed = draftName.trim()
         if (trimmed.isEmpty()) {
             showNameError = true
@@ -143,7 +134,7 @@ fun DetailedProfileSubPage(
         }
         onUpdateDisplayName(trimmed)
         showNameError = false
-        isEditingName = false
+        showEditNameDialog = false
         focusManager.clearFocus()
         keyboardController?.hide()
     }
@@ -272,195 +263,64 @@ fun DetailedProfileSubPage(
                         }
                     }
 
-                    Text(
-                        text = effectiveName,
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onBackground,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.testTag("detailed_profile_hero_name")
-                    )
-                }
-            }
-
-            // 2. "ব্যবহারকারীর তথ্য" (User Information) with inline name editing ("সম্পাদনা")
-            item {
-                CrystalCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("detailed_profile_user_info_card"),
-                    elevated = true
-                ) {
-                    Text(
-                        text = strings.profileDetails.userInfoSectionTitle,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(RoundedCornerShape(11.dp))
-                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Person,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            Column {
-                                Text(
-                                    text = strings.profileDetails.displayNameFieldLabel,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = crystal.mutedText
-                                )
-                                Text(
-                                    text = effectiveName,
-                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-
-                        FilledTonalButton(
-                            onClick = {
-                                draftName = effectiveName
-                                showNameError = false
-                                isEditingName = !isEditingName
-                            },
-                            shape = RoundedCornerShape(12.dp),
+                        Spacer(modifier = Modifier.width(34.dp))
+                        Text(
+                            text = effectiveName,
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
-                                .heightIn(min = 48.dp)
+                                .weight(1f, fill = false)
+                                .testTag("detailed_profile_hero_name")
+                        )
+                        IconButton(
+                            onClick = {
+                                draftName = prefs.userName
+                                showNameError = false
+                                showEditNameDialog = true
+                            },
+                            modifier = Modifier
+                                .size(48.dp)
                                 .testTag("detailed_profile_edit_name_button")
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.Edit,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = strings.profileDetails.editActionLabel,
-                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
-                            )
-                        }
-                    }
-
-                    AnimatedVisibility(
-                        visible = isEditingName,
-                        enter = fadeIn() + expandVertically(
-                            animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy)
-                        ),
-                        exit = fadeOut() + shrinkVertically()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 12.dp)
-                                .testTag("detailed_profile_inline_name_editor")
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary.copy(
+                                    alpha = if (crystal.isDark) 0.18f else 0.10f
+                                ),
+                                border = BorderStroke(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.primary.copy(
+                                        alpha = if (crystal.isDark) 0.34f else 0.24f
+                                    )
+                                ),
+                                modifier = Modifier.size(28.dp)
                             ) {
-                                OutlinedTextField(
-                                    value = draftName,
-                                    onValueChange = {
-                                        if (it.length <= 40) {
-                                            draftName = it
-                                            showNameError = false
-                                        }
-                                    },
-                                    label = { Text(strings.yourNameLabel) },
-                                    isError = showNameError,
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                    keyboardActions = KeyboardActions(onDone = { commitInlineName() }),
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                        unfocusedBorderColor = if (crystal.isDark) Color.White.copy(alpha = 0.24f) else crystal.glassBorder,
-                                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                                        unfocusedLabelColor = crystal.mutedText,
-                                        cursorColor = MaterialTheme.colorScheme.primary,
-                                        focusedContainerColor = crystal.glassSurfaceElevated,
-                                        unfocusedContainerColor = crystal.glassSurfaceElevated
-                                    ),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("detailed_profile_name_input")
-                                )
-
-                                Surface(
-                                    onClick = { commitInlineName() },
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .testTag("detailed_profile_name_save_button")
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Check,
-                                            contentDescription = strings.saveNameDesc,
-                                            tint = Color.White
-                                        )
-                                    }
-                                }
-
-                                IconButton(
-                                    onClick = {
-                                        draftName = effectiveName
-                                        showNameError = false
-                                        isEditingName = false
-                                        focusManager.clearFocus()
-                                        keyboardController?.hide()
-                                    },
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .testTag("detailed_profile_name_cancel_button")
-                                ) {
+                                Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        imageVector = Icons.Filled.Close,
-                                        contentDescription = strings.cancelNameDesc,
-                                        tint = MaterialTheme.colorScheme.onSurface
+                                        imageVector = Icons.Filled.Edit,
+                                        contentDescription = strings.editNameDesc,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .size(14.dp)
+                                            .testTag("detailed_profile_hero_name_edit_icon")
                                     )
                                 }
                             }
-
-                            if (showNameError) {
-                                Text(
-                                    text = strings.nameEmptyError,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = crystal.liabilityRed,
-                                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
-                                )
-                            }
                         }
                     }
                 }
             }
 
-            // 3. Adaptive Google Account Card (Signed-in Gmail + Switch to Offline Guest, or Guest Mode + Google Sign In)
+            // 2. Adaptive Google Account Card (Signed-in Gmail + Switch to Offline Guest, or Guest Mode + Google Sign In)
             item {
                 CrystalCard(
                     modifier = Modifier
@@ -628,21 +488,14 @@ fun DetailedProfileSubPage(
                 }
             }
 
-            // 5. "ব্যাংক ও এমএফএস ডাটাবেস" (Bank & MFS Database) section
+            // 5. "ব্যাংক ও এমএফএস ডাটাবেস" (Bank & MFS Database) section — synced to selected Country
             item {
-                val totalBanks = BangladeshiBank.entries.size
-                val govtBankCount = BangladeshiBank.entries.count { it.category == BankCategory.GOVERNMENT }
-                val privateBankCount = BangladeshiBank.entries.count { it.category == BankCategory.PRIVATE }
-                val totalMfs = MfsProvider.entries.size
-                val dynamicBankSubtitle = if (lang == AppLanguage.BN) {
-                    "${BdtFormatter.formatNumber(totalBanks, lang)}টি ব্যাংক (${BdtFormatter.formatNumber(govtBankCount, lang)}টি সরকারি • ${BdtFormatter.formatNumber(privateBankCount, lang)}টি বেসরকারি)"
-                } else {
-                    "$totalBanks banks ($govtBankCount Govt • $privateBankCount Private)"
+                val selectedCountry = prefs.userCountry
+                val dynamicBankSubtitle = remember(selectedCountry, lang) {
+                    InternationalMfsCatalog.bankDirectorySubtitle(selectedCountry, lang)
                 }
-                val dynamicMfsSubtitle = if (lang == AppLanguage.BN) {
-                    "${BdtFormatter.formatNumber(totalMfs, lang)}টি এমএফএস সেবা (বিকাশ, নগদ, রকেট ও আরও)"
-                } else {
-                    "$totalMfs MFS wallets (bKash, Nagad, Rocket & more)"
+                val dynamicMfsSubtitle = remember(selectedCountry, lang) {
+                    InternationalMfsCatalog.mfsDirectorySubtitle(selectedCountry, lang)
                 }
 
                 CrystalCard(
@@ -652,20 +505,44 @@ fun DetailedProfileSubPage(
                     elevated = true
                 ) {
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Storage,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Text(
-                            text = strings.profileDetails.bankMfsDatabaseTitle,
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Storage,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = strings.profileDetails.bankMfsDatabaseTitle,
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = if (crystal.isDark) 0.22f else 0.12f),
+                            border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                            modifier = Modifier.testTag("bank_mfs_db_country_badge")
+                        ) {
+                            Text(
+                                text = "${selectedCountry.flag} ${selectedCountry.label(lang)}",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
 
@@ -676,6 +553,7 @@ fun DetailedProfileSubPage(
                         subtitle = dynamicBankSubtitle,
                         buttonLabel = strings.profileDetails.checkUpdatesBtn,
                         testTag = "bank_directory_updates_button",
+                        subtitleTestTag = "bank_directory_subtitle",
                         onClick = { showBankDirectoryDialog = true }
                     )
 
@@ -691,6 +569,7 @@ fun DetailedProfileSubPage(
                         subtitle = dynamicMfsSubtitle,
                         buttonLabel = strings.profileDetails.browseBtn,
                         testTag = "mfs_directory_browse_button",
+                        subtitleTestTag = "mfs_directory_subtitle",
                         onClick = { showMfsDirectoryDialog = true }
                     )
                 }
@@ -784,14 +663,20 @@ fun DetailedProfileSubPage(
         )
     }
 
-    // Local Bank Directory & Updates Dialog (All 22 Banks grouped by Government & Private)
+    // Country-Synced Local Bank Directory Dialog
     if (showBankDirectoryDialog) {
-        val governmentBanks = remember {
-            BangladeshiBank.entries.filter { it.category == BankCategory.GOVERNMENT }
+        val selectedCountry = prefs.userCountry
+        val countryBanks = remember(selectedCountry) {
+            InternationalBankCatalog.banksForCountry(selectedCountry)
         }
-        val privateBanks = remember {
-            BangladeshiBank.entries.filter { it.category == BankCategory.PRIVATE }
+        val governmentBanks = remember(countryBanks) {
+            countryBanks.filter { it.category == BankCategory.GOVERNMENT }
         }
+        val privateBanks = remember(countryBanks) {
+            countryBanks.filter { it.category == BankCategory.PRIVATE }
+        }
+        val hasBothCategories = governmentBanks.isNotEmpty() && privateBanks.isNotEmpty()
+
         AlertDialog(
             onDismissRequest = { showBankDirectoryDialog = false },
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -806,7 +691,7 @@ fun DetailedProfileSubPage(
             },
             title = {
                 Text(
-                    "${strings.profileDetails.localBankDirectoryTitle} (${BdtFormatter.formatNumber(BangladeshiBank.entries.size, lang)})"
+                    "${selectedCountry.flag} ${strings.profileDetails.localBankDirectoryTitle} (${BdtFormatter.formatNumber(countryBanks.size, lang)})"
                 )
             },
             text = {
@@ -834,33 +719,43 @@ fun DetailedProfileSubPage(
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
-                                text = strings.profileDetails.databaseUpToDateNote,
+                                text = "${selectedCountry.label(lang)} (${selectedCountry.suggestedCurrency.code}) • ${strings.profileDetails.databaseUpToDateNote}",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = crystal.assetGreen
                             )
                         }
                     }
 
-                    Text(
-                        text = "${BankCategory.GOVERNMENT.label(lang)} (${BdtFormatter.formatNumber(governmentBanks.size, lang)})",
-                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
+                    if (hasBothCategories) {
+                        Text(
+                            text = "${BankCategory.GOVERNMENT.label(lang)} (${BdtFormatter.formatNumber(governmentBanks.size, lang)})",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        governmentBanks.forEach { bank ->
+                            BankDirectoryItemCard(bank = bank, lang = lang)
+                        }
 
-                    governmentBanks.forEach { bank ->
-                        BankDirectoryItemCard(bank = bank, lang = lang)
-                    }
-
-                    Text(
-                        text = "${BankCategory.PRIVATE.label(lang)} (${BdtFormatter.formatNumber(privateBanks.size, lang)})",
-                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
-
-                    privateBanks.forEach { bank ->
-                        BankDirectoryItemCard(bank = bank, lang = lang)
+                        Text(
+                            text = "${BankCategory.PRIVATE.label(lang)} (${BdtFormatter.formatNumber(privateBanks.size, lang)})",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                        privateBanks.forEach { bank ->
+                            BankDirectoryItemCard(bank = bank, lang = lang)
+                        }
+                    } else {
+                        Text(
+                            text = "${selectedCountry.label(lang)} (${BdtFormatter.formatNumber(countryBanks.size, lang)})",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        countryBanks.forEach { bank ->
+                            BankDirectoryItemCard(bank = bank, lang = lang)
+                        }
                     }
                 }
             },
@@ -872,8 +767,12 @@ fun DetailedProfileSubPage(
         )
     }
 
-    // MFS Provider Directory Dialog (All 10 Providers)
+    // Country-Synced MFS & Digital Wallet Provider Directory Dialog
     if (showMfsDirectoryDialog) {
+        val selectedCountry = prefs.userCountry
+        val countryProviders = remember(selectedCountry) {
+            InternationalMfsCatalog.providersForCountry(selectedCountry)
+        }
         AlertDialog(
             onDismissRequest = { showMfsDirectoryDialog = false },
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -888,7 +787,7 @@ fun DetailedProfileSubPage(
             },
             title = {
                 Text(
-                    "${strings.profileDetails.mfsDirectoryTitle} (${BdtFormatter.formatNumber(MfsProvider.entries.size, lang)})"
+                    "${selectedCountry.flag} ${strings.profileDetails.mfsDirectoryTitle} (${BdtFormatter.formatNumber(countryProviders.size, lang)})"
                 )
             },
             text = {
@@ -899,7 +798,7 @@ fun DetailedProfileSubPage(
                         .testTag("mfs_directory_dialog_content"),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    MfsProvider.entries.forEach { provider ->
+                    countryProviders.forEach { provider ->
                         Surface(
                             color = if (crystal.isDark) Color(0xFF161C2B) else crystal.glassSurfaceElevated,
                             shape = RoundedCornerShape(12.dp),
@@ -935,7 +834,7 @@ fun DetailedProfileSubPage(
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
-                                        text = strings.typeMfs,
+                                        text = "${selectedCountry.label(lang)} • ${strings.typeMfs}",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = crystal.mutedText
                                     )
@@ -952,11 +851,115 @@ fun DetailedProfileSubPage(
             }
         )
     }
+
+    if (showEditNameDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                draftName = prefs.userName
+                showNameError = false
+                showEditNameDialog = false
+                focusManager.clearFocus()
+                keyboardController?.hide()
+            },
+            modifier = Modifier.testTag("detailed_profile_edit_name_dialog"),
+            containerColor = if (crystal.isDark) Color(0xFF101522) else Color.White,
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Text(
+                    text = strings.editNameDesc,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    OutlinedTextField(
+                        value = draftName,
+                        onValueChange = {
+                            if (it.length <= 40) {
+                                draftName = it
+                                showNameError = false
+                            }
+                        },
+                        label = { Text(strings.yourNameLabel) },
+                        isError = showNameError,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { commitDisplayName() }),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = if (crystal.isDark) Color.White.copy(alpha = 0.24f) else crystal.glassBorder,
+                            focusedLabelColor = MaterialTheme.colorScheme.primary,
+                            unfocusedLabelColor = crystal.mutedText,
+                            cursorColor = MaterialTheme.colorScheme.primary,
+                            focusedContainerColor = crystal.glassSurfaceElevated,
+                            unfocusedContainerColor = crystal.glassSurfaceElevated
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("detailed_profile_name_input")
+                    )
+
+                    if (showNameError) {
+                        Text(
+                            text = strings.nameEmptyError,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = crystal.liabilityRed,
+                            modifier = Modifier
+                                .padding(start = 4.dp)
+                                .testTag("detailed_profile_name_error")
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { commitDisplayName() },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("detailed_profile_name_save_button")
+                ) {
+                    Text(
+                        text = strings.saveChanges,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+                    )
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = {
+                        draftName = prefs.userName
+                        showNameError = false
+                        showEditNameDialog = false
+                        focusManager.clearFocus()
+                        keyboardController?.hide()
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, crystal.glassBorder),
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("detailed_profile_name_cancel_button")
+                ) {
+                    Text(
+                        text = strings.cancel,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium)
+                    )
+                }
+            }
+        )
+    }
 }
 
 @Composable
 private fun BankDirectoryItemCard(
-    bank: BangladeshiBank,
+    bank: InternationalBank,
     lang: AppLanguage
 ) {
     val crystal = LocalCrystalColors.current
@@ -994,7 +997,7 @@ private fun BankDirectoryItemCard(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = bank.shortCode,
+                    text = "${bank.shortCode} • ${bank.defaultCurrency.code}",
                     style = MaterialTheme.typography.labelSmall,
                     color = crystal.mutedText
                 )
@@ -1093,6 +1096,7 @@ private fun DatabaseDirectoryRow(
     subtitle: String,
     buttonLabel: String,
     testTag: String,
+    subtitleTestTag: String? = null,
     onClick: () -> Unit
 ) {
     val crystal = LocalCrystalColors.current
@@ -1136,8 +1140,9 @@ private fun DatabaseDirectoryRow(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = crystal.mutedText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = if (subtitleTestTag != null) Modifier.testTag(subtitleTestTag) else Modifier
                 )
             }
         }
